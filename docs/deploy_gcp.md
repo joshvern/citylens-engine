@@ -254,6 +254,21 @@ Example for your project:
 python3.10 -c 'from google.cloud import firestore; c=firestore.Client(project="citylens-001"); print("ok", c.project)'
 ```
 
+### CORS (browser clients)
+
+If a browser app (like `citylens-web` on Vercel) calls the API with a custom header like `X-API-Key`, the browser will send a **preflight** request first:
+
+- `OPTIONS /v1/...` (the preflight)
+- then the real request (e.g. `POST /v1/runs`)
+
+The API enables CORS via Starlette/FastAPI `CORSMiddleware` in [api/app/main.py](../api/app/main.py). Allowed origins are:
+
+- `https://citylens.dev`
+- `https://www.citylens.dev`
+- `http://localhost:3000`
+
+To allow a new domain, add it to the `allow_origins` list and redeploy the API.
+
 ### 11) Test end-to-end
 
 Health:

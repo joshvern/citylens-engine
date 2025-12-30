@@ -1,0 +1,16 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile
+      - --build-arg
+      - CITYLENS_CORE_GIT_URL=${_CITYLENS_CORE_GIT_URL}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _CITYLENS_CORE_GIT_URL: ""
+  _IMAGE: ""

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "citylens-engine-api"
+version = "0.1.0"
+description = "Citylens Engine API (Cloud Run)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Citylens" }]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+  "google-cloud-firestore>=2.11",
+  "google-cloud-storage>=2.14",
+  "google-auth>=2.25",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "httpx>=0.25",
+  "ruff>=0.3",
+]
+
+# citylens-core dependency strategy:
+# - Local dev: `pip install -e ../citylens-core`
+# - Production: install from git in Dockerfile (see api/Dockerfile)
+
+[tool.setuptools]
+package-dir = {"" = "app"}
+
+[tool.setuptools.packages.find]
+where = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

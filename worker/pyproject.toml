@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "citylens-engine-worker"
+version = "0.1.0"
+description = "Citylens Engine Worker (Cloud Run Job)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Citylens" }]
+dependencies = [
+  "pydantic>=2.0",
+  "google-cloud-firestore>=2.11",
+  "google-cloud-storage>=2.14",
+  "google-auth>=2.25",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.3"]
+
+# citylens-core dependency strategy:
+# - Production: install from git in Dockerfile (see worker/Dockerfile)
+# - Local dev: `pip install -e ../citylens-core`
+
+[tool.setuptools]
+py-modules = ["worker"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

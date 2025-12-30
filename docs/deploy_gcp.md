@@ -188,6 +188,8 @@ gcloud run deploy <API_SERVICE_NAME> \
   --set-env-vars GOOGLE_CLOUD_PROJECT=<PROJECT_ID>,CITYLENS_REGION=<REGION>,CITYLENS_BUCKET=<BUCKET_NAME>,CITYLENS_JOB_NAME=<JOB_NAME>,CITYLENS_API_KEYS=<COMMA_SEPARATED_KEYS>
 ```
 
+Note: `--set-env-vars` replaces the entire env-var set for the service/job. If you later want to tweak only one or two values (e.g., enabling `CITYLENS_SIGN_URLS=1`), prefer `gcloud run services update ... --update-env-vars KEY=VALUE` (or re-specify all required env vars).
+
 ### 8) Build & create Cloud Run Job for worker
 
 Build the worker image:

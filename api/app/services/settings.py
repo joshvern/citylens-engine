@@ -3,12 +3,27 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import google.auth
+
 
 def _env(name: str, default: str | None = None) -> str:
     val = os.getenv(name, default)
     if val is None or val == "":
         raise RuntimeError(f"Missing required env var: {name}")
     return val
+
+
+def _project_id() -> str:
+    env_project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if env_project_id:
+        return env_project_id
+
+    # On Cloud Run, ADC is available and includes the project id.
+    _, project_id = google.auth.default()
+    if project_id:
+        return project_id
+
+    raise RuntimeError("Missing required env var: GOOGLE_CLOUD_PROJECT")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -47,7 +62,7 @@ def get_settings() -> Settings:
     api_keys = [k.strip() for k in keys_raw.split(",") if k.strip()]
 
     return Settings(
-        project_id=_env("GOOGLE_CLOUD_PROJECT"),
+        project_id=_project_id(),
         region=_env("CITYLENS_REGION"),
         bucket=_env("CITYLENS_BUCKET"),
         api_keys=api_keys,

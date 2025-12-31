@@ -116,6 +116,7 @@ API service account needs:
 - Firestore read/write: `roles/datastore.user`
 - Trigger Cloud Run Job executions: `roles/run.developer`
 - If you enable signed URLs (`CITYLENS_SIGN_URLS=1`): allow signing with IAMCredentials
+  - Also grant the API service account read access to artifacts so the signed URLs can be used to download objects (needs `storage.objects.get`, e.g. `roles/storage.objectViewer` on the bucket).
   - `roles/iam.serviceAccountTokenCreator` on the API service account
 
 Worker service account needs:
@@ -270,6 +271,12 @@ The API enables CORS via Starlette/FastAPI `CORSMiddleware` in [api/app/main.py]
 - `http://localhost:3000`
 
 To allow a new domain, add it to the `allow_origins` list and redeploy the API.
+
+If you enable signed URLs (`CITYLENS_SIGN_URLS=1`), the browser will download artifacts *directly from GCS* (not from the API). In that case you must also configure **bucket CORS** on your artifacts bucket to allow your site origin(s), e.g.:
+
+- `https://citylens.dev`
+- `https://www.citylens.dev`
+- `http://localhost:3000`
 
 ### 11) Test end-to-end
 

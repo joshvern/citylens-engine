@@ -41,9 +41,15 @@ class GcsArtifacts:
         blob = bucket.blob(object_name)
 
         expiration = timedelta(seconds=ttl_seconds)
+        api_access_endpoint = "https://storage.googleapis.com"
         try:
             # Works when running with a JSON service-account key file.
-            return blob.generate_signed_url(version="v4", expiration=expiration, method="GET")
+            return blob.generate_signed_url(
+                version="v4",
+                expiration=expiration,
+                method="GET",
+                api_access_endpoint=api_access_endpoint,
+            )
         except Exception as base_exc:
             # Cloud Run typically uses metadata/ADC credentials which cannot sign bytes locally.
             # Use IAMCredentials-backed signing via impersonated credentials.
@@ -67,6 +73,7 @@ class GcsArtifacts:
                     version="v4",
                     expiration=expiration,
                     method="GET",
+                    api_access_endpoint=api_access_endpoint,
                     credentials=signing_credentials,
                 )
             except Exception:

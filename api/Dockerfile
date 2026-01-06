@@ -10,8 +10,9 @@ RUN apt-get update \
 # Python deps
 RUN pip install --no-cache-dir --upgrade pip
 
-COPY pyproject.toml /app/pyproject.toml
-COPY app /app/app
+COPY api/pyproject.toml /app/pyproject.toml
+COPY api/app /app/app
+COPY deploy /app/deploy
 
 # Install API deps
 RUN pip install --no-cache-dir -e .

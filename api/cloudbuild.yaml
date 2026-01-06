@@ -3,7 +3,7 @@ steps:
     args:
       - build
       - -f
-      - Dockerfile
+      - api/Dockerfile
       - --build-arg
       - CITYLENS_CORE_GIT_URL=${_CITYLENS_CORE_GIT_URL}
       - -t

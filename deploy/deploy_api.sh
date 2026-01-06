@@ -27,7 +27,7 @@ API_SERVICE_NAME="${API_SERVICE_NAME:-citylens-api}"
 API_SA_NAME="${API_SA_NAME:-citylens-api}"
 API_SA_EMAIL="${API_SA_EMAIL:-${API_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
 
-CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@master}"
+CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.1.0}"
 API_IMAGE="${API_IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/citylens-api:latest}"
 
 DEPLOYER_ACCOUNT="${DEPLOYER_ACCOUNT:-}"

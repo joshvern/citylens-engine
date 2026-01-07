@@ -1,14 +1,11 @@
-{
-  "groups": {
-    "Brooklyn": [
-      {
-        "label": "100 E 21st St",
-        "address": "100 E 21st St Brooklyn, NY 11226",
-        "imagery_year": 2024,
-        "baseline_year": 2017,
-        "segmentation_backend": "sam2",
-        "outputs": ["previews", "change", "mesh"]
-      }
-    ]
+[
+  {
+    "category": "Featured",
+    "label": "Example",
+    "address": "100 E 21st St Brooklyn, NY 11226",
+    "imagery_year": 2024,
+    "baseline_year": 2017,
+    "segmentation_backend": "sam2",
+    "outputs": ["previews", "change", "mesh"]
   }
-}
+]

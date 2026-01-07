@@ -35,11 +35,13 @@ def build_run_response(*, run: dict[str, Any], artifacts: list[dict[str, Any]], 
             created_at = datetime.utcnow()
 
         signed_url = None
-        if settings.sign_urls and gcs_object:
-            try:
-                signed_url = gcs.signed_url(object_name=gcs_object, ttl_seconds=settings.sign_url_ttl_seconds)
-            except Exception:
-                signed_url = None
+        if settings.sign_urls:
+            obj = str(a.get("gcs_object") or "")
+            if obj:
+                try:
+                    signed_url = gcs.signed_url(object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds)
+                except Exception:
+                    signed_url = None
 
         out_artifacts.append(
             ArtifactResponse(

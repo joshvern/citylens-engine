@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.health import router as health_router
+from .routes.demo import router as demo_router
 from .routes.runs import router as runs_router
 
 app = FastAPI(title="citylens-engine-api", version="0.1.0")
@@ -22,4 +23,5 @@ app.add_middleware(
 )
 
 app.include_router(health_router, prefix="/v1")
+app.include_router(demo_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")

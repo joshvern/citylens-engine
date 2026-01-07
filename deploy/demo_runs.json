@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "runs": [
     {
       "address": "100 E 21st St Brooklyn, NY 11226",
@@ -16,4 +17,7 @@
       "segmentation_backend": "sam2"
     }
   ]
+=======
+  "runs": []
+>>>>>>> 40da1628b40164ed42e14c918f81e26d62c1320f
 }

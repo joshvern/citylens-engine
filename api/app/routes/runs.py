@@ -33,19 +33,6 @@ def get_gcs(settings: Settings = Depends(get_settings)) -> GcsArtifacts:
     return GcsArtifacts(bucket=settings.bucket)
 
 
-def _infer_type(name: str) -> str:
-    lower = name.lower()
-    if lower.endswith(".png"):
-        return "image/png"
-    if lower.endswith(".geojson"):
-        return "application/geo+json"
-    if lower.endswith(".ply"):
-        return "model/ply"
-    if lower.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
-
-
 @router.post("/runs", response_model=RunResponse)
 def create_run(
     request: CitylensRequest,

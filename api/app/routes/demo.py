@@ -1,15 +1,5 @@
 from __future__ import annotations
 
-<<<<<<< HEAD
-from fastapi import APIRouter, Depends, HTTPException
-
-from ..models.schemas import DemoRunFeatured, RunResponse
-from ..services.demo_registry import DemoRegistry, get_demo_registry
-from ..services.rate_limit import demo_rate_limit
-from ..services.run_presenter import build_run_response
-from ..services.settings import Settings, get_settings
-from .runs import get_gcs, get_store
-=======
 import os
 from pathlib import Path
 
@@ -22,19 +12,10 @@ from ..services.gcs_artifacts import GcsArtifacts
 from ..services.rate_limit import demo_rate_limit
 from ..services.run_presenter import build_run_response
 from ..services.settings import Settings, get_settings
->>>>>>> 40da1628b40164ed42e14c918f81e26d62c1320f
 
 router = APIRouter(tags=["demo"])
 
 
-<<<<<<< HEAD
-@router.get("/demo/featured", response_model=dict[str, list[DemoRunFeatured]])
-def demo_featured(
-    registry: DemoRegistry = Depends(get_demo_registry),
-    _: None = Depends(demo_rate_limit),
-) -> dict[str, list[DemoRunFeatured]]:
-    return registry.featured()
-=======
 def _default_demo_runs_path() -> str:
     # Source-of-truth lives in citylens-engine/deploy/demo_runs.json.
     # In the API container we copy `deploy/` to `/app/deploy`.
@@ -102,21 +83,11 @@ def demo_featured(
         ]
 
     return out
->>>>>>> 40da1628b40164ed42e14c918f81e26d62c1320f
 
 
 @router.get("/demo/runs/{run_id}", response_model=RunResponse)
 def demo_get_run(
     run_id: str,
-<<<<<<< HEAD
-    registry: DemoRegistry = Depends(get_demo_registry),
-    settings: Settings = Depends(get_settings),
-    store=Depends(get_store),
-    gcs=Depends(get_gcs),
-    _: None = Depends(demo_rate_limit),
-) -> RunResponse:
-    if not registry.is_allowed(run_id):
-=======
     _rate_limit: None = Depends(demo_rate_limit),
     registry: DemoRegistry = Depends(get_demo_registry),
     settings: Settings = Depends(get_settings),
@@ -124,7 +95,6 @@ def demo_get_run(
     gcs: GcsArtifacts = Depends(get_gcs),
 ) -> RunResponse:
     if not registry.get(run_id):
->>>>>>> 40da1628b40164ed42e14c918f81e26d62c1320f
         raise HTTPException(status_code=404, detail="Run not found")
 
     run = store.get_run(run_id)

@@ -29,3 +29,13 @@ class RunResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     artifacts: list[ArtifactResponse] = Field(default_factory=list)
+
+
+class DemoRunFeatured(BaseModel):
+    run_id: str
+    label: str
+    address: str
+    imagery_year: int
+    baseline_year: int
+    segmentation_backend: str
+    outputs: list[str] = Field(default_factory=list)

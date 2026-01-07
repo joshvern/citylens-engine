@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..models.schemas import ArtifactResponse, RunResponse
+from ..models.schemas import RunResponse
 from ..services.auth import require_user_id
 from ..services.core_adapter import CitylensRequest
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.job_trigger import CloudRunJobTrigger
 from ..services.quotas import enforce_quotas
+from ..services.run_presenter import build_run_response
 from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["runs"])
@@ -93,46 +93,4 @@ def get_run(
         raise HTTPException(status_code=404, detail="Run not found")
 
     artifacts = store.list_artifacts(run_id)
-    out_artifacts: list[ArtifactResponse] = []
-
-    for a in artifacts:
-        name = str(a.get("name") or "")
-        gcs_uri = str(a.get("gcs_uri") or "")
-        gcs_object = str(a.get("gcs_object") or "")
-        sha256 = str(a.get("sha256") or "")
-        size_bytes = int(a.get("size_bytes") or 0)
-        created_at = a.get("created_at")
-        if not isinstance(created_at, datetime):
-            # Firestore may deserialize to datetime; if not, default to now-ish.
-            created_at = datetime.utcnow()
-
-        signed_url = None
-        if settings.sign_urls:
-            obj = str(a.get("gcs_object") or "")
-            if obj:
-                try:
-                    signed_url = gcs.signed_url(object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds)
-                except Exception:
-                    signed_url = None
-
-        out_artifacts.append(
-            ArtifactResponse(
-                name=name,
-                type=_infer_type(name),
-                gcs_uri=gcs_uri,
-                gcs_object=gcs_object,
-                sha256=sha256,
-                size_bytes=size_bytes,
-                created_at=created_at,
-                signed_url=signed_url,
-            )
-        )
-
-    run_out: dict[str, Any] = dict(run)
-    run_out.setdefault("error", None)
-    run_out.setdefault("execution_id", None)
-
-    return RunResponse(
-        **run_out,
-        artifacts=out_artifacts,
-    )
+    return build_run_response(run=run, artifacts=artifacts, settings=settings, gcs=gcs)

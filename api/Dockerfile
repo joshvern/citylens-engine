@@ -10,8 +10,11 @@ RUN apt-get update \
 # Python deps
 RUN pip install --no-cache-dir --upgrade pip
 
-COPY pyproject.toml /app/pyproject.toml
-COPY app /app/app
+COPY api/pyproject.toml /app/pyproject.toml
+COPY api/app /app/app
+
+# Demo allowlist JSON lives here (used by /v1/demo/* endpoints)
+COPY deploy /app/deploy
 
 # Install API deps
 RUN pip install --no-cache-dir -e .

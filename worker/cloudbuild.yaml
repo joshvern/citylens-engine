@@ -5,14 +5,14 @@ steps:
     args:
       - build
       - -f
-      - citylens-engine/worker/Dockerfile
+      - worker/Dockerfile
       - --build-arg
       - CITYLENS_CORE_GIT_URL=${_CITYLENS_CORE_GIT_URL}
       - --build-arg
       - CITYLENS_SAM2_ASSETS_SIZE=${_CITYLENS_SAM2_ASSETS_SIZE}
       - -t
       - ${_IMAGE}
-      - .
+      - worker
 images:
   - ${_IMAGE}
 substitutions:

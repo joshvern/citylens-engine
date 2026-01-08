@@ -313,3 +313,29 @@ Confirm artifacts exist in GCS:
 ```bash
 gsutil ls gs://<BUCKET_NAME>/runs/<RUN_ID>/
 ```
+
+### 12) Demo endpoints (optional, for citylens-web “Demo mode”)
+
+The API exposes unauthenticated demo endpoints:
+
+- `GET /v1/demo/featured`
+- `GET /v1/demo/runs/{run_id}`
+
+These endpoints are backed by an allowlist file baked into the API image: `deploy/demo_runs.json`.
+By default in this repo, [deploy/demo_runs.json](../deploy/demo_runs.json) contains an empty list, so `/v1/demo/featured` will return empty until you generate it.
+
+To generate demo runs:
+
+1) Edit [deploy/demo_addresses.json](../deploy/demo_addresses.json) with the addresses/years you want.
+2) Deploy using the helper that can precompute and then re-deploy the API to bake the resulting allowlist:
+
+```bash
+./deploy/deploy_all.sh --precompute
+```
+
+Notes:
+
+- Precompute requires an admin API key (it uses `POST /v1/runs` and waits for completion). By default it uses the first key in `CITYLENS_API_KEYS`, or you can set `CITYLENS_ADMIN_API_KEY` in your `.env`.
+- If you want to keep the demo allowlist in git, commit the updated `deploy/demo_runs.json` after precompute.
+
+If demo runs load but artifacts don’t render in the browser, ensure you have signed URLs enabled (`CITYLENS_SIGN_URLS=1`) and bucket CORS configured (see “CORS (browser clients)” above).

@@ -1,0 +1,22 @@
+# Cloud Build upload ignore rules for citylens-engine.
+# This file is evaluated by `gcloud builds submit`.
+# Goal: keep the build context tiny (only what Docker builds need).
+
+# Ignore everything by default...
+**
+
+# ...then include only what the engine Docker builds need.
+!api/**
+!worker/**
+!deploy/**
+
+# Exclude virtualenvs/caches inside included tree (defensive).
+.venv/**
+**/__pycache__/**
+**/.pytest_cache/**
+**/.ruff_cache/**
+
+# Exclude OS/editor clutter.
+**/.DS_Store
+**/.idea/**
+**/.vscode/**

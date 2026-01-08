@@ -21,8 +21,51 @@ def _infer_type(name: str) -> str:
     return "application/octet-stream"
 
 
-def build_run_response(*, run: dict[str, Any], artifacts: list[dict[str, Any]], settings: Settings, gcs: GcsArtifacts) -> RunResponse:
+def build_run_response(
+    *,
+    run: dict[str, Any],
+    artifacts: list[dict[str, Any]] | None = None,
+    settings: Settings,
+    gcs: GcsArtifacts,
+) -> RunResponse:
     out_artifacts: list[ArtifactResponse] = []
+
+    # Prefer the compact "artifacts" map from the run doc (written by worker) if present.
+    # This contains {name: gcs_uri} for all successfully uploaded artifacts and is more reliable
+    # than the artifacts subcollection.
+    run_artifacts = run.get("artifacts")
+    if isinstance(run_artifacts, dict) and run_artifacts:
+        for name, gcs_uri in run_artifacts.items():
+            if not name or not gcs_uri:
+                continue
+            gcs_uri_str = str(gcs_uri)
+            obj = gcs_uri_str.replace("gs://", "").replace(f"{settings.bucket}/", "", 1)
+            signed_url = None
+            if settings.sign_urls:
+                if "gs://" in gcs_uri_str and obj:
+                    try:
+                        signed_url = gcs.signed_url(
+                            object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds
+                        )
+                    except Exception:
+                        signed_url = None
+            out_artifacts.append(
+                ArtifactResponse(
+                    name=str(name),
+                    type=_infer_type(str(name)),
+                    gcs_uri=gcs_uri_str,
+                    gcs_object=obj if "gs://" in gcs_uri_str else "",
+                    sha256="",
+                    size_bytes=0,
+                    created_at=datetime.utcnow(),
+                    signed_url=signed_url,
+                )
+            )
+        return RunResponse(**run, artifacts=out_artifacts)
+
+    # Fallback: read from artifacts subcollection if the map is not present.
+    if artifacts is None:
+        artifacts = []
 
     for a in artifacts:
         name = str(a.get("name") or "")
@@ -39,7 +82,9 @@ def build_run_response(*, run: dict[str, Any], artifacts: list[dict[str, Any]], 
             obj = str(a.get("gcs_object") or "")
             if obj:
                 try:
-                    signed_url = gcs.signed_url(object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds)
+                    signed_url = gcs.signed_url(
+                        object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds
+                    )
                 except Exception:
                     signed_url = None
 

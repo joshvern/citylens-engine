@@ -44,6 +44,8 @@ def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: Fi
     # Upload artifacts: use the *core-produced filenames* (Path.name)
     expected_names = {"preview.png", "change.geojson", "mesh.ply", "run_summary.json"}
 
+    uploaded_by_name: dict[str, dict[str, Any]] = {}
+
     for _, local_path in artifacts_map.items():
         local_path = Path(local_path)
         name = local_path.name
@@ -65,6 +67,12 @@ def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: Fi
         }
 
         store.write_artifact(run_id=run_id, artifact_id=name, doc=doc)
+        uploaded_by_name[name] = doc
+
+    # Convenience: also stash a compact map on the run document itself.
+    # This makes it easy for the API/UI to show artifacts without extra reads.
+    if uploaded_by_name:
+        store.update_run(run_id, {"artifacts": {k: v.get("gcs_uri") for k, v in uploaded_by_name.items()}})
 
     # Determine success/failure from core run_summary.json (core may not raise).
     ok = True

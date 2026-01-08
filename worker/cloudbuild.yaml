@@ -1,11 +1,15 @@
+timeout: "3600s"
+
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - Dockerfile
+      - citylens-engine/worker/Dockerfile
       - --build-arg
       - CITYLENS_CORE_GIT_URL=${_CITYLENS_CORE_GIT_URL}
+      - --build-arg
+      - CITYLENS_SAM2_ASSETS_SIZE=${_CITYLENS_SAM2_ASSETS_SIZE}
       - -t
       - ${_IMAGE}
       - .
@@ -13,4 +17,5 @@ images:
   - ${_IMAGE}
 substitutions:
   _CITYLENS_CORE_GIT_URL: ""
+  _CITYLENS_SAM2_ASSETS_SIZE: "small"
   _IMAGE: ""

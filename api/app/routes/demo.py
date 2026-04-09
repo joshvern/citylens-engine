@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from ..models.schemas import DemoRunFeatured, RunResponse
+from ..services.demo_bundle import build_static_demo_run_response, demo_artifact_path
 from ..services.demo_registry import DemoRegistry
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
@@ -88,14 +90,20 @@ def demo_featured(
 @router.get("/demo/runs/{run_id}", response_model=RunResponse)
 def demo_get_run(
     run_id: str,
+    request: Request,
     _rate_limit: None = Depends(demo_rate_limit),
     registry: DemoRegistry = Depends(get_demo_registry),
     settings: Settings = Depends(get_settings),
     store: FirestoreStore = Depends(get_store),
     gcs: GcsArtifacts = Depends(get_gcs),
 ) -> RunResponse:
-    if not registry.get(run_id):
+    meta = registry.get(run_id)
+    if not meta:
         raise HTTPException(status_code=404, detail="Run not found")
+
+    static_response = build_static_demo_run_response(request=request, meta=meta)
+    if static_response is not None:
+        return static_response
 
     run = store.get_run(run_id)
     if not run:
@@ -103,3 +111,20 @@ def demo_get_run(
 
     artifacts = store.list_artifacts(run_id)
     return build_run_response(run=run, artifacts=artifacts, settings=settings, gcs=gcs)
+
+
+@router.get("/demo/artifacts/{run_id}/{artifact_name}", name="demo_artifact")
+def demo_artifact(
+    run_id: str,
+    artifact_name: str,
+    _rate_limit: None = Depends(demo_rate_limit),
+    registry: DemoRegistry = Depends(get_demo_registry),
+):
+    if not registry.get(run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    path = demo_artifact_path(run_id=run_id, artifact_name=artifact_name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    return FileResponse(path=str(path), filename=artifact_name)

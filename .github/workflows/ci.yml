@@ -7,8 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      CITYLENS_CORE_GIT_URL: ${{ secrets.CITYLENS_CORE_GIT_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,16 +18,37 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
+      - name: Resolve citylens-core ref
+        id: core-ref
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          OVERRIDE_REF: ${{ vars.CITYLENS_CORE_REF }}
+        run: |
+          set -euo pipefail
+
+          ref="master"
+          candidate=""
+
+          if [ -n "${OVERRIDE_REF}" ]; then
+            candidate="${OVERRIDE_REF}"
+          elif [[ "${BRANCH_NAME}" == *-engine ]]; then
+            candidate="${BRANCH_NAME%-engine}-core"
+          fi
+
+          if [ -n "${candidate}" ] && git ls-remote --exit-code --heads https://github.com/joshvern/citylens-core.git "${candidate}" >/dev/null 2>&1; then
+            ref="${candidate}"
+          fi
+
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
       - name: Sync environment
         run: uv sync --all-packages --all-extras --frozen
 
       - name: Install citylens-core
-        run: |
-          if [ -z "${CITYLENS_CORE_GIT_URL}" ]; then
-            echo "CITYLENS_CORE_GIT_URL secret is required for engine CI." >&2
-            exit 1
-          fi
-          uv pip install --python ./.venv/bin/python --no-cache-dir "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"
+        env:
+          CITYLENS_CORE_REF: ${{ steps.core-ref.outputs.ref }}
+        run: uv pip install --python ./.venv/bin/python --no-cache-dir "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@${CITYLENS_CORE_REF}"
 
       - name: Lint API
         run: ./.venv/bin/python -m ruff check api/app api/tests

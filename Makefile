@@ -2,6 +2,8 @@
 
 PYTHON ?= ./.venv/bin/python
 UV ?= uv
+CITYLENS_CORE_REF ?= master
+CITYLENS_CORE_GIT_URL ?= git+https://github.com/joshvern/citylens-core.git@$(CITYLENS_CORE_REF)
 
 dev:
 	cd api && $(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
@@ -18,9 +20,6 @@ sync:
 	$(UV) sync --all-packages --all-extras
 	@if [ -d ../citylens-core ]; then \
 		$(UV) pip install --python $(PYTHON) -e ../citylens-core; \
-	elif [ -n "$$CITYLENS_CORE_GIT_URL" ]; then \
-		$(UV) pip install --python $(PYTHON) --no-cache-dir "citylens-core[sam2] @ $${CITYLENS_CORE_GIT_URL}"; \
 	else \
-		echo "citylens-core is not installed; place ../citylens-core next to this repo or set CITYLENS_CORE_GIT_URL."; \
-		exit 1; \
+		$(UV) pip install --python $(PYTHON) --no-cache-dir "citylens-core[sam2] @ $(CITYLENS_CORE_GIT_URL)"; \
 	fi

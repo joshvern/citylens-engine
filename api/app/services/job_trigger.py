@@ -21,9 +21,7 @@ class CloudRunJobTrigger:
 
         body: dict[str, Any] = {
             "overrides": {
-                "containerOverrides": [
-                    {"env": [{"name": "CITYLENS_RUN_ID", "value": run_id}]}
-                ]
+                "containerOverrides": [{"env": [{"name": "CITYLENS_RUN_ID", "value": run_id}]}]
             }
         }
 

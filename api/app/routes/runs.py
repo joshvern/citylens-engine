@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..models.schemas import ArtifactResponse, RunResponse
+from ..models.schemas import RunListItem, RunListResponse, RunResponse
 from ..services.auth import require_user_id
 from ..services.core_adapter import CitylensRequest
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.job_trigger import CloudRunJobTrigger
 from ..services.quotas import enforce_quotas
+from ..services.run_errors import normalize_run_record
 from ..services.run_presenter import build_run_response
 from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["runs"])
+SUPPORTED_BACKENDS = {"sam2"}
+logger = logging.getLogger(__name__)
 
 
 def get_store(settings: Settings = Depends(get_settings)) -> FirestoreStore:
@@ -26,7 +29,9 @@ def get_store(settings: Settings = Depends(get_settings)) -> FirestoreStore:
 
 
 def get_job_trigger(settings: Settings = Depends(get_settings)) -> CloudRunJobTrigger:
-    return CloudRunJobTrigger(project_id=settings.project_id, region=settings.region, job_name=settings.job_name)
+    return CloudRunJobTrigger(
+        project_id=settings.project_id, region=settings.region, job_name=settings.job_name
+    )
 
 
 def get_gcs(settings: Settings = Depends(get_settings)) -> GcsArtifacts:
@@ -37,10 +42,15 @@ def get_gcs(settings: Settings = Depends(get_settings)) -> GcsArtifacts:
 def create_run(
     request: CitylensRequest,
     user_id: str = Depends(require_user_id),
-    settings: Settings = Depends(get_settings),
     store: FirestoreStore = Depends(get_store),
     trigger: CloudRunJobTrigger = Depends(get_job_trigger),
 ) -> RunResponse:
+    if request.segmentation_backend not in SUPPORTED_BACKENDS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only segmentation_backend='sam2' is supported by citylens-engine",
+        )
+
     # quota enforcement
     enforce_quotas(store=store, user_id=user_id)
 
@@ -56,13 +66,40 @@ def create_run(
             store.set_execution_id(run_doc["run_id"], execution_id)
             run_doc["execution_id"] = execution_id
     except Exception as e:
-        store.mark_failed(run_doc["run_id"], str(e))
+        error = {
+            "code": "TRIGGER_FAILED",
+            "message": str(e),
+            "stage": "queued",
+            "traceback_summary": [],
+        }
+        store.mark_failed(run_doc["run_id"], error)
+        logger.exception(
+            "failed to trigger worker job", extra={"run_id": run_doc["run_id"], "user_id": user_id}
+        )
         raise HTTPException(status_code=500, detail=f"Failed to trigger worker job: {e}")
 
     return RunResponse(
         **run_doc,
         artifacts=[],
     )
+
+
+@router.get("/runs", response_model=RunListResponse)
+def list_runs(
+    limit: int = 20,
+    cursor: str | None = None,
+    user_id: str = Depends(require_user_id),
+    store: FirestoreStore = Depends(get_store),
+) -> RunListResponse:
+    limit = max(1, min(int(limit), 100))
+
+    try:
+        runs, next_cursor = store.list_runs(user_id=user_id, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    items = [RunListItem(**normalize_run_record(run)) for run in runs]
+    return RunListResponse(items=items, next_cursor=next_cursor)
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)

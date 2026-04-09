@@ -63,7 +63,9 @@ def test_demo_featured_no_api_key_required(monkeypatch, tmp_path: Path) -> None:
         )
     )
 
-    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(json_path=str(demo_file))
+    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(
+        json_path=str(demo_file)
+    )
 
     client = TestClient(app)
     resp = client.get("/v1/demo/featured")
@@ -82,7 +84,23 @@ def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CITYLENS_SIGN_URL_TTL_SECONDS", "300")
 
     demo_file = tmp_path / "demo_runs.json"
-    demo_file.write_text(json.dumps({"runs": [{"run_id": "demo-allow", "label": "A", "address": "x", "imagery_year": 2024, "baseline_year": 2017, "segmentation_backend": "sam2", "outputs": []}]}))
+    demo_file.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "run_id": "demo-allow",
+                        "label": "A",
+                        "address": "x",
+                        "imagery_year": 2024,
+                        "baseline_year": 2017,
+                        "segmentation_backend": "sam2",
+                        "outputs": [],
+                    }
+                ]
+            }
+        )
+    )
 
     run_doc = {
         "run_id": "demo-allow",
@@ -107,8 +125,12 @@ def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
         }
     ]
 
-    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(json_path=str(demo_file))
-    app.dependency_overrides[demo_routes.get_store] = lambda: FakeStore(run=run_doc, artifacts=artifacts)
+    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(
+        json_path=str(demo_file)
+    )
+    app.dependency_overrides[demo_routes.get_store] = lambda: FakeStore(
+        run=run_doc, artifacts=artifacts
+    )
     app.dependency_overrides[demo_routes.get_gcs] = lambda: FakeGcs()
 
     client = TestClient(app)

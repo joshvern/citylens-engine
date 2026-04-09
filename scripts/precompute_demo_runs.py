@@ -22,6 +22,8 @@ class DemoAddress:
     baseline_year: int
     segmentation_backend: str
     outputs: list[str]
+    orthophoto_path: str | None = None
+    baseline_path: str | None = None
 
 
 def _read_json(path: Path) -> Any:
@@ -96,6 +98,8 @@ def _load_addresses(path: Path) -> list[DemoAddress]:
                 baseline_year=int(item.get("baseline_year") or 2017),
                 segmentation_backend=str(item.get("segmentation_backend") or "sam2").strip() or "sam2",
                 outputs=[str(x) for x in (item.get("outputs") or [])] if isinstance(item.get("outputs"), list) else ["previews", "change", "mesh"],
+                orthophoto_path=(str(item.get("orthophoto_path")).strip() or None) if item.get("orthophoto_path") is not None else None,
+                baseline_path=(str(item.get("baseline_path")).strip() or None) if item.get("baseline_path") is not None else None,
             )
         )
 
@@ -163,6 +167,12 @@ def main(argv: list[str]) -> int:
             "segmentation_backend": demo.segmentation_backend,
             "outputs": demo.outputs,
         }
+
+        # Optional explicit input paths (useful for Cloud Run demos where inputs are baked into the worker image)
+        if demo.orthophoto_path:
+            payload["orthophoto_path"] = demo.orthophoto_path
+        if demo.baseline_path:
+            payload["baseline_path"] = demo.baseline_path
 
         print(f"Creating run for: {demo.label} ({demo.address})", file=sys.stderr)
         create_resp = _http_json("POST", create_url, api_key=args.admin_api_key, body=payload)

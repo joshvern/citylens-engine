@@ -5,12 +5,34 @@ from dataclasses import dataclass
 
 import google.auth
 
+DEFAULT_CORS_ORIGINS = [
+    "https://citylens.dev",
+    "https://www.citylens.dev",
+    "http://localhost:3000",
+]
+
 
 def _env(name: str, default: str | None = None) -> str:
     val = os.getenv(name, default)
     if val is None or val == "":
         raise RuntimeError(f"Missing required env var: {name}")
     return val
+
+
+def _csv_env(name: str, default: str | None = None) -> list[str]:
+    raw = os.getenv(name, default if default is not None else "")
+    values = [item.strip() for item in str(raw).split(",") if item.strip()]
+    if not values:
+        raise RuntimeError(f"Missing required env var: {name}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def _project_id() -> str:
@@ -47,6 +69,7 @@ class Settings:
     bucket: str
 
     api_keys: list[str]
+    cors_origins: list[str]
 
     runs_collection: str = "runs"
     users_collection: str = "users"
@@ -58,14 +81,15 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    keys_raw = os.getenv("CITYLENS_API_KEYS", "").strip()
-    api_keys = [k.strip() for k in keys_raw.split(",") if k.strip()]
+    api_keys = _csv_env("CITYLENS_API_KEYS")
+    cors_origins = _csv_env("CITYLENS_CORS_ORIGINS", ",".join(DEFAULT_CORS_ORIGINS))
 
     return Settings(
         project_id=_project_id(),
         region=_env("CITYLENS_REGION"),
         bucket=_env("CITYLENS_BUCKET"),
         api_keys=api_keys,
+        cors_origins=cors_origins,
         runs_collection=os.getenv("CITYLENS_RUNS_COLLECTION", "runs"),
         users_collection=os.getenv("CITYLENS_USERS_COLLECTION", "users"),
         sign_urls=_env_bool("CITYLENS_SIGN_URLS", False),

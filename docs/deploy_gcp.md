@@ -2,6 +2,11 @@
 
 Placeholders used: `<PROJECT_ID> <REGION> <BUCKET_NAME> <API_SERVICE_NAME> <JOB_NAME> <API_SA> <WORKER_SA>`
 
+`citylens-engine` has two independent deployment surfaces:
+
+- the API service, deployed as a Cloud Run service
+- the worker, deployed as a Cloud Run Job
+
 This repo uses:
 
 - Firestore (Native mode) for metadata (`runs`, `users`, `runs/{run_id}/artifacts/*`)
@@ -193,6 +198,10 @@ Note: `--set-env-vars` replaces the entire env-var set for the service/job. If y
 
 ### 8) Build & create Cloud Run Job for worker
 
+The worker is deployed separately from the API service. Keep the two surfaces
+aligned on the same `citylens-core` revision, but build and deploy them as
+independent Cloud Run resources.
+
 Build the worker image:
 
 ```bash
@@ -248,13 +257,13 @@ gcloud auth application-default login
 Firestore “ready check” (avoids heredoc pitfalls):
 
 ```bash
-python3.10 -c 'from google.cloud import firestore; c=firestore.Client(project="<PROJECT_ID>"); print("ok", c.project)'
+./.venv/bin/python -c 'from google.cloud import firestore; c=firestore.Client(project="<PROJECT_ID>"); print("ok", c.project)'
 ```
 
 Example for your project:
 
 ```bash
-python3.10 -c 'from google.cloud import firestore; c=firestore.Client(project="citylens-001"); print("ok", c.project)'
+./.venv/bin/python -c 'from google.cloud import firestore; c=firestore.Client(project="citylens-001"); print("ok", c.project)'
 ```
 
 ### CORS (browser clients)

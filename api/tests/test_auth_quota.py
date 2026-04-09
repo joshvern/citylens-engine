@@ -98,3 +98,22 @@ def test_quota_concurrent_429(monkeypatch) -> None:
     assert resp.status_code == 429
 
     app.dependency_overrides = {}
+
+
+def test_backend_validation_rejects_unsupported_backend(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake_store = FakeStore()
+
+    app.dependency_overrides[runs_routes.get_store] = lambda: fake_store
+    app.dependency_overrides[runs_routes.get_job_trigger] = lambda: FakeTrigger()
+
+    client = TestClient(app)
+    resp = client.post(
+        "/v1/runs",
+        headers={"X-API-Key": "dev-key-1"},
+        json={"address": "x", "segmentation_backend": "unet"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]
+
+    app.dependency_overrides = {}

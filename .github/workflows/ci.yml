@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CITYLENS_CORE_GIT_URL: ${{ secrets.CITYLENS_CORE_GIT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync environment
+        run: uv sync --all-packages --all-extras --frozen
+
+      - name: Install citylens-core
+        run: |
+          if [ -z "${CITYLENS_CORE_GIT_URL}" ]; then
+            echo "CITYLENS_CORE_GIT_URL secret is required for engine CI." >&2
+            exit 1
+          fi
+          uv pip install --python ./.venv/bin/python --no-cache-dir "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"
+
+      - name: Lint API
+        run: ./.venv/bin/python -m ruff check api/app api/tests
+
+      - name: Lint worker
+        run: ./.venv/bin/python -m ruff check worker/services worker/worker.py worker/test_*.py
+
+      - name: Test API
+        run: ./.venv/bin/python -m pytest api/tests
+
+      - name: Test worker
+        run: ./.venv/bin/python -m pytest worker

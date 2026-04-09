@@ -32,13 +32,17 @@ environment with `uv sync --all-packages --all-extras`.
 root `.venv`:
 
 - local dev: `uv pip install --python ./.venv/bin/python -e ../citylens-core`
-- CI default: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@<REF>"`
+- CI default: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@v0.3.0"`
 - CI / Docker override: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"`
 
 Use `make sync` to perform the workspace sync plus the sibling-core install when the
 neighboring repo is available. Without the sibling checkout, it falls back to the
-public GitHub repo using `CITYLENS_CORE_REF` (default `master`) or an explicit
+public GitHub repo using `CITYLENS_CORE_REF` (default `v0.3.0`) or an explicit
 `CITYLENS_CORE_GIT_URL` override.
+
+Current pinned release tag:
+
+- `citylens-core@v0.3.0`
 
 ### VS Code folder expectations
 

@@ -22,22 +22,13 @@ jobs:
         id: core-ref
         shell: bash
         env:
-          BRANCH_NAME: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
           OVERRIDE_REF: ${{ vars.CITYLENS_CORE_REF }}
         run: |
           set -euo pipefail
 
-          ref="master"
-          candidate=""
-
+          ref="v0.3.0"
           if [ -n "${OVERRIDE_REF}" ]; then
-            candidate="${OVERRIDE_REF}"
-          elif [[ "${BRANCH_NAME}" == *-engine ]]; then
-            candidate="${BRANCH_NAME%-engine}-core"
-          fi
-
-          if [ -n "${candidate}" ] && git ls-remote --exit-code --heads https://github.com/joshvern/citylens-core.git "${candidate}" >/dev/null 2>&1; then
-            ref="${candidate}"
+            ref="${OVERRIDE_REF}"
           fi
 
           echo "ref=${ref}" >> "${GITHUB_OUTPUT}"

@@ -37,6 +37,17 @@ class GcsArtifacts:
         self.client = client or storage.Client()
         self.bucket_name = bucket
 
+    def download_bytes(self, *, object_name: str) -> tuple[bytes, str | None]:
+        def _op() -> tuple[bytes, str | None]:
+            bucket = self.client.bucket(self.bucket_name)
+            blob = bucket.blob(object_name)
+            if not blob.exists():
+                raise FileNotFoundError(object_name)
+            blob.reload()
+            return blob.download_as_bytes(), blob.content_type
+
+        return retry_transient(_op)
+
     def signed_url(self, *, object_name: str, ttl_seconds: int) -> str:
         def _op() -> str:
             bucket = self.client.bucket(self.bucket_name)

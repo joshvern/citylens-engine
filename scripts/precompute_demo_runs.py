@@ -12,6 +12,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+REQUIRED_ARTIFACTS = ("preview.png", "change.geojson", "mesh.ply", "run_summary.json")
+
 
 @dataclass(frozen=True)
 class DemoAddress:
@@ -78,6 +80,102 @@ def _normalize_run_id(create_resp: Any) -> str:
                 return v.strip()
 
     raise RuntimeError(f"Could not determine run_id from response: {create_resp!r}")
+
+
+def _normalize_artifacts(raw: Any) -> dict[str, dict[str, Any]]:
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        items = []
+        for key, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            if "name" not in value:
+                value = {"name": str(key), **value}
+            items.append(value)
+    else:
+        items = []
+
+    out: dict[str, dict[str, Any]] = {}
+    for artifact in items:
+        if not isinstance(artifact, dict):
+            continue
+        name = str(artifact.get("name") or "").strip()
+        if not name:
+            continue
+        out[name] = artifact
+    return out
+
+
+def _artifact_fetch_url(artifact: dict[str, Any]) -> str | None:
+    for key in ("signed_url", "url"):
+        value = artifact.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _probe_url(url: str, *, timeout_s: float = 30.0) -> None:
+    req = Request(url, headers={"Accept": "*/*"})
+    try:
+        with urlopen(req, timeout=timeout_s) as resp:
+            resp.read(1)
+    except HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = ""
+        raise RuntimeError(f"HTTP {e.code} fetching artifact {url}: {err_body or e.reason}") from e
+    except URLError as e:
+        raise RuntimeError(f"Network error fetching artifact {url}: {e}") from e
+
+
+def _fetch_json_url(url: str, *, timeout_s: float = 30.0) -> Any:
+    req = Request(url, headers={"Accept": "application/json"})
+    try:
+        with urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw else None
+    except HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = ""
+        raise RuntimeError(f"HTTP {e.code} fetching artifact {url}: {err_body or e.reason}") from e
+    except URLError as e:
+        raise RuntimeError(f"Network error fetching artifact {url}: {e}") from e
+
+
+def _validate_summary_json(summary: Any, *, run_id: str) -> None:
+    if not isinstance(summary, dict):
+        raise RuntimeError(f"run_summary.json for run_id={run_id} did not return a JSON object")
+    if not isinstance(summary.get("qa"), dict):
+        raise RuntimeError(f"run_summary.json for run_id={run_id} is missing a qa object")
+    if not isinstance(summary.get("performance"), dict):
+        raise RuntimeError(f"run_summary.json for run_id={run_id} is missing a performance object")
+
+
+def _validate_completed_run(run: Any, *, run_id: str) -> None:
+    if not isinstance(run, dict):
+        raise RuntimeError(f"Expected dict run response for run_id={run_id}, got {type(run).__name__}")
+
+    artifacts = _normalize_artifacts(run.get("artifacts"))
+    missing = [name for name in REQUIRED_ARTIFACTS if name not in artifacts]
+    if missing:
+        raise RuntimeError(
+            f"Run {run_id} is missing required artifacts: {', '.join(missing)}"
+        )
+
+    for artifact_name in REQUIRED_ARTIFACTS:
+        fetch_url = _artifact_fetch_url(artifacts[artifact_name])
+        if not fetch_url:
+            raise RuntimeError(f"Run {run_id} is missing a fetchable URL for {artifact_name}")
+        if artifact_name != "run_summary.json":
+            _probe_url(fetch_url)
+
+    summary_url = _artifact_fetch_url(artifacts["run_summary.json"])
+    summary = _fetch_json_url(summary_url)
+    _validate_summary_json(summary, run_id=run_id)
 
 
 def _load_addresses(path: Path) -> list[DemoAddress]:
@@ -199,6 +297,8 @@ def main(argv: list[str]) -> int:
                 raise RuntimeError(f"Timed out waiting for run_id={run_id} ({demo.label})")
 
             time.sleep(float(args.poll_interval_seconds))
+
+        _validate_completed_run(run, run_id=run_id)
 
         results.append(
             {

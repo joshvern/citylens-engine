@@ -332,19 +332,19 @@ The API exposes unauthenticated demo endpoints:
 - `GET /v1/demo/runs/{run_id}`
 
 These endpoints are backed by an allowlist file baked into the API image: `deploy/demo_runs.json`.
-This repo now ships a versioned static demo bundle and a non-empty [deploy/demo_runs.json](../deploy/demo_runs.json), so `/v1/demo/featured` can return a working featured entry immediately after deploy.
+`deploy/demo_runs.json` must contain only real successful runs that already exist in
+Firestore and GCS. There is no baked placeholder artifact bundle.
 
-By default, the API will serve the bundled demo artifacts from `deploy/demo_artifacts/<run_id>/` through these unauthenticated routes:
+For allowlisted demo runs, the API proxies real artifacts through these unauthenticated routes:
 
 - `GET /v1/demo/runs/{run_id}`
 - `GET /v1/demo/artifacts/{run_id}/{artifact_name}`
 
-If you also want demo runs backed by real Firestore + GCS artifacts, you can still precompute and bake an updated allowlist.
-
 To generate demo runs:
 
 1) Edit [deploy/demo_addresses.json](../deploy/demo_addresses.json) with the addresses/years you want.
-2) Deploy using the helper that can precompute and then re-deploy the API to bake the resulting allowlist:
+2) Deploy the worker + API so the modular pipeline is live.
+3) Run the precompute helper against the deployed API:
 
 ```bash
 ./deploy/deploy_all.sh --precompute
@@ -353,6 +353,10 @@ To generate demo runs:
 Notes:
 
 - Precompute requires an admin API key (it uses `POST /v1/runs` and waits for completion). By default it uses the first key in `CITYLENS_API_KEYS`, or you can set `CITYLENS_ADMIN_API_KEY` in your `.env`.
-- If you want to keep the demo allowlist in git, commit the updated `deploy/demo_runs.json` after precompute.
+- `scripts/precompute_demo_runs.py` now rejects incomplete runs. It writes `deploy/demo_runs.json` only after verifying `preview.png`, `change.geojson`, `mesh.ply`, and `run_summary.json`.
+- Commit the updated `deploy/demo_runs.json` after precompute if you want the allowlist versioned in git.
+- Redeploy the API after committing the new allowlist so `/v1/demo/featured` reflects it.
 
-If demo runs load but artifacts don’t render in the browser, ensure you have signed URLs enabled (`CITYLENS_SIGN_URLS=1`) and bucket CORS configured (see “CORS (browser clients)” above).
+If demo runs load but artifacts do not render in the browser, verify that the run is
+allowlisted and that `GET /v1/demo/runs/{run_id}` returns same-origin artifact paths
+like `/v1/demo/artifacts/<run_id>/<artifact_name>`.

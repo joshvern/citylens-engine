@@ -2,6 +2,11 @@
 
 Placeholders used: `<PROJECT_ID> <REGION> <BUCKET_NAME> <API_SERVICE_NAME> <JOB_NAME> <API_SA> <WORKER_SA>`
 
+`citylens-engine` has two independent deployment surfaces:
+
+- the API service, deployed as a Cloud Run service
+- the worker, deployed as a Cloud Run Job
+
 This repo uses:
 
 - Firestore (Native mode) for metadata (`runs`, `users`, `runs/{run_id}/artifacts/*`)
@@ -154,20 +159,21 @@ gcloud storage buckets add-iam-policy-binding gs://<BUCKET_NAME> \
 
 ### 7) Build & deploy API to Cloud Run
 
-Important: the API and worker Dockerfiles intentionally require `CITYLENS_CORE_GIT_URL` at build time.
-This is because `citylens-core` is the canonical contract and must be installed into the container.
+The API and worker Dockerfiles default to the pinned core release tag:
 
-If you use `gcloud run deploy --source .` without providing Docker build args, Cloud Build will fail.
-Use the Cloud Build config in `api/cloudbuild.yaml` to build with the required build-arg, then deploy from the built image.
+- `git+https://github.com/joshvern/citylens-core.git@v0.3.0`
 
-Set the core git URL (must be reachable by Cloud Build). Example:
+You can override that build input with `CITYLENS_CORE_GIT_URL` when you need a different core revision.
+Use the Cloud Build config in `api/cloudbuild.yaml` to build with the default tag or an explicit override, then deploy from the built image.
+
+Set the core git URL only if you want to override the default tag. Example:
 
 `CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"`
 
 Build the API image:
 
 ```bash
-CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"
+CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.0}"
 API_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-api:latest"
 
 gcloud builds submit . \
@@ -193,12 +199,16 @@ Note: `--set-env-vars` replaces the entire env-var set for the service/job. If y
 
 ### 8) Build & create Cloud Run Job for worker
 
+The worker is deployed separately from the API service. Keep the two surfaces
+aligned on the same `citylens-core` revision, but build and deploy them as
+independent Cloud Run resources.
+
 Build the worker image:
 
 ```bash
 cd ../worker
 
-CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"
+CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.0}"
 WORKER_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-worker:latest"
 
 gcloud builds submit . \
@@ -248,13 +258,13 @@ gcloud auth application-default login
 Firestore “ready check” (avoids heredoc pitfalls):
 
 ```bash
-python3.10 -c 'from google.cloud import firestore; c=firestore.Client(project="<PROJECT_ID>"); print("ok", c.project)'
+./.venv/bin/python -c 'from google.cloud import firestore; c=firestore.Client(project="<PROJECT_ID>"); print("ok", c.project)'
 ```
 
 Example for your project:
 
 ```bash
-python3.10 -c 'from google.cloud import firestore; c=firestore.Client(project="citylens-001"); print("ok", c.project)'
+./.venv/bin/python -c 'from google.cloud import firestore; c=firestore.Client(project="citylens-001"); print("ok", c.project)'
 ```
 
 ### CORS (browser clients)

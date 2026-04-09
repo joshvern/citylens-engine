@@ -5,6 +5,8 @@ from pathlib import Path
 
 from google.cloud import storage
 
+from .retry import retry_transient
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -20,11 +22,14 @@ class GcsArtifacts:
         self.bucket_name = bucket
 
     def upload(self, *, local_path: Path, object_name: str) -> tuple[str, int, str]:
-        bucket = self.client.bucket(self.bucket_name)
-        blob = bucket.blob(object_name)
-        blob.upload_from_filename(str(local_path))
+        def _op() -> tuple[str, int, str]:
+            bucket = self.client.bucket(self.bucket_name)
+            blob = bucket.blob(object_name)
+            blob.upload_from_filename(str(local_path))
 
-        size = int(local_path.stat().st_size)
-        sha256 = sha256_file(local_path)
-        gcs_uri = f"gs://{self.bucket_name}/{object_name}"
-        return gcs_uri, size, sha256
+            size = int(local_path.stat().st_size)
+            sha256 = sha256_file(local_path)
+            gcs_uri = f"gs://{self.bucket_name}/{object_name}"
+            return gcs_uri, size, sha256
+
+        return retry_transient(_op)

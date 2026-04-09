@@ -9,6 +9,7 @@ from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request
 from google.cloud import storage
 
+from .retry import retry_transient
 
 _METADATA_SA_EMAIL_URL = (
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
@@ -37,44 +38,49 @@ class GcsArtifacts:
         self.bucket_name = bucket
 
     def signed_url(self, *, object_name: str, ttl_seconds: int) -> str:
-        bucket = self.client.bucket(self.bucket_name)
-        blob = bucket.blob(object_name)
+        def _op() -> str:
+            bucket = self.client.bucket(self.bucket_name)
+            blob = bucket.blob(object_name)
 
-        expiration = timedelta(seconds=ttl_seconds)
-        api_access_endpoint = "https://storage.googleapis.com"
-        try:
-            # Works when running with a JSON service-account key file.
-            return blob.generate_signed_url(
-                version="v4",
-                expiration=expiration,
-                method="GET",
-                api_access_endpoint=api_access_endpoint,
-            )
-        except Exception as base_exc:
-            # Cloud Run typically uses metadata/ADC credentials which cannot sign bytes locally.
-            # Use IAMCredentials-backed signing via impersonated credentials.
+            expiration = timedelta(seconds=ttl_seconds)
+            api_access_endpoint = "https://storage.googleapis.com"
             try:
-                source_credentials, _ = google.auth.default()
-                service_account_email = _service_account_email_from_credentials(source_credentials)
-                if not service_account_email:
-                    raise base_exc
-
-                # Lifetime must be <= 3600; keep it reasonably close to the URL TTL.
-                lifetime = max(60, min(int(ttl_seconds), 3600))
-                signing_credentials = impersonated_credentials.Credentials(
-                    source_credentials=source_credentials,
-                    target_principal=service_account_email,
-                    target_scopes=["https://www.googleapis.com/auth/devstorage.read_only"],
-                    lifetime=lifetime,
-                )
-                signing_credentials.refresh(Request())
-
+                # Works when running with a JSON service-account key file.
                 return blob.generate_signed_url(
                     version="v4",
                     expiration=expiration,
                     method="GET",
                     api_access_endpoint=api_access_endpoint,
-                    credentials=signing_credentials,
                 )
-            except Exception:
-                raise base_exc
+            except Exception as base_exc:
+                # Cloud Run typically uses metadata/ADC credentials which cannot sign bytes locally.
+                # Use IAMCredentials-backed signing via impersonated credentials.
+                try:
+                    source_credentials, _ = google.auth.default()
+                    service_account_email = _service_account_email_from_credentials(
+                        source_credentials
+                    )
+                    if not service_account_email:
+                        raise base_exc
+
+                    # Lifetime must be <= 3600; keep it reasonably close to the URL TTL.
+                    lifetime = max(60, min(int(ttl_seconds), 3600))
+                    signing_credentials = impersonated_credentials.Credentials(
+                        source_credentials=source_credentials,
+                        target_principal=service_account_email,
+                        target_scopes=["https://www.googleapis.com/auth/devstorage.read_only"],
+                        lifetime=lifetime,
+                    )
+                    signing_credentials.refresh(Request())
+
+                    return blob.generate_signed_url(
+                        version="v4",
+                        expiration=expiration,
+                        method="GET",
+                        api_access_endpoint=api_access_endpoint,
+                        credentials=signing_credentials,
+                    )
+                except Exception:
+                    raise base_exc
+
+        return retry_transient(_op)

@@ -3,6 +3,7 @@
 Smoke test: ensure citylens-core with SAM2 can be invoked from engine worker context.
 This mimics what the worker does: load request, invoke run_citylens, upload artifacts.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,7 +57,9 @@ def test_core_handles_missing_assets() -> None:
 
         summary = json.loads(summary_path.read_text())
         assert summary.get("ok") is False, "Summary should indicate failure"
-        assert summary.get("error_code") == "missing_dependency", f"Got error_code={summary.get('error_code')}"
+        assert summary.get("error_code") == "missing_dependency", (
+            f"Got error_code={summary.get('error_code')}"
+        )
 
         print("✓ Core returns summary-only on missing SAM2 assets")
 

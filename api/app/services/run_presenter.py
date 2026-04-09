@@ -5,6 +5,7 @@ from typing import Any
 
 from ..models.schemas import ArtifactResponse, RunResponse
 from .gcs_artifacts import GcsArtifacts
+from .run_errors import normalize_run_record
 from .settings import Settings
 
 
@@ -29,6 +30,12 @@ def build_run_response(
     gcs: GcsArtifacts,
 ) -> RunResponse:
     out_artifacts: list[ArtifactResponse] = []
+    # The Firestore run doc may contain an `artifacts` field (either legacy list or
+    # the newer {name: gcs_uri} map). We always provide the API response's
+    # artifacts list explicitly, so remove it from the base payload to avoid
+    # passing duplicate keyword args into RunResponse.
+    run_base = normalize_run_record(run)
+    run_base.pop("artifacts", None)
 
     # Prefer the compact "artifacts" map from the run doc (written by worker) if present.
     # This contains {name: gcs_uri} for all successfully uploaded artifacts and is more reliable
@@ -61,7 +68,7 @@ def build_run_response(
                     signed_url=signed_url,
                 )
             )
-        return RunResponse(**run, artifacts=out_artifacts)
+        return RunResponse(**run_base, artifacts=out_artifacts)
 
     # Fallback: read from artifacts subcollection if the map is not present.
     if artifacts is None:
@@ -101,11 +108,7 @@ def build_run_response(
             )
         )
 
-    run_out: dict[str, Any] = dict(run)
-    run_out.setdefault("error", None)
-    run_out.setdefault("execution_id", None)
-
     return RunResponse(
-        **run_out,
+        **run_base,
         artifacts=out_artifacts,
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -7,6 +9,11 @@ from typing import Any
 from .core_adapter import CitylensRequest, run_citylens
 from .firestore_store import FirestoreStore
 from .gcs_artifacts import GcsArtifacts
+from .imagery_inputs import ensure_work_dir_inputs
+from .run_errors import build_error_payload
+from .settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -26,7 +33,15 @@ def _infer_type(filename: str) -> str:
     return "application/octet-stream"
 
 
-def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: FirestoreStore, gcs: GcsArtifacts) -> None:
+def run(
+    *,
+    run_id: str,
+    request_dict: dict[str, Any],
+    work_root: Path,
+    store: FirestoreStore,
+    gcs: GcsArtifacts,
+    settings: Settings,
+) -> None:
     work_dir = (work_root / run_id).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -38,6 +53,29 @@ def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: Fi
         store.update_run(run_id, patch)
 
     req = CitylensRequest.model_validate(request_dict)
+
+    logger.info(
+        "preparing work_dir inputs",
+        extra={
+            "run_id": run_id,
+            "stage": "fetch_inputs",
+            "work_root": str(settings.work_root),
+        },
+    )
+    progress_cb(2, "fetch_inputs")
+    manifest = ensure_work_dir_inputs(
+        request=req,
+        work_dir=work_dir,
+        gcs_client=gcs.client,
+        bucket=gcs.bucket_name,
+    )
+
+    req = req.model_copy(
+        update={
+            "orthophoto_path": manifest.get("orthophoto_path"),
+            "baseline_path": manifest.get("baseline_path"),
+        }
+    )
 
     artifacts_map = run_citylens(req, work_dir, progress_cb=progress_cb)
 
@@ -72,15 +110,15 @@ def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: Fi
     # Convenience: also stash a compact map on the run document itself.
     # This makes it easy for the API/UI to show artifacts without extra reads.
     if uploaded_by_name:
-        store.update_run(run_id, {"artifacts": {k: v.get("gcs_uri") for k, v in uploaded_by_name.items()}})
+        store.update_run(
+            run_id, {"artifacts": {k: v.get("gcs_uri") for k, v in uploaded_by_name.items()}}
+        )
 
     # Determine success/failure from core run_summary.json (core may not raise).
     ok = True
     summary_path = work_dir / "run_summary.json"
     if summary_path.exists():
         try:
-            import json
-
             summary = json.loads(summary_path.read_text())
             if isinstance(summary, dict) and summary.get("ok") is False:
                 ok = False
@@ -88,7 +126,29 @@ def run(*, run_id: str, request_dict: dict[str, Any], work_root: Path, store: Fi
             ok = False
 
     if not ok:
-        store.update_run(run_id, {"status": "failed", "stage": "done", "progress": 100, "error": "pipeline failed"})
+        error = build_error_payload(
+            RuntimeError("citylens-core reported ok=false"),
+            code="PIPELINE_FAILED",
+            stage="done",
+        )
+        try:
+            if summary_path.exists():
+                summary = json.loads(summary_path.read_text())
+                if isinstance(summary, dict):
+                    code = str(summary.get("error_code") or "PIPELINE_FAILED")
+                    message = str(summary.get("error_message") or "citylens-core reported ok=false")
+                    error["code"] = code
+                    error["message"] = message
+                    error["traceback_summary"].append(f"summary: {summary_path.name}")
+        except Exception:
+            pass
+
+        store.update_run(
+            run_id,
+            {"status": "failed", "stage": "done", "progress": 100, "error": error},
+        )
         return
 
-    store.update_run(run_id, {"status": "succeeded", "stage": "done", "progress": 100, "error": None})
+    store.update_run(
+        run_id, {"status": "succeeded", "stage": "done", "progress": 100, "error": None}
+    )

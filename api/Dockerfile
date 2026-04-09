@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -20,11 +20,8 @@ RUN pip install --no-cache-dir -e .
 # Install citylens-core from git at build time.
 # Provide build arg CITYLENS_CORE_GIT_URL, e.g.
 #   --build-arg CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"
-ARG CITYLENS_CORE_GIT_URL=
-RUN if [ -z "$CITYLENS_CORE_GIT_URL" ]; then \
-      echo "ERROR: CITYLENS_CORE_GIT_URL build-arg is required (citylens-core is the canonical contract)." && exit 1; \
-    fi && \
-    pip install --no-cache-dir "citylens-core @ ${CITYLENS_CORE_GIT_URL}"
+ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.0
+RUN pip install --no-cache-dir "citylens-core @ ${CITYLENS_CORE_GIT_URL}"
 
 ENV PORT=8080
 EXPOSE 8080

@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Resolve citylens-core ref
+        id: core-ref
+        shell: bash
+        env:
+          OVERRIDE_REF: ${{ vars.CITYLENS_CORE_REF }}
+        run: |
+          set -euo pipefail
+
+          ref="v0.3.0"
+          if [ -n "${OVERRIDE_REF}" ]; then
+            ref="${OVERRIDE_REF}"
+          fi
+
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sync environment
+        run: uv sync --all-packages --all-extras --frozen
+
+      - name: Install citylens-core
+        env:
+          CITYLENS_CORE_REF: ${{ steps.core-ref.outputs.ref }}
+        run: uv pip install --python ./.venv/bin/python --no-cache-dir "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@${CITYLENS_CORE_REF}"
+
+      - name: Lint API
+        run: ./.venv/bin/python -m ruff check api/app api/tests
+
+      - name: Lint worker
+        run: ./.venv/bin/python -m ruff check worker/services worker/worker.py worker/test_*.py
+
+      - name: Test API
+        run: ./.venv/bin/python -m pytest api/tests
+
+      - name: Test worker
+        run: ./.venv/bin/python -m pytest worker

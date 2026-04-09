@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import pytest
-
 
 def test_core_imports() -> None:
     from citylens_core.models import CitylensRequest
@@ -16,6 +14,7 @@ def test_core_imports() -> None:
 
 def test_api_uses_citylensrequest_type() -> None:
     from citylens_core.models import CitylensRequest
+
     from app.routes import runs as runs_routes
 
     assert runs_routes.CitylensRequest is CitylensRequest
@@ -27,18 +26,29 @@ def test_api_uses_citylensrequest_type() -> None:
 
 def test_core_standard_artifact_filenames(monkeypatch) -> None:
     import citylens_core.pipeline as pl
+    import citylens_core.sam.assets as sam_assets
 
     # Avoid real work/network: make stages no-op.
+    monkeypatch.setattr(sam_assets, "ensure_sam2_assets", lambda *args, **kwargs: None)
     monkeypatch.setattr(pl, "stage_resolve", lambda req, wd, ctx, summary: ctx)
     monkeypatch.setattr(pl, "stage_fetch", lambda req, wd, ctx, summary: ctx)
-    monkeypatch.setattr(pl, "stage_segment", lambda req, wd, ctx, summary: ctx)
+    monkeypatch.setattr(
+        pl,
+        "stage_segment",
+        lambda req, wd, ctx, summary: {"mask": None, "baseline_mask": None},
+    )
+    monkeypatch.setattr(
+        pl,
+        "stage_refine",
+        lambda req, wd, ctx, summary: {**ctx, "refined_mask": None, "refined_baseline_mask": None},
+    )
 
     def _touch(path: Path, content: bytes = b"x") -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
 
     def _stage_change(req, wd, ctx, summary):
-        _touch(Path(wd) / "change.geojson", b"{\"type\":\"FeatureCollection\",\"features\":[]}")
+        _touch(Path(wd) / "change.geojson", b'{"type":"FeatureCollection","features":[]}')
         return ctx
 
     def _stage_reconstruct(req, wd, ctx, summary):
@@ -60,7 +70,7 @@ def test_core_standard_artifact_filenames(monkeypatch) -> None:
         # Satisfy preflight checks without requiring SAM2 assets.
         (work_dir / "orthophoto.png").write_bytes(b"x")
         (work_dir / "baseline.png").write_bytes(b"x")
-        req = CitylensRequest.model_validate({"address": "x", "segmentation_backend": "unet"})
+        req = CitylensRequest.model_validate({"address": "x", "segmentation_backend": "sam2"})
         out = pl.run_citylens(req, work_dir)
 
         expected = {"preview.png", "change.geojson", "mesh.ply", "run_summary.json"}

@@ -44,6 +44,26 @@ Current pinned release tag:
 
 - `citylens-core@v0.3.0`
 
+## Demo Mode
+
+The API now ships with built-in unauthenticated demo endpoints:
+
+- `GET /v1/demo/featured`
+- `GET /v1/demo/runs/{run_id}`
+- `GET /v1/demo/artifacts/{run_id}/{artifact_name}`
+
+By default, these routes are backed by the versioned files under:
+
+- [deploy/demo_runs.json](deploy/demo_runs.json)
+- [deploy/demo_artifacts/](deploy/demo_artifacts)
+
+That means demo mode can work immediately after an API deploy without first
+precomputing Firestore/GCS runs.
+
+If you want demo runs backed by real pipeline outputs instead, use
+`scripts/precompute_demo_runs.py` or `deploy/deploy_all.sh --precompute` to
+generate a new allowlist and rebuild the API image.
+
 ### VS Code folder expectations
 
 - Open `citylens-engine/` as its own folder when you want engine-specific Python

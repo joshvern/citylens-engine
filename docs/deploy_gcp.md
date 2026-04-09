@@ -332,7 +332,14 @@ The API exposes unauthenticated demo endpoints:
 - `GET /v1/demo/runs/{run_id}`
 
 These endpoints are backed by an allowlist file baked into the API image: `deploy/demo_runs.json`.
-By default in this repo, [deploy/demo_runs.json](../deploy/demo_runs.json) contains an empty list, so `/v1/demo/featured` will return empty until you generate it.
+This repo now ships a versioned static demo bundle and a non-empty [deploy/demo_runs.json](../deploy/demo_runs.json), so `/v1/demo/featured` can return a working featured entry immediately after deploy.
+
+By default, the API will serve the bundled demo artifacts from `deploy/demo_artifacts/<run_id>/` through these unauthenticated routes:
+
+- `GET /v1/demo/runs/{run_id}`
+- `GET /v1/demo/artifacts/{run_id}/{artifact_name}`
+
+If you also want demo runs backed by real Firestore + GCS artifacts, you can still precompute and bake an updated allowlist.
 
 To generate demo runs:
 

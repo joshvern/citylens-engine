@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import demo as demo_routes
+from app.services.demo_bundle import EXPECTED_DEMO_ARTIFACTS
 from app.services.demo_registry import DemoRegistry
 
 
@@ -146,5 +147,125 @@ def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
     # not allowlisted, even if it might exist elsewhere
     miss = client.get("/v1/demo/runs/not-allowlisted")
     assert miss.status_code == 404
+
+    app.dependency_overrides = {}
+
+
+def test_demo_run_serves_static_bundle(monkeypatch, tmp_path: Path) -> None:
+    _set_required_env(monkeypatch)
+
+    demo_file = tmp_path / "demo_runs.json"
+    demo_file.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "category": "Featured",
+                        "run_id": "demo-static",
+                        "label": "Static demo",
+                        "address": "100 E 21st St Brooklyn, NY 11226",
+                        "imagery_year": 2024,
+                        "baseline_year": 2017,
+                        "segmentation_backend": "sam2",
+                        "outputs": ["previews", "change", "mesh"],
+                    }
+                ]
+            }
+        )
+    )
+
+    artifacts_root = tmp_path / "demo_artifacts" / "demo-static"
+    artifacts_root.mkdir(parents=True)
+    (artifacts_root / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (artifacts_root / "change.geojson").write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"kind": "added", "crs": "EPSG:4326"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [-73.9580, 40.6600],
+                                    [-73.9576, 40.6600],
+                                    [-73.9576, 40.6603],
+                                    [-73.9580, 40.6603],
+                                    [-73.9580, 40.6600],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (artifacts_root / "mesh.ply").write_text(
+        (
+            "ply\n"
+            "format ascii 1.0\n"
+            "element vertex 3\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "element face 1\n"
+            "property list uchar int vertex_indices\n"
+            "end_header\n"
+            "0 0 0\n"
+            "1 0 0\n"
+            "0 1 0\n"
+            "3 0 1 2\n"
+        )
+    )
+    (artifacts_root / "run_summary.json").write_text(
+        json.dumps(
+            {
+                "qa": {
+                    "reference_case_id": "100 E 21st St Brooklyn, NY 11226",
+                    "baseline_footprints_used": True,
+                    "lidar_used": False,
+                    "mask_iou": 0.91,
+                    "change_polygon_f1": 0.87,
+                    "mesh_footprint_iou": 0.86,
+                    "parity_status": "demo_bundle",
+                },
+                "performance": {
+                    "total_runtime_seconds": 12.3,
+                    "stage_timings_seconds": {"fetch": 1.0, "segment": 8.2, "change": 1.7},
+                },
+            }
+        )
+    )
+
+    monkeypatch.setenv("CITYLENS_DEMO_ARTIFACTS_PATH", str(tmp_path / "demo_artifacts"))
+
+    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(
+        json_path=str(demo_file)
+    )
+    app.dependency_overrides[demo_routes.get_store] = lambda: None
+    app.dependency_overrides[demo_routes.get_gcs] = lambda: None
+
+    client = TestClient(app)
+    resp = client.get("/v1/demo/runs/demo-static")
+    assert resp.status_code == 200
+
+    body = resp.json()
+    assert body["run_id"] == "demo-static"
+    assert body["status"] == "succeeded"
+    artifact_names = {artifact["name"] for artifact in body["artifacts"]}
+    assert artifact_names == set(EXPECTED_DEMO_ARTIFACTS)
+    preview_artifact = next(
+        artifact
+        for artifact in body["artifacts"]
+        if artifact["name"] == "preview.png"
+    )
+    assert preview_artifact["signed_url"].endswith("/v1/demo/artifacts/demo-static/preview.png")
+
+    artifact_resp = client.get("/v1/demo/artifacts/demo-static/run_summary.json")
+    assert artifact_resp.status_code == 200
+    assert artifact_resp.headers["content-type"].startswith("application/json")
+    assert artifact_resp.json()["qa"]["parity_status"] == "demo_bundle"
 
     app.dependency_overrides = {}

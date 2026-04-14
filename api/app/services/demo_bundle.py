@@ -83,13 +83,7 @@ def build_static_demo_run_response(*, request: Request, meta: DemoRunMeta) -> Ru
                 sha256="",
                 size_bytes=stat.st_size,
                 created_at=created_at,
-                signed_url=str(
-                    request.url_for(
-                        "demo_artifact",
-                        run_id=meta.run_id,
-                        artifact_name=artifact_name,
-                    )
-                ),
+                signed_url=f"/v1/demo/artifacts/{meta.run_id}/{artifact_name}",
             )
         )
 

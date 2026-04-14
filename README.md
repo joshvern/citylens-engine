@@ -46,23 +46,29 @@ Current pinned release tag:
 
 ## Demo Mode
 
-The API now ships with built-in unauthenticated demo endpoints:
+The API exposes unauthenticated demo endpoints:
 
 - `GET /v1/demo/featured`
 - `GET /v1/demo/runs/{run_id}`
 - `GET /v1/demo/artifacts/{run_id}/{artifact_name}`
 
-By default, these routes are backed by the versioned files under:
+These routes are backed by the allowlist under:
 
 - [deploy/demo_runs.json](deploy/demo_runs.json)
-- [deploy/demo_artifacts/](deploy/demo_artifacts)
 
-That means demo mode can work immediately after an API deploy without first
-precomputing Firestore/GCS runs.
+`deploy/demo_runs.json` is not a placeholder bundle. It must contain only real,
+successful precomputed runs whose artifacts already exist in Firestore + GCS.
 
-If you want demo runs backed by real pipeline outputs instead, use
-`scripts/precompute_demo_runs.py` or `deploy/deploy_all.sh --precompute` to
-generate a new allowlist and rebuild the API image.
+The supported publish flow is:
+
+1. Deploy the worker and API.
+2. Run `scripts/precompute_demo_runs.py` against the deployed API with an admin API key.
+3. Inspect and commit the generated `deploy/demo_runs.json`.
+4. Redeploy the API so `GET /v1/demo/featured` serves the updated allowlist.
+
+When the API returns a demo run, its artifact URLs are rewritten to same-origin API
+paths like `/v1/demo/artifacts/<run_id>/<artifact_name>`. The browser never needs
+direct GCS URLs for demo mode.
 
 ### VS Code folder expectations
 

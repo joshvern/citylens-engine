@@ -1,3 +1,14 @@
 {
-  "runs": []
+  "runs": [
+    {
+      "category": "Featured",
+      "run_id": "0ee7592cfc7c4d429e855d4b990f8bcf",
+      "label": "Brooklyn reference",
+      "address": "100 E 21st St Brooklyn, NY 11226",
+      "imagery_year": 2024,
+      "baseline_year": 2017,
+      "segmentation_backend": "sam2",
+      "outputs": ["previews", "change", "mesh"]
+    }
+  ]
 }

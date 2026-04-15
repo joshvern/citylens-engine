@@ -4,11 +4,9 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Request
 from starlette.responses import PlainTextResponse, Response
 
-from .routes.demo import get_demo_registry
 from .routes.demo import router as demo_router
 from .routes.health import router as health_router
 from .routes.runs import router as runs_router
-from .services.demo_bundle import validate_demo_bundle_for_registry
 from .services.logging import configure_json_logging
 from .services.settings import DEFAULT_CORS_ORIGINS, get_settings
 
@@ -39,7 +37,6 @@ def _is_demo_origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
 @app.on_event("startup")
 def validate_settings() -> None:
     settings = get_settings()
-    validate_demo_bundle_for_registry(get_demo_registry())
     app.state.settings = settings
     configure_json_logging(service_name="citylens-engine-api")
     logging.getLogger(__name__).info("validated settings", extra={"stage": "startup"})

@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -33,6 +34,18 @@ class FakeGcs:
 
     def download_bytes(self, *, object_name: str) -> tuple[bytes, str | None]:
         return f"payload:{object_name}".encode("utf-8"), "text/plain"
+
+
+@pytest.fixture(autouse=True)
+def _reset_demo_registry_cache():
+    old = demo_routes._DEMO_REGISTRY
+    demo_routes._DEMO_REGISTRY = None
+    try:
+        yield
+    finally:
+        demo_routes._DEMO_REGISTRY = None
+        app.dependency_overrides = {}
+        demo_routes._DEMO_REGISTRY = old
 
 
 def _set_required_env(monkeypatch) -> None:
@@ -77,8 +90,6 @@ def test_demo_featured_no_api_key_required(monkeypatch, tmp_path: Path) -> None:
     body = resp.json()
     assert "Featured" in body
     assert body["Featured"][0]["run_id"] == "demo-1"
-
-    app.dependency_overrides = {}
 
 
 def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
@@ -149,8 +160,6 @@ def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
     # not allowlisted, even if it might exist elsewhere
     miss = client.get("/v1/demo/runs/not-allowlisted")
     assert miss.status_code == 404
-
-    app.dependency_overrides = {}
 
 
 def test_demo_artifact_route_proxies_real_artifacts(monkeypatch, tmp_path: Path) -> None:
@@ -230,4 +239,34 @@ def test_demo_artifact_route_proxies_real_artifacts(monkeypatch, tmp_path: Path)
     missing = client.get("/v1/demo/artifacts/demo-proxy/missing.bin")
     assert missing.status_code == 404
 
-    app.dependency_overrides = {}
+
+def test_demo_routes_allow_vercel_preview_cors(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    client = TestClient(app)
+
+    origin = "https://citylens-web-git-demo-josh.vercel.app"
+    resp = client.options(
+        "/v1/demo/featured",
+        headers={
+            "origin": origin,
+            "access-control-request-method": "GET",
+        },
+    )
+
+    assert resp.status_code == 204
+    assert resp.headers["access-control-allow-origin"] == origin
+
+
+def test_live_routes_keep_strict_cors(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    client = TestClient(app)
+
+    resp = client.options(
+        "/v1/runs",
+        headers={
+            "origin": "https://citylens-web-git-demo-josh.vercel.app",
+            "access-control-request-method": "GET",
+        },
+    )
+
+    assert resp.status_code == 403

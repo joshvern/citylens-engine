@@ -99,6 +99,10 @@ class DemoRegistry:
         # Return a shallow copy to prevent accidental mutation.
         return {k: list(v) for k, v in self._featured_by_category.items()}
 
+    def all(self) -> list[DemoRunMeta]:
+        self._load()
+        return [self._runs_by_id[run_id] for run_id in sorted(self._runs_by_id.keys())]
+
 
 def load_demo_registry_from_settings_path(path: str) -> DemoRegistry:
     return DemoRegistry(json_path=path)

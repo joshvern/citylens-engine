@@ -162,7 +162,6 @@ def demo_get_run(
 ) -> RunResponse:
     if not registry.get(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
-
     run = store.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -184,7 +183,6 @@ def demo_artifact(
 ):
     if not registry.get(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
-
     run = store.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")

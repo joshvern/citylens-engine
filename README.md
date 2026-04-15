@@ -59,6 +59,7 @@ By default, these routes are backed by the versioned files under:
 
 That means demo mode can work immediately after an API deploy without first
 precomputing Firestore/GCS runs.
+The API now validates that every allowlisted demo run has a complete bundled artifact set at startup, so a broken release bundle fails fast instead of silently falling back.
 
 If you want demo runs backed by real pipeline outputs instead, use
 `scripts/precompute_demo_runs.py` or `deploy/deploy_all.sh --precompute` to

@@ -281,6 +281,7 @@ The API enables CORS via Starlette/FastAPI `CORSMiddleware` in [api/app/main.py]
 - `http://localhost:3000`
 
 To allow a new domain, add it to the `allow_origins` list and redeploy the API.
+Unauthenticated demo routes under `/v1/demo/*` also allow secure Vercel preview origins ending in `.vercel.app`, so demo mode works from preview deployments without widening live authenticated CORS.
 
 If you enable signed URLs (`CITYLENS_SIGN_URLS=1`), the browser will download artifacts *directly from GCS* (not from the API). In that case you must also configure **bucket CORS** on your artifacts bucket to allow your site origin(s), e.g.:
 
@@ -338,6 +339,8 @@ By default, the API will serve the bundled demo artifacts from `deploy/demo_arti
 
 - `GET /v1/demo/runs/{run_id}`
 - `GET /v1/demo/artifacts/{run_id}/{artifact_name}`
+
+The API validates this bundled demo artifact set at startup. If any allowlisted run in `deploy/demo_runs.json` is missing one of the expected files, the service fails fast instead of silently falling back to Firestore/GCS.
 
 If you also want demo runs backed by real Firestore + GCS artifacts, you can still precompute and bake an updated allowlist.
 

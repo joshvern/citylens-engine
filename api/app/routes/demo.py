@@ -7,7 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from ..models.schemas import DemoRunFeatured, RunResponse
-from ..services.demo_bundle import build_static_demo_run_response, demo_artifact_path
+from ..services.demo_bundle import (
+    DemoBundleInvalidError,
+    build_static_demo_run_response,
+    demo_artifact_path,
+    ensure_demo_bundle_complete,
+)
 from ..services.demo_registry import DemoRegistry
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
@@ -101,7 +106,10 @@ def demo_get_run(
     if not meta:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    static_response = build_static_demo_run_response(request=request, meta=meta)
+    try:
+        static_response = build_static_demo_run_response(request=request, meta=meta)
+    except DemoBundleInvalidError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if static_response is not None:
         return static_response
 
@@ -122,6 +130,11 @@ def demo_artifact(
 ):
     if not registry.get(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
+
+    try:
+        ensure_demo_bundle_complete(run_id=run_id, require_all=False)
+    except DemoBundleInvalidError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     path = demo_artifact_path(run_id=run_id, artifact_name=artifact_name)
     if path is None:

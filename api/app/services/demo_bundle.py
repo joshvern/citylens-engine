@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import Request
 
 from ..models.schemas import ArtifactResponse, RunResponse
-from .demo_registry import DemoRunMeta
+from .demo_registry import DemoRegistry, DemoRunMeta
 
 EXPECTED_DEMO_ARTIFACTS = (
     "preview.png",
@@ -15,6 +15,10 @@ EXPECTED_DEMO_ARTIFACTS = (
     "mesh.ply",
     "run_summary.json",
 )
+
+
+class DemoBundleInvalidError(RuntimeError):
+    pass
 
 
 def _default_demo_artifacts_root() -> Path:
@@ -64,13 +68,56 @@ def demo_artifact_path(*, run_id: str, artifact_name: str) -> Path | None:
     return path
 
 
+def _bundle_paths_for_run(run_id: str) -> dict[str, Path | None]:
+    return {
+        artifact_name: demo_artifact_path(run_id=run_id, artifact_name=artifact_name)
+        for artifact_name in EXPECTED_DEMO_ARTIFACTS
+    }
+
+
+def _format_missing_artifacts(run_id: str, missing: list[str]) -> str:
+    return (
+        f"Bundled demo artifacts missing for run_id={run_id}: {', '.join(missing)} "
+        f"(root={demo_artifacts_root()})"
+    )
+
+
+def ensure_demo_bundle_complete(*, run_id: str, require_all: bool) -> None:
+    paths = _bundle_paths_for_run(run_id)
+    present = [name for name, path in paths.items() if path is not None]
+    missing = [name for name, path in paths.items() if path is None]
+
+    if not present and not require_all:
+        return
+    if missing:
+        raise DemoBundleInvalidError(_format_missing_artifacts(run_id, missing))
+
+
+def validate_demo_bundle_for_registry(registry: DemoRegistry) -> None:
+    errors: list[str] = []
+    for meta in registry.all():
+        try:
+            ensure_demo_bundle_complete(run_id=meta.run_id, require_all=True)
+        except DemoBundleInvalidError as exc:
+            errors.append(str(exc))
+
+    if errors:
+        raise DemoBundleInvalidError("Invalid bundled demo artifacts:\n" + "\n".join(errors))
+
+
 def build_static_demo_run_response(*, request: Request, meta: DemoRunMeta) -> RunResponse | None:
+    ensure_demo_bundle_complete(run_id=meta.run_id, require_all=False)
+
+    paths = _bundle_paths_for_run(meta.run_id)
+    if not any(path is not None for path in paths.values()):
+        return None
+
     artifacts: list[ArtifactResponse] = []
 
     for artifact_name in EXPECTED_DEMO_ARTIFACTS:
-        path = demo_artifact_path(run_id=meta.run_id, artifact_name=artifact_name)
+        path = paths[artifact_name]
         if path is None:
-            continue
+            raise DemoBundleInvalidError(_format_missing_artifacts(meta.run_id, [artifact_name]))
 
         stat = path.stat()
         created_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
@@ -83,12 +130,15 @@ def build_static_demo_run_response(*, request: Request, meta: DemoRunMeta) -> Ru
                 sha256="",
                 size_bytes=stat.st_size,
                 created_at=created_at,
-                signed_url=f"/v1/demo/artifacts/{meta.run_id}/{artifact_name}",
+                signed_url=str(
+                    request.url_for(
+                        "demo_artifact",
+                        run_id=meta.run_id,
+                        artifact_name=artifact_name,
+                    )
+                ),
             )
         )
-
-    if not artifacts:
-        return None
 
     created_at = max(
         (artifact.created_at for artifact in artifacts),

@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -31,6 +32,18 @@ class FakeStore:
 class FakeGcs:
     def signed_url(self, *, object_name: str, ttl_seconds: int) -> str:
         return f"https://signed.invalid/{object_name}?ttl={ttl_seconds}"
+
+
+@pytest.fixture(autouse=True)
+def _reset_demo_registry_cache():
+    old = demo_routes._DEMO_REGISTRY
+    demo_routes._DEMO_REGISTRY = None
+    try:
+        yield
+    finally:
+        demo_routes._DEMO_REGISTRY = None
+        app.dependency_overrides = {}
+        demo_routes._DEMO_REGISTRY = old
 
 
 def _set_required_env(monkeypatch) -> None:
@@ -75,8 +88,6 @@ def test_demo_featured_no_api_key_required(monkeypatch, tmp_path: Path) -> None:
     body = resp.json()
     assert "Featured" in body
     assert body["Featured"][0]["run_id"] == "demo-1"
-
-    app.dependency_overrides = {}
 
 
 def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
@@ -147,8 +158,6 @@ def test_demo_run_allowlist_enforced(monkeypatch, tmp_path: Path) -> None:
     # not allowlisted, even if it might exist elsewhere
     miss = client.get("/v1/demo/runs/not-allowlisted")
     assert miss.status_code == 404
-
-    app.dependency_overrides = {}
 
 
 def test_demo_run_serves_static_bundle(monkeypatch, tmp_path: Path) -> None:
@@ -261,11 +270,76 @@ def test_demo_run_serves_static_bundle(monkeypatch, tmp_path: Path) -> None:
         for artifact in body["artifacts"]
         if artifact["name"] == "preview.png"
     )
-    assert preview_artifact["signed_url"].endswith("/v1/demo/artifacts/demo-static/preview.png")
+    assert preview_artifact["signed_url"] == "http://testserver/v1/demo/artifacts/demo-static/preview.png"
 
     artifact_resp = client.get("/v1/demo/artifacts/demo-static/run_summary.json")
     assert artifact_resp.status_code == 200
     assert artifact_resp.headers["content-type"].startswith("application/json")
     assert artifact_resp.json()["qa"]["parity_status"] == "demo_bundle"
 
-    app.dependency_overrides = {}
+
+def test_demo_bundle_validation_fails_fast_on_startup(monkeypatch, tmp_path: Path) -> None:
+    _set_required_env(monkeypatch)
+
+    demo_file = tmp_path / "demo_runs.json"
+    demo_file.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "category": "Featured",
+                        "run_id": "demo-bad",
+                        "label": "Broken bundle",
+                        "address": "100 E 21st St Brooklyn, NY 11226",
+                        "imagery_year": 2024,
+                        "baseline_year": 2017,
+                        "segmentation_backend": "sam2",
+                        "outputs": ["previews", "change", "mesh"],
+                    }
+                ]
+            }
+        )
+    )
+
+    artifacts_root = tmp_path / "demo_artifacts" / "demo-bad"
+    artifacts_root.mkdir(parents=True)
+    (artifacts_root / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    monkeypatch.setenv("CITYLENS_DEMO_RUNS_PATH", str(demo_file))
+    monkeypatch.setenv("CITYLENS_DEMO_ARTIFACTS_PATH", str(tmp_path / "demo_artifacts"))
+
+    with pytest.raises(RuntimeError, match="Invalid bundled demo artifacts"):
+        with TestClient(app):
+            pass
+
+
+def test_demo_routes_allow_vercel_preview_cors(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    client = TestClient(app)
+
+    origin = "https://citylens-web-git-demo-josh.vercel.app"
+    resp = client.options(
+        "/v1/demo/featured",
+        headers={
+            "origin": origin,
+            "access-control-request-method": "GET",
+        },
+    )
+
+    assert resp.status_code == 204
+    assert resp.headers["access-control-allow-origin"] == origin
+
+
+def test_live_routes_keep_strict_cors(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    client = TestClient(app)
+
+    resp = client.options(
+        "/v1/runs",
+        headers={
+            "origin": "https://citylens-web-git-demo-josh.vercel.app",
+            "access-control-request-method": "GET",
+        },
+    )
+
+    assert resp.status_code == 403

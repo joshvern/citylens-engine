@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -e .
 # Install citylens-core from git at build time.
 # Provide build arg CITYLENS_CORE_GIT_URL, e.g.
 #   --build-arg CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"
-ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.0
+ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.1
 RUN pip install --no-cache-dir "citylens-core @ ${CITYLENS_CORE_GIT_URL}"
 
 ENV PORT=8080

@@ -228,10 +228,23 @@ def _download_orthophoto_tif(
     }
 
 
-def _ensure_county_footprints_gdbs(data_dir: Path, *, keep_zips: bool = False) -> dict[str, Path]:
-    from .reference_data import ensure_nyc_county_footprints
+def _ensure_county_footprints_gdbs(
+    data_dir: Path,
+    *,
+    keep_zips: bool = False,
+    gcs_client: Any | None = None,
+    gcs_bucket: str | None = None,
+) -> dict[str, Path]:
+    from .reference_data import DEFAULT_GCS_PREFIX, ensure_nyc_county_footprints
 
-    return ensure_nyc_county_footprints(data_dir=data_dir, keep_zips=keep_zips)
+    gcs_prefix = os.getenv("CITYLENS_REFERENCE_GCS_PREFIX", DEFAULT_GCS_PREFIX)
+    return ensure_nyc_county_footprints(
+        data_dir=data_dir,
+        keep_zips=keep_zips,
+        gcs_client=gcs_client,
+        gcs_bucket=gcs_bucket,
+        gcs_prefix=gcs_prefix,
+    )
 
 
 def _layer_name_from_gdb(gdb_path: Path) -> str:
@@ -297,8 +310,15 @@ def _build_baseline_footprints(
     target_crs: CRS,
     work_dir: Path,
     keep_zips: bool,
+    gcs_client: Any | None = None,
+    gcs_bucket: str | None = None,
 ) -> dict[str, Any]:
-    county_gdbs = _ensure_county_footprints_gdbs(reference_data_dir, keep_zips=keep_zips)
+    county_gdbs = _ensure_county_footprints_gdbs(
+        reference_data_dir,
+        keep_zips=keep_zips,
+        gcs_client=gcs_client,
+        gcs_bucket=gcs_bucket,
+    )
     geojson_path = work_dir / "baseline_footprints.geojson"
     all_features: list[dict[str, Any]] = []
     county_sources: dict[str, str] = {}
@@ -533,7 +553,12 @@ def ensure_work_dir_inputs(
 
     reference_data_dir = Path(os.getenv("CITYLENS_REFERENCE_DATA_DIR", "/tmp/reference-data"))
     keep_zips = os.getenv("CITYLENS_REFERENCE_KEEP_ZIPS", "0") == "1"
-    county_gdbs = _ensure_county_footprints_gdbs(reference_data_dir, keep_zips=keep_zips)
+    county_gdbs = _ensure_county_footprints_gdbs(
+        reference_data_dir,
+        keep_zips=keep_zips,
+        gcs_client=gcs_client,
+        gcs_bucket=bucket,
+    )
     manifest["reference_data_dir"] = str(reference_data_dir)
     manifest["reference_county_footprints"] = {k: str(v) for k, v in county_gdbs.items()}
 
@@ -549,6 +574,8 @@ def ensure_work_dir_inputs(
         target_crs=ortho_crs,
         work_dir=work_dir,
         keep_zips=keep_zips,
+        gcs_client=gcs_client,
+        gcs_bucket=bucket,
     )
     manifest["baseline_footprints_path"] = str(baseline_footprints["path"])
 

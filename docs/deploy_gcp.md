@@ -218,7 +218,10 @@ gcloud builds submit . \
   --substitutions _CITYLENS_CORE_GIT_URL=${CITYLENS_CORE_GIT_URL},_IMAGE=${WORKER_IMAGE}
 ```
 
-Create/update the Cloud Run Job from the built image:
+Create/update the Cloud Run Job from the built image. The worker runs SAM2 on CPU,
+rasterio, laspy, and a Python mesh writer — default Cloud Run Job limits
+(512Mi / 1 vCPU / 10min / 3 retries) will OOM or time out before a real NYC
+pipeline completes, so the resource flags below are required:
 
 ```bash
 gcloud run jobs deploy <JOB_NAME> \
@@ -226,8 +229,27 @@ gcloud run jobs deploy <JOB_NAME> \
   --region <REGION> \
   --project <PROJECT_ID> \
   --service-account <WORKER_SA>@<PROJECT_ID>.iam.gserviceaccount.com \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=<PROJECT_ID>,CITYLENS_REGION=<REGION>,CITYLENS_BUCKET=<BUCKET_NAME>
+  --memory 8Gi \
+  --cpu 4 \
+  --task-timeout 1800s \
+  --max-retries 0 \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=<PROJECT_ID>,CITYLENS_REGION=<REGION>,CITYLENS_BUCKET=<BUCKET_NAME>,CITYLENS_ASSETS_ROOT=/opt/citylens-assets,CITYLENS_REFERENCE_DATA_DIR=/tmp/reference-data
 ```
+
+Rationale:
+
+- `--memory 8Gi --cpu 4`: sized for SAM2-small CPU inference plus rasterio and
+  laspy. Bump to 16Gi/8vCPU if SAM2 benchmarks come back too slow.
+- `--task-timeout 1800s`: first cold-start has to GCS-fetch NYC county footprint
+  GDBs (hundreds of MB) plus LiDAR (1-2GB) plus the orthophoto and run the full
+  pipeline. Subsequent runs hit the GCS cache and are much faster.
+- `--max-retries 0`: the worker's placeholder tripwire
+  (`worker/services/pipeline_runner.py`) stops runs that emit suspiciously
+  small artifacts. Auto-retries would mask these and are disabled.
+- `CITYLENS_REFERENCE_DATA_DIR=/tmp/reference-data`: scratch space for the
+  county-footprint GDB expansion. The source of truth is GCS
+  (`gs://<BUCKET_NAME>/reference-data/nyc-footprints/<County>.tar.gz`), so
+  losing `/tmp` between invocations is fine.
 
 ### 9) Configure env vars
 

@@ -107,6 +107,18 @@ def run(
         store.write_artifact(run_id=run_id, artifact_id=name, doc=doc)
         uploaded_by_name[name] = doc
 
+        logger.info(
+            "artifact_uploaded",
+            extra={
+                "run_id": run_id,
+                "stage": "upload",
+                "name": name,
+                "size_bytes": int(size_bytes),
+                "sha256": sha256,
+                "gcs_uri": gcs_uri,
+            },
+        )
+
     # Convenience: also stash a compact map on the run document itself.
     # This makes it easy for the API/UI to show artifacts without extra reads.
     if uploaded_by_name:
@@ -143,6 +155,35 @@ def run(
         except Exception:
             pass
 
+        store.update_run(
+            run_id,
+            {"status": "failed", "stage": "done", "progress": 100, "error": error},
+        )
+        return
+
+    # Tripwire: on the success path, verify every required artifact is above a
+    # minimum byte size. Catches regressions where core claims ok=true but
+    # silently emits placeholder-sized bytes (e.g., 154-byte empty mesh.ply).
+    # These thresholds sit well above the old placeholder sizes and well
+    # below any real output (real preview.png >> 100KB, real mesh.ply >> 1MB).
+    _MIN_ARTIFACT_SIZES = {
+        "preview.png": 10_000,
+        "change.geojson": 200,
+        "mesh.ply": 10_000,
+    }
+    too_small = [
+        (n, int(d.get("size_bytes") or 0))
+        for n, d in uploaded_by_name.items()
+        if n in _MIN_ARTIFACT_SIZES and int(d.get("size_bytes") or 0) < _MIN_ARTIFACT_SIZES[n]
+    ]
+    if too_small:
+        error = build_error_payload(
+            RuntimeError(
+                f"Artifact(s) smaller than placeholder threshold: {too_small}"
+            ),
+            code="PLACEHOLDER_ARTIFACT_DETECTED",
+            stage="done",
+        )
         store.update_run(
             run_id,
             {"status": "failed", "stage": "done", "progress": 100, "error": error},

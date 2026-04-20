@@ -154,6 +154,81 @@ def test_tripwire_fires_on_placeholder_sized_mesh(monkeypatch, tmp_path: Path) -
     assert "mesh.ply" in final["error"]["message"]
 
 
+def test_logger_info_does_not_collide_with_reserved_logrecord_keys(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    """Regression test for the 'Attempt to overwrite name in LogRecord' crash.
+
+    Python's stdlib logging reserves a number of keys on LogRecord (name,
+    msg, args, levelname, levelno, ...). Passing any of them in `extra=`
+    raises KeyError inside logging itself, which is easy to miss because
+    test runners usually swallow log output.
+
+    This test wires a real logging handler (caplog) to the worker logger
+    so that the `extra=` keys are actually merged into a LogRecord — the
+    exact path that fails in production.
+    """
+    import logging
+
+    def fake_run_citylens(req, work_dir, progress_cb=None):
+        work_dir = Path(work_dir)
+        (work_dir / "preview.png").write_bytes(b"\x89PNG" + b"\x00" * 50_000)
+        (work_dir / "change.geojson").write_text(
+            '{"type":"FeatureCollection","features":['
+            + ",".join(
+                [
+                    '{"type":"Feature","properties":{"kind":"added"},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}'
+                ]
+                * 2
+            )
+            + "]}"
+        )
+        (work_dir / "mesh.ply").write_text("ply\n" + "x" * 20_000)
+        (work_dir / "run_summary.json").write_text('{"ok": true}')
+        return {
+            "preview": work_dir / "preview.png",
+            "change": work_dir / "change.geojson",
+            "mesh": work_dir / "mesh.ply",
+            "summary": work_dir / "run_summary.json",
+        }
+
+    monkeypatch.setattr(pipeline_runner, "ensure_work_dir_inputs", _ok_inputs_factory(tmp_path))
+    monkeypatch.setattr(pipeline_runner, "run_citylens", fake_run_citylens)
+
+    store = FakeStore()
+    gcs = FakeGcs()
+    settings = type("S", (), {"work_root": str(tmp_path)})()
+
+    # Capture at INFO so the artifact_uploaded log lines actually hit a handler.
+    with caplog.at_level(logging.INFO, logger=pipeline_runner.logger.name):
+        pipeline_runner.run(
+            run_id="run-logger",
+            request_dict={"address": "1 Main St", "segmentation_backend": "sam2"},
+            work_root=tmp_path,
+            store=store,
+            gcs=gcs,
+            settings=settings,
+        )
+
+    # Pipeline reached the "succeeded" branch — i.e. the logging call did not
+    # raise KeyError partway through the upload loop.
+    final = store.updates[-1][1]
+    assert final["status"] == "succeeded", (
+        f"logger.info extra={{...}} collided with LogRecord; run marked {final}"
+    )
+
+    # Four artifact_uploaded records, one per expected file, with artifact_name
+    # set (NOT `name`, which would collide).
+    uploads = [r for r in caplog.records if r.getMessage() == "artifact_uploaded"]
+    assert len(uploads) == 4
+    assert {r.artifact_name for r in uploads} == {
+        "preview.png",
+        "change.geojson",
+        "mesh.ply",
+        "run_summary.json",
+    }
+
+
 def test_tripwire_passes_on_real_sized_artifacts(monkeypatch, tmp_path: Path) -> None:
     def fake_run_citylens(req, work_dir, progress_cb=None):
         work_dir = Path(work_dir)

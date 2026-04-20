@@ -112,7 +112,10 @@ def run(
             extra={
                 "run_id": run_id,
                 "stage": "upload",
-                "name": name,
+                # NB: `name` is reserved on LogRecord (it's the logger name);
+                # use `artifact_name` to avoid Python's "Attempt to overwrite
+                # 'name' in LogRecord" KeyError.
+                "artifact_name": name,
                 "size_bytes": int(size_bytes),
                 "sha256": sha256,
                 "gcs_uri": gcs_uri,

@@ -153,15 +153,57 @@ def _download_orthophoto_tif(
     object_name = f"inputs/{cache_key}/orthophoto.tif"
     blob = gcs_client.bucket(bucket).blob(object_name)
 
+    target_w = int(width)
+    target_h = int(height)
+
+    def _resize_tif_to_target(src_tif: Path) -> None:
+        """Resample src_tif to (target_w x target_h) in the requested EPSG:3857
+        bbox, overwriting it. Needed because the NYS DOP12 ZIP fallback ships
+        5000x5000 ft tiles at 1 ft/px — passing those through unchanged meant
+        SAM2 ran on a 5000x5000 image (OOM) and the preview.png shipped at
+        5000x5000 (52MB). Resampling here keeps the whole pipeline consistent
+        with the configured ortho dimensions.
+        """
+        from rasterio.enums import Resampling
+        from rasterio.vrt import WarpedVRT
+
+        tmp = src_tif.with_suffix(src_tif.suffix + ".resized")
+        with rasterio_open(src_tif) as src:
+            with WarpedVRT(
+                src,
+                crs=crs,
+                transform=transform,
+                width=target_w,
+                height=target_h,
+                resampling=Resampling.bilinear,
+            ) as vrt:
+                profile = vrt.profile.copy()
+                profile.update(driver="GTiff")
+                with rasterio_open(tmp, "w", **profile) as dst:
+                    dst.write(vrt.read())
+        os.replace(str(tmp), str(src_tif))
+
+    def _write_compat_png(src_tif: Path, out_png: Path) -> None:
+        with rasterio_open(src_tif) as src:
+            arr = src.read()
+        if arr.shape[0] == 1:
+            img = Image.fromarray(arr[0])
+        else:
+            img = Image.fromarray(np.moveaxis(arr[:3], 0, -1))
+        img.save(out_png)
+
+    def _is_at_target(src_tif: Path) -> bool:
+        try:
+            with rasterio_open(src_tif) as src:
+                return src.width == target_w and src.height == target_h
+        except Exception:
+            return False
+
     if blob.exists():
         blob.download_to_filename(str(tif_path))
-        with rasterio_open(tif_path) as src:
-            arr = src.read()
-            if arr.shape[0] == 1:
-                img = Image.fromarray(arr[0])
-            else:
-                img = Image.fromarray(np.moveaxis(arr[:3], 0, -1))
-        img.save(png_path)
+        if not _is_at_target(tif_path):
+            _resize_tif_to_target(tif_path)
+        _write_compat_png(tif_path, png_path)
         return {
             "canonical_path": str(tif_path),
             "compat_path": str(png_path),
@@ -174,7 +216,7 @@ def _download_orthophoto_tif(
         }
 
     url = resolver.build_ortho_wms_getmap_url(
-        bbox, width=int(width), height=int(height), transparent=False
+        bbox, width=target_w, height=target_h, transparent=False
     )
     source_url = url
     try:
@@ -205,13 +247,8 @@ def _download_orthophoto_tif(
             work_dir=work_dir,
             tif_path=tif_path,
         )
-        with rasterio_open(tif_path) as src:
-            arr = src.read()
-            if arr.shape[0] == 1:
-                img = Image.fromarray(arr[0])
-            else:
-                img = Image.fromarray(np.moveaxis(arr[:3], 0, -1))
-        img.save(png_path)
+        _resize_tif_to_target(tif_path)
+        _write_compat_png(tif_path, png_path)
         source_url = assets.ortho_zip_url
 
     blob.upload_from_filename(str(tif_path))

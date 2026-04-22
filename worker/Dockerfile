@@ -27,7 +27,11 @@ RUN mkdir -p "${CITYLENS_ASSETS_ROOT}"
 # (CUDA is not available in the default Cloud Run environment.)
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch torchvision
 
-RUN pip install --no-cache-dir "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"
+# Install the lidar extra too — stage_reconstruct in citylens-core imports
+# laspy to read .las tiles; without it the worker silently falls back to
+# flat mask-heights. The debug breadcrumb from v0.3.4 caught this as
+# `fallback_reason: no_laspy:ModuleNotFoundError`.
+RUN pip install --no-cache-dir "citylens-core[sam2,lidar] @ ${CITYLENS_CORE_GIT_URL}"
 
 # Download SAM2 config/weights into CITYLENS_ASSETS_ROOT at build time.
 RUN python -c "from citylens_core.sam.assets import download_sam2_assets; download_sam2_assets('${CITYLENS_SAM2_ASSETS_SIZE}')"

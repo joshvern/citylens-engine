@@ -302,12 +302,23 @@ def _features_for_bbox(
     with fiona_open(str(gdb_path), layer=layer) as src:
         src_crs = CRS.from_user_input(src.crs) if src.crs else None
         src_bbox = bbox
-        transformer: Transformer | None = None
+        # Two transformers are needed when src_crs != target_crs:
+        #   to_src: reproject the query bbox (target_crs) → src_crs so we can
+        #           filter the GDB by bbox natively.
+        #   to_target: reproject each feature's geometry (src_crs) → target_crs
+        #           so downstream rasterization happens in the ortho's CRS.
+        # The previous revision reused `to_src` for output geometries, which
+        # left features in src CRS (NYSP ftUS for NYC) while the ortho and
+        # change-detection masks were in EPSG:3857. The rasterized baseline
+        # came out all-zeros, which in turn pinned qa.mask_iou at 0.0.
+        to_src: Transformer | None = None
+        to_target: Transformer | None = None
         if src_crs and str(src_crs) != str(target_crs):
-            transformer = Transformer.from_crs(target_crs, src_crs, always_xy=True)
+            to_src = Transformer.from_crs(target_crs, src_crs, always_xy=True)
+            to_target = Transformer.from_crs(src_crs, target_crs, always_xy=True)
             xs = [bbox[0], bbox[2], bbox[0], bbox[2]]
             ys = [bbox[1], bbox[1], bbox[3], bbox[3]]
-            tx, ty = transformer.transform(xs, ys)
+            tx, ty = to_src.transform(xs, ys)
             src_bbox = (float(min(tx)), float(min(ty)), float(max(tx)), float(max(ty)))
 
         for feat in src.filter(bbox=src_bbox):
@@ -320,8 +331,8 @@ def _features_for_bbox(
                 continue
             if parsed.is_empty:
                 continue
-            if transformer is not None:
-                parsed = shapely_transform(transformer.transform, parsed)
+            if to_target is not None:
+                parsed = shapely_transform(to_target.transform, parsed)
             features.append(
                 {
                     "type": "Feature",

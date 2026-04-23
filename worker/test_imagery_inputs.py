@@ -165,3 +165,76 @@ def test_ensure_work_dir_inputs_writes_manifest_and_materializes_georef_inputs(
     assert (tmp_path / "baseline_footprints.geojson").exists()
     assert (tmp_path / "lidar.las").exists()
     assert manifest["input_manifest_path"] == str(manifest_path)
+
+
+def test_features_for_bbox_reprojects_output_to_target_crs(monkeypatch) -> None:
+    """Regression test for the CRS-direction bug where output features were
+    left in src CRS instead of being reprojected to target CRS.
+
+    Original bug: the function built ONE transformer target_crs -> src_crs
+    (correct for the bbox query) and then reused it on output features,
+    which left them in src CRS. On the Brooklyn demo this meant
+    baseline_footprints.geojson features were in NYSP ftUS while the ortho
+    was in EPSG:3857 -> rasterize produced an all-zero mask -> mask_iou=0.
+    """
+    from rasterio.crs import CRS as RioCRS
+    import services.imagery_inputs as mod
+
+    # Two polygons in the "fake GDB": one inside the query bbox, one outside.
+    # We'll pretend the source CRS is EPSG:2263 (NYSP LI ftUS) and the target
+    # is EPSG:3857. A well-known NYC point is (996977.21, 177499.99) in 2263
+    # which is (-8232536.28, 4961419.96) in 3857.
+    feat_in = {
+        "type": "Feature",
+        "properties": {"Source": "NYC OpenData"},
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [996970.0, 177490.0],
+                    [996990.0, 177490.0],
+                    [996990.0, 177510.0],
+                    [996970.0, 177510.0],
+                    [996970.0, 177490.0],
+                ]
+            ],
+        },
+    }
+
+    class FakeFionaSrc:
+        crs = "EPSG:2263"
+
+        def filter(self, bbox):
+            return iter([feat_in])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(mod, "fiona_open", lambda *a, **kw: FakeFionaSrc())
+    monkeypatch.setattr(mod, "_layer_name_from_gdb", lambda p: "layer")
+
+    target_crs = RioCRS.from_epsg(3857)
+    # bbox centered at the known NYC point (-8232536.28, 4961419.96) ± ~30m
+    bbox_3857 = (-8232566.0, 4961390.0, -8232506.0, 4961450.0)
+
+    result = mod._features_for_bbox(
+        gdb_path=Path("/tmp/fake.gdb"),
+        bbox=bbox_3857,
+        target_crs=target_crs,
+    )
+
+    assert len(result) == 1
+    coords = result[0]["geometry"]["coordinates"][0]
+    xs = [pt[0] for pt in coords]
+    ys = [pt[1] for pt in coords]
+    # After reprojection, x should be near -8232536 (EPSG:3857) and NOT
+    # near 996977 (EPSG:2263). A ~30m tolerance is plenty.
+    assert -8232550 < min(xs) < -8232520, (
+        f"feature x not reprojected to EPSG:3857: xs={xs}"
+    )
+    assert 4961400 < min(ys) < 4961440, (
+        f"feature y not reprojected to EPSG:3857: ys={ys}"
+    )

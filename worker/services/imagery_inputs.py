@@ -471,13 +471,19 @@ class OrthoFetchConfig:
     height: int
 
 
-def _get_config() -> OrthoFetchConfig:
+def _get_config(request_radius: float | None = None) -> OrthoFetchConfig:
     wms_url = os.getenv(
         "CITYLENS_ORTHO_WMS_URL",
         "https://orthos.its.ny.gov/arcgis/rest/services/wms/2024/MapServer/WMSServer",
     ).strip()
     cache_prefix = os.getenv("CITYLENS_IMAGERY_CACHE_PREFIX", "inputs").strip().strip("/")
-    bbox_half_size_m = float(os.getenv("CITYLENS_ORTHO_BBOX_HALF_SIZE_M", "120"))
+    # request.aoi_radius_m wins over env default; env is the fallback for ad-hoc
+    # CLI scripts that don't construct a CitylensRequest.
+    bbox_half_size_m = (
+        float(request_radius)
+        if request_radius
+        else float(os.getenv("CITYLENS_ORTHO_BBOX_HALF_SIZE_M", "120"))
+    )
     width = int(os.getenv("CITYLENS_ORTHO_WIDTH", "1024"))
     height = int(os.getenv("CITYLENS_ORTHO_HEIGHT", "1024"))
     return OrthoFetchConfig(
@@ -520,7 +526,8 @@ def ensure_work_dir_inputs(
 ) -> dict[str, Any]:
     """Materialize orthophoto, baseline footprints, and LiDAR inputs in work_dir."""
 
-    cfg = _get_config()
+    request_radius = getattr(request, "aoi_radius_m", None)
+    cfg = _get_config(request_radius=request_radius)
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 

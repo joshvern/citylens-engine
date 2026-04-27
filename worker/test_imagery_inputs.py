@@ -10,7 +10,7 @@ from PIL import Image
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 
-from services.imagery_inputs import ensure_work_dir_inputs
+from services.imagery_inputs import _get_config, ensure_work_dir_inputs
 
 
 class FakeBlob:
@@ -165,6 +165,112 @@ def test_ensure_work_dir_inputs_writes_manifest_and_materializes_georef_inputs(
     assert (tmp_path / "baseline_footprints.geojson").exists()
     assert (tmp_path / "lidar.las").exists()
     assert manifest["input_manifest_path"] == str(manifest_path)
+
+
+def test_get_config_prefers_request_radius_over_env(monkeypatch) -> None:
+    """Regression test: request.aoi_radius_m must override the env fallback.
+
+    Original bug: _get_config ignored the request entirely and read
+    CITYLENS_ORTHO_BBOX_HALF_SIZE_M (default 120 m), producing a 240x240 m
+    ortho instead of the requested 500x500 m. On the Brooklyn reference run
+    this clipped baseline GDB coverage to ~half the visible buildings.
+    """
+    monkeypatch.setenv("CITYLENS_ORTHO_BBOX_HALF_SIZE_M", "120")
+    # Env-only path still works for ad-hoc CLI scripts.
+    cfg_env = _get_config()
+    assert cfg_env.bbox_half_size_m == 120.0
+    # Request value wins when present.
+    cfg_req = _get_config(request_radius=250)
+    assert cfg_req.bbox_half_size_m == 250.0
+    # Falsy values (None / 0) fall back to env.
+    cfg_zero = _get_config(request_radius=0)
+    assert cfg_zero.bbox_half_size_m == 120.0
+
+
+def test_request_aoi_radius_drives_wms_bbox(monkeypatch, tmp_path: Path) -> None:
+    """End-to-end regression: setting request.aoi_radius_m=250 must produce a
+    500m-wide WMS bbox (half-size 250), not the env-default 240m (half-size
+    120). HTTP is mocked — we only check the bbox math the resolver was asked
+    to build, plus the GeoTIFF transform written for that bbox.
+    """
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    import services.imagery_inputs as mod
+    from PIL import Image as PILImage
+
+    monkeypatch.setenv("CITYLENS_ORTHO_BBOX_HALF_SIZE_M", "120")
+
+    captured: dict = {}
+
+    class FakeSession:
+        def get(self, url, timeout=None):  # noqa: ARG002
+            buf = BytesIO()
+            PILImage.new("RGB", (8, 8), (10, 20, 30)).save(buf, format="PNG")
+            return SimpleNamespace(
+                content=buf.getvalue(),
+                raise_for_status=lambda: None,
+            )
+
+    class FakeResolver:
+        session = FakeSession()
+
+        def build_ortho_wms_getmap_url(self, bbox, **kwargs):
+            captured["bbox"] = bbox
+            captured["kwargs"] = kwargs
+            return "https://example.test/wms?fake=1"
+
+    from services.nysgis import AddressAssets, LidarTile
+
+    assets = AddressAssets(
+        normalized_address="123 Test St",
+        x=1_000_000.0,
+        y=2_000_000.0,
+        lidar_tile=LidarTile(
+            tile_id="t1", filename="t1.las", direct_url="https://example.test/t1.las"
+        ),
+        ortho_zip_url="https://example.test/t1.zip",
+    )
+
+    result = mod._download_orthophoto_tif(
+        resolver=FakeResolver(),
+        assets=assets,
+        work_dir=tmp_path,
+        gcs_client=FakeGcsClient(),
+        bucket="b",
+        width=64,
+        height=64,
+        bbox_half_size_m=250.0,  # the value _get_config would have returned
+    )
+
+    minx, miny, maxx, maxy = captured["bbox"]
+    assert (maxx - minx) == 500.0, f"bbox width should be 500m, got {maxx - minx}"
+    assert (maxy - miny) == 500.0, f"bbox height should be 500m, got {maxy - miny}"
+    assert minx == assets.x - 250.0
+    assert maxx == assets.x + 250.0
+    bbox_tuple = result["bbox"]
+    assert (bbox_tuple[2] - bbox_tuple[0]) == 500.0
+
+    # The cache key must include the half-size so a 250m request doesn't
+    # serve a stale 120m blob. Re-run with a different size and confirm the
+    # cache key changes — otherwise the GCS blob would collide.
+    captured.clear()
+    other_tmp = tmp_path / "other"
+    other_tmp.mkdir()
+    result_120 = mod._download_orthophoto_tif(
+        resolver=FakeResolver(),
+        assets=assets,
+        work_dir=other_tmp,
+        gcs_client=FakeGcsClient(),
+        bucket="b",
+        width=64,
+        height=64,
+        bbox_half_size_m=120.0,
+    )
+    assert result["cache_key"] != result_120["cache_key"], (
+        "cache key must differ when bbox_half_size_m changes, otherwise the "
+        "240m and 500m orthos would collide in GCS"
+    )
 
 
 def test_features_for_bbox_reprojects_output_to_target_crs(monkeypatch) -> None:

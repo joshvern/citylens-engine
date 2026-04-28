@@ -10,7 +10,11 @@ from PIL import Image
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 
-from services.imagery_inputs import _get_config, ensure_work_dir_inputs
+from services.imagery_inputs import (
+    _crop_ortho_to_data_coverage,
+    _get_config,
+    ensure_work_dir_inputs,
+)
 
 
 class FakeBlob:
@@ -271,6 +275,104 @@ def test_request_aoi_radius_drives_wms_bbox(monkeypatch, tmp_path: Path) -> None
         "cache key must differ when bbox_half_size_m changes, otherwise the "
         "240m and 500m orthos would collide in GCS"
     )
+
+
+def test_crop_ortho_to_data_coverage_trims_western_no_data(tmp_path: Path) -> None:
+    """The NYS 2024 WMS returns black no-data pixels where coverage is missing.
+    Construct a 100x100 RGB ortho with the western 30 columns set to (0,0,0)
+    and assert the crop helper rewrites the file to 100x70 with the transform
+    shifted east by 30 pixel-widths.
+    """
+    arr = np.zeros((100, 100, 3), dtype=np.uint8)
+    arr[:, 30:, :] = np.array([120, 130, 140], dtype=np.uint8)  # data band
+
+    tif_path = tmp_path / "ortho.tif"
+    pixel_size_x = 0.5  # m/px (arbitrary units; only ratios matter for this test)
+    pixel_size_y = 0.5
+    origin_x = 1000.0
+    origin_y = 2000.0
+    src_transform = from_origin(origin_x, origin_y, pixel_size_x, pixel_size_y)
+    with rasterio.open(
+        tif_path,
+        "w",
+        driver="GTiff",
+        height=100,
+        width=100,
+        count=3,
+        dtype="uint8",
+        crs=CRS.from_epsg(3857),
+        transform=src_transform,
+    ) as dst:
+        dst.write(np.moveaxis(arr, -1, 0))
+
+    rewritten = _crop_ortho_to_data_coverage(tif_path)
+    assert rewritten is True
+
+    with rasterio.open(tif_path) as src:
+        assert src.width == 70
+        assert src.height == 100
+        # Origin shifts east by 30 pixels (30 * 0.5 m = 15 m); y origin
+        # unchanged because no rows were dropped.
+        assert src.transform.c == origin_x + 30 * pixel_size_x
+        assert src.transform.f == origin_y
+        # Pixel sizes preserved.
+        assert src.transform.a == pixel_size_x
+        assert src.transform.e == -pixel_size_y
+        # All pixels should now be data.
+        data = src.read()
+        assert np.all(data[0] == 120)
+
+
+def test_crop_ortho_to_data_coverage_noop_on_full_coverage(tmp_path: Path) -> None:
+    arr = np.full((50, 50, 3), 200, dtype=np.uint8)
+    tif_path = tmp_path / "ortho.tif"
+    with rasterio.open(
+        tif_path,
+        "w",
+        driver="GTiff",
+        height=50,
+        width=50,
+        count=3,
+        dtype="uint8",
+        crs=CRS.from_epsg(3857),
+        transform=from_origin(0.0, 0.0, 1.0, 1.0),
+    ) as dst:
+        dst.write(np.moveaxis(arr, -1, 0))
+
+    pre_size = tif_path.stat().st_size
+    assert _crop_ortho_to_data_coverage(tif_path) is False
+    # File untouched.
+    with rasterio.open(tif_path) as src:
+        assert src.width == 50
+        assert src.height == 50
+    assert tif_path.stat().st_size == pre_size
+
+
+def test_crop_ortho_to_data_coverage_skips_when_coverage_under_threshold(
+    tmp_path: Path,
+) -> None:
+    """If <30% of the raster is data, leave it alone — a partial preview is
+    better than a broken pipeline run."""
+    arr = np.zeros((100, 100, 3), dtype=np.uint8)
+    arr[:10, :10, :] = 255  # 1% coverage
+    tif_path = tmp_path / "ortho.tif"
+    with rasterio.open(
+        tif_path,
+        "w",
+        driver="GTiff",
+        height=100,
+        width=100,
+        count=3,
+        dtype="uint8",
+        crs=CRS.from_epsg(3857),
+        transform=from_origin(0.0, 0.0, 1.0, 1.0),
+    ) as dst:
+        dst.write(np.moveaxis(arr, -1, 0))
+
+    assert _crop_ortho_to_data_coverage(tif_path) is False
+    with rasterio.open(tif_path) as src:
+        assert src.width == 100
+        assert src.height == 100
 
 
 def test_features_for_bbox_reprojects_output_to_target_crs(monkeypatch) -> None:

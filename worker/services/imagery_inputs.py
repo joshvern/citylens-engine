@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import zipfile
@@ -23,6 +24,8 @@ from shapely.geometry import mapping, shape
 from shapely.ops import transform as shapely_transform
 
 from .nysgis import NYSGISAPI, AddressAssets
+
+_LOG = logging.getLogger(__name__)
 
 _COUNTY_FOOTPRINT_ZIPS: dict[str, str] = {
     "Bronx": "https://gisdata.ny.gov/GISData/State/Building_Footprints/Bronx_Building_Footprints.zip",
@@ -126,6 +129,123 @@ def _download_ortho_zip_tif(*, ortho_zip_url: str, work_dir: Path, tif_path: Pat
         _convert_jp2_to_tif(jp2_path, tif_path)
 
 
+def _read_transform_and_bbox(
+    tif_path: Path, *, fallback: tuple[Any, tuple[float, float, float, float]]
+) -> tuple[Any, tuple[float, float, float, float]]:
+    """Re-read a tif's transform and bbox after a possible in-place crop, so
+    the manifest mirrors the file on disk. Falls back to the requested values
+    if the file cannot be read."""
+    try:
+        with rasterio_open(tif_path) as src:
+            b = src.bounds
+            return src.transform, (float(b.left), float(b.bottom), float(b.right), float(b.top))
+    except Exception:
+        return fallback
+
+
+def _crop_ortho_to_data_coverage(tif_path: Path) -> bool:
+    """Crop ``tif_path`` in place to the largest axis-aligned rectangle that
+    contains all data-bearing pixels.
+
+    The NYS 2024 orthophoto WMS does not have full coverage for every
+    requested bbox. On the Brooklyn reference run (250 m radius around
+    100 E 21st St) ~30% of the western 1024x1024 raster comes back as pure
+    black (0,0,0) no-data. SAM2 + the change classifier then "see" buildings
+    in those black pixels and emit garbage labels, and preview.png ships with
+    a giant black band. By cropping the tif to the actual data extent we:
+
+      * shrink the AOI fed into the baseline GDB filter (no wasted CPU on
+        buildings the imagery cannot see), and
+      * make the preview reflect what the imagery actually shows.
+
+    Policy:
+      * 100% coverage   -> no-op, return False.
+      * (95%, 100%)     -> tiny gap, treat as full coverage (avoids churn on
+        single-pixel anti-aliasing artifacts), return False.
+      * [30%, 95%]      -> crop in place, return True.
+      * < 30%           -> log a warning, leave file unchanged, return False
+        (a partial preview is better than no preview at all).
+
+    Returns True iff the file was rewritten.
+    """
+    with rasterio_open(tif_path) as src:
+        arr = src.read()  # (bands, H, W)
+        src_profile = src.profile.copy()
+        src_transform = src.transform
+        src_height = int(src.height)
+        src_width = int(src.width)
+
+    if arr.size == 0 or src_height == 0 or src_width == 0:
+        return False
+
+    # is_data: a pixel is "data" if any of its RGB(-ish) bands is non-zero.
+    # Black no-data from the WMS is exactly (0, 0, 0); we ignore alpha (band 4)
+    # so a fully-opaque black pixel still counts as no-data.
+    color_bands = arr[: min(3, arr.shape[0])]
+    is_data = np.any(color_bands != 0, axis=0)
+
+    total = float(src_height * src_width)
+    data_count = float(np.count_nonzero(is_data))
+    coverage = data_count / total if total > 0 else 0.0
+
+    if coverage >= 0.95:
+        return False
+
+    if coverage < 0.30:
+        _LOG.warning(
+            "ortho_data_coverage_too_low",
+            extra={
+                "tif_path": str(tif_path),
+                "coverage": coverage,
+                "raster_shape": [src_height, src_width],
+            },
+        )
+        return False
+
+    # Largest data-bearing rectangle: rows/cols that contain ANY data pixel.
+    rows_with_data = np.where(np.any(is_data, axis=1))[0]
+    cols_with_data = np.where(np.any(is_data, axis=0))[0]
+    if rows_with_data.size == 0 or cols_with_data.size == 0:
+        return False
+
+    row_min = int(rows_with_data.min())
+    row_max = int(rows_with_data.max()) + 1  # exclusive
+    col_min = int(cols_with_data.min())
+    col_max = int(cols_with_data.max()) + 1
+
+    new_height = row_max - row_min
+    new_width = col_max - col_min
+    if new_height == src_height and new_width == src_width:
+        return False
+
+    new_transform = src_transform * src_transform.translation(col_min, row_min)
+    cropped = arr[:, row_min:row_max, col_min:col_max]
+
+    profile = src_profile
+    profile.update(
+        driver="GTiff",
+        height=new_height,
+        width=new_width,
+        transform=new_transform,
+    )
+    tmp = tif_path.with_suffix(tif_path.suffix + ".cropped")
+    with rasterio_open(tmp, "w", **profile) as dst:
+        dst.write(cropped)
+    os.replace(str(tmp), str(tif_path))
+
+    _LOG.info(
+        "ortho_cropped_to_data_coverage",
+        extra={
+            "tif_path": str(tif_path),
+            "coverage": coverage,
+            "src_shape": [src_height, src_width],
+            "new_shape": [new_height, new_width],
+            "crop_window": [col_min, row_min, new_width, new_height],
+        },
+    )
+    return True
+
+
 def _download_orthophoto_tif(
     *,
     resolver: NYSGISAPI,
@@ -203,15 +323,25 @@ def _download_orthophoto_tif(
         blob.download_to_filename(str(tif_path))
         if not _is_at_target(tif_path):
             _resize_tif_to_target(tif_path)
+        # NYS 2024 WMS has coverage gaps; the cached blob holds the full
+        # requested bbox (with any black no-data band), and we re-crop on
+        # every materialization so the local file matches the imagery's
+        # actual data extent.
+        cropped = _crop_ortho_to_data_coverage(tif_path)
         _write_compat_png(tif_path, png_path)
+        final_transform, final_bbox = (
+            _read_transform_and_bbox(tif_path, fallback=(transform, bbox))
+            if cropped
+            else (transform, bbox)
+        )
         return {
             "canonical_path": str(tif_path),
             "compat_path": str(png_path),
             "source_url": assets.ortho_zip_url,
             "sha256": _sha256_file(tif_path),
             "crs": "EPSG:3857",
-            "transform": transform,
-            "bbox": bbox,
+            "transform": final_transform,
+            "bbox": final_bbox,
             "cache_key": cache_key,
         }
 
@@ -251,7 +381,21 @@ def _download_orthophoto_tif(
         _write_compat_png(tif_path, png_path)
         source_url = assets.ortho_zip_url
 
+    # Upload the FULL-bbox tif to the cache before cropping, so subsequent
+    # runs can re-evaluate coverage against the original WMS response.
     blob.upload_from_filename(str(tif_path))
+
+    # Crop the local file in place to the actual data-bearing rectangle.
+    # Regenerate the PNG so it matches the cropped tif.
+    cropped = _crop_ortho_to_data_coverage(tif_path)
+    if cropped:
+        _write_compat_png(tif_path, png_path)
+
+    final_transform, final_bbox = (
+        _read_transform_and_bbox(tif_path, fallback=(transform, bbox))
+        if cropped
+        else (transform, bbox)
+    )
 
     return {
         "canonical_path": str(tif_path),
@@ -259,8 +403,8 @@ def _download_orthophoto_tif(
         "source_url": source_url,
         "sha256": _sha256_file(tif_path),
         "crs": "EPSG:3857",
-        "transform": transform,
-        "bbox": bbox,
+        "transform": final_transform,
+        "bbox": final_bbox,
         "cache_key": cache_key,
     }
 

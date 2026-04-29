@@ -51,31 +51,22 @@ class FakeStore:
         )
 
 
-def _set_required_env(monkeypatch) -> None:
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
-    monkeypatch.setenv("CITYLENS_REGION", "us-central1")
-    monkeypatch.setenv("CITYLENS_BUCKET", "test-bucket")
-    monkeypatch.setenv("CITYLENS_JOB_NAME", "test-job")
-    monkeypatch.setenv("CITYLENS_API_KEYS", "dev-key-1")
-
-
-def test_runs_list_returns_paged_items(monkeypatch) -> None:
-    _set_required_env(monkeypatch)
+def test_runs_list_returns_paged_items(auth_override) -> None:
     fake_store = FakeStore()
+    auth_override(app_user_id="u-list", plan_type="free")
     app.dependency_overrides[runs_routes.get_store] = lambda: fake_store
 
     client = TestClient(app)
-    resp = client.get("/v1/runs?limit=2", headers={"X-API-Key": "dev-key-1"})
-    assert resp.status_code == 200
+    resp = client.get("/v1/runs?limit=2")
+    assert resp.status_code == 200, resp.text
 
     body = resp.json()
     assert body["next_cursor"] == "cursor-2"
     assert [item["run_id"] for item in body["items"]] == ["run-a", "run-b"]
     assert body["items"][0]["error"]["code"] == "PIPELINE_FAILED"
     assert fake_store.calls[0]["cursor"] is None
+    assert fake_store.calls[0]["user_id"] == "u-list"
 
-    resp2 = client.get("/v1/runs?limit=1&cursor=cursor-2", headers={"X-API-Key": "dev-key-1"})
+    resp2 = client.get("/v1/runs?limit=1&cursor=cursor-2")
     assert resp2.status_code == 200
     assert fake_store.calls[1]["cursor"] == "cursor-2"
-
-    app.dependency_overrides = {}

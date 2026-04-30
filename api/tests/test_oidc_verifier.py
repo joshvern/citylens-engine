@@ -7,7 +7,6 @@ Auth (which signs JWTs with EdDSA / Ed25519 via Better Auth's JWT plugin).
 from __future__ import annotations
 
 import base64
-import json
 import time
 from unittest.mock import patch
 
@@ -74,7 +73,8 @@ def test_oidc_verifier_accepts_eddsa(monkeypatch) -> None:
 
     fake = jwt.PyJWK(jwks["keys"][0], algorithm="EdDSA").key
 
-    with patch.object(verifier._jwks_client, "get_signing_key_from_jwt", return_value=_FakeKey(fake)):
+    target = "get_signing_key_from_jwt"
+    with patch.object(verifier._jwks_client, target, return_value=_FakeKey(fake)):
         claims = verifier.verify(token)
 
     assert claims["sub"] == "user-1"
@@ -97,7 +97,8 @@ def test_oidc_verifier_rejects_expired() -> None:
 
     fake = jwt.PyJWK(jwks["keys"][0], algorithm="EdDSA").key
 
-    with patch.object(verifier._jwks_client, "get_signing_key_from_jwt", return_value=_FakeKey(fake)):
+    target = "get_signing_key_from_jwt"
+    with patch.object(verifier._jwks_client, target, return_value=_FakeKey(fake)):
         with pytest.raises(AuthVerificationError):
             verifier.verify(token)
 
@@ -119,7 +120,8 @@ def test_oidc_verifier_validates_issuer_when_configured() -> None:
 
     fake = jwt.PyJWK(jwks["keys"][0], algorithm="EdDSA").key
 
-    with patch.object(verifier._jwks_client, "get_signing_key_from_jwt", return_value=_FakeKey(fake)):
+    target = "get_signing_key_from_jwt"
+    with patch.object(verifier._jwks_client, target, return_value=_FakeKey(fake)):
         with pytest.raises(AuthVerificationError):
             verifier.verify(bad)
 

@@ -10,6 +10,14 @@ from app.main import app
 from app.routes import runs as runs_routes
 
 
+class _NoOpGcs:
+    def signed_url(self, **_kwargs):
+        return None
+
+    def download_bytes(self, **_kwargs):
+        return b"", "application/octet-stream"
+
+
 class _RefundStore:
     """Tracks usage counter + run docs in-memory; mimics the Firestore txn API
     surface that runs.py exercises."""
@@ -78,6 +86,7 @@ def test_get_run_refunds_failed_run_quota(auth_override) -> None:
     store = _RefundStore()
     _seed_failed_run(store, user_id="u-refund", run_id="r-fail-1", mk="2026-04")
     app.dependency_overrides[runs_routes.get_store] = lambda: store
+    app.dependency_overrides[runs_routes.get_gcs] = lambda: _NoOpGcs()
 
     client = TestClient(app)
     resp = client.get("/v1/runs/r-fail-1")
@@ -100,6 +109,7 @@ def test_list_runs_refunds_each_failed_run_once(auth_override) -> None:
     store.usage[("u-list-refund", "2026-04")] = 2
 
     app.dependency_overrides[runs_routes.get_store] = lambda: store
+    app.dependency_overrides[runs_routes.get_gcs] = lambda: _NoOpGcs()
 
     client = TestClient(app)
     resp = client.get("/v1/runs")
@@ -124,6 +134,7 @@ def test_succeeded_run_does_not_refund(auth_override) -> None:
     }
     store.usage[("u-ok", "2026-04")] = 1
     app.dependency_overrides[runs_routes.get_store] = lambda: store
+    app.dependency_overrides[runs_routes.get_gcs] = lambda: _NoOpGcs()
 
     client = TestClient(app)
     assert client.get("/v1/runs/r-ok").status_code == 200

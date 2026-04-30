@@ -113,7 +113,12 @@ def require_auth(
             raise HTTPException(status_code=401, detail="Auth token missing subject")
         email_raw = claims.get("email")
         email = str(email_raw) if isinstance(email_raw, str) and email_raw else None
-        email_verified = bool(claims.get("email_verified", False))
+        # Accept both `email_verified` (OIDC standard, snake_case) and
+        # `emailVerified` (Better Auth / Neon Auth's spelling, camelCase).
+        # Whichever is present and truthy wins.
+        email_verified = bool(
+            claims.get("email_verified") or claims.get("emailVerified") or False
+        )
         is_admin_override = _admin_for_oidc(claims, settings)
 
         store = _store_factory(settings)

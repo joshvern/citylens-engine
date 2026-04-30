@@ -18,6 +18,8 @@ dependencies = [
   "google-cloud-storage>=2.14",
   "google-auth>=2.25",
   "requests>=2.31",
+  "httpx>=0.25",
+  "pyjwt[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

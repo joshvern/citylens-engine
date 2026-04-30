@@ -253,15 +253,48 @@ Rationale:
 
 ### 9) Configure env vars
 
-API:
+API (Cloud Run service):
 
-- `GOOGLE_CLOUD_PROJECT`, `CITYLENS_REGION`, `CITYLENS_BUCKET`, `CITYLENS_JOB_NAME`
-- `CITYLENS_API_KEYS`
+- Infra: `GOOGLE_CLOUD_PROJECT`, `CITYLENS_REGION`, `CITYLENS_BUCKET`, `CITYLENS_JOB_NAME`
+- Auth (Neon Auth or any OIDC issuer):
+  - `CITYLENS_AUTH_PROVIDER=neon`
+  - `CITYLENS_AUTH_REQUIRED=true`
+  - `CITYLENS_AUTH_ISSUER=<issuer claim from your provider>`
+  - `CITYLENS_AUTH_AUDIENCE=<audience claim — optional, but if set the engine validates `aud`>`
+  - `CITYLENS_AUTH_JWKS_URL=<url that returns the JSON Web Key Set for token verification>`
+  - For Neon Auth on Vercel: `CITYLENS_AUTH_JWKS_URL=https://<your-vercel-domain>/api/auth/jwks` and `CITYLENS_AUTH_ISSUER=https://<your-vercel-domain>/api/auth`. The web app's `app/api/auth/[...path]/route.ts` (using `@neondatabase/auth/next/server`) serves both endpoints automatically once `NEON_AUTH_BASE_URL` and `NEON_AUTH_COOKIE_SECRET` are set on Vercel.
+  - DO NOT set `CITYLENS_AUTH_PROVIDER=mock` in production; mock auth additionally requires `CITYLENS_ALLOW_MOCK_AUTH=true` and the engine refuses to start otherwise.
+- Plan / quota:
+  - `CITYLENS_FREE_MONTHLY_RUNS=5`
+  - `CITYLENS_ADMIN_AUTH_SUBS=<comma-separated provider subs>` (optional)
+  - `CITYLENS_ADMIN_EMAILS=<comma-separated verified emails>` (optional)
+- Interactive docs gate (recommended, otherwise `/docs` returns 404):
+  - `CITYLENS_DOCS_ACCESS_KEY_SHA256=$(printf '%s' "$DOCS_KEY" | openssl dgst -sha256 -hex | awk '{print $2}')` — store the **hash**, never the raw key
+- Optional admin API keys (internal scripts only — leave disabled unless you specifically need them):
+  - `CITYLENS_ALLOW_ADMIN_API_KEYS=true`
+  - `CITYLENS_ADMIN_API_KEY_HASHES=<comma-separated sha256 hashes>` (preferred over `CITYLENS_ADMIN_API_KEYS`)
 - Optional: `CITYLENS_SIGN_URLS=1` and `CITYLENS_SIGN_URL_TTL_SECONDS=300`
 
-Worker:
+Use Secret Manager for any value that resolves to a real secret (`CITYLENS_DOCS_ACCESS_KEY_SHA256`, `CITYLENS_ADMIN_API_KEY_HASHES`). The literal `*_SHA256` is a hash, not a secret, but treat it conservatively. Never set `CITYLENS_API_KEYS` for normal users — that path is deprecated and the auth dependency ignores it.
+
+Example update (idempotent):
+
+```bash
+gcloud run services update <API_SERVICE_NAME> \
+  --region <REGION> --project <PROJECT_ID> \
+  --update-env-vars \
+CITYLENS_AUTH_PROVIDER=neon,\
+CITYLENS_AUTH_REQUIRED=true,\
+CITYLENS_AUTH_ISSUER=https://citylens.dev/api/auth,\
+CITYLENS_AUTH_JWKS_URL=https://citylens.dev/api/auth/jwks,\
+CITYLENS_FREE_MONTHLY_RUNS=5,\
+CITYLENS_ADMIN_EMAILS=you@example.com
+```
+
+Worker (Cloud Run Job):
 
 - `GOOGLE_CLOUD_PROJECT`, `CITYLENS_REGION`, `CITYLENS_BUCKET`
+- The worker does NOT see auth env vars — it reads `CITYLENS_RUN_ID` from the job execution and writes back to Firestore using its own service account credentials.
 
 ### 10) Local sanity checks (before deploying)
 
@@ -313,24 +346,43 @@ If you enable signed URLs (`CITYLENS_SIGN_URLS=1`), the browser will download ar
 
 ### 11) Test end-to-end
 
-Health:
+Health (no auth):
 
 ```bash
 curl https://<API_URL>/v1/health
 ```
 
-Create run (must match `CitylensRequest` JSON):
+Run-options (no auth):
+
+```bash
+curl https://<API_URL>/v1/run-options
+```
+
+Authenticated request — get a JWT from your Neon Auth-enabled web app first:
+
+```bash
+# 1) Sign in via the browser at https://<your-vercel-domain>/sign-in
+# 2) Open dev-tools and grab a JWT via:
+#    fetch('/api/auth/token', {credentials: 'include'}).then(r => r.json())
+#    -> { token: "<JWT>" }
+TOKEN="<paste the JWT here>"
+```
+
+Identity / plan:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://<API_URL>/v1/me
+# => {"user":{"id","email","plan_type","is_admin"},"quota":{"month_key","monthly_run_limit","runs_used","runs_remaining","unlimited","max_concurrent_runs"}}
+```
+
+Create run (the engine forbids extra fields like `aoi_radius_m`/`sam2_*`/non-2024 years — the public payload is intentionally narrow):
 
 ```bash
 curl -X POST https://<API_URL>/v1/runs \
   -H 'Content-Type: application/json' \
-  -H 'X-API-Key: <YOUR_KEY>' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "address": "1 Market St, San Francisco, CA",
-    "aoi_radius_m": 250,
-    "imagery_year": 2024,
-    "baseline_year": 2017,
-    "segmentation_backend": "sam2",
     "outputs": ["previews", "change", "mesh"]
   }'
 ```
@@ -338,13 +390,62 @@ curl -X POST https://<API_URL>/v1/runs \
 Poll run:
 
 ```bash
-curl -H 'X-API-Key: <YOUR_KEY>' https://<API_URL>/v1/runs/<RUN_ID>
+curl -H "Authorization: Bearer $TOKEN" https://<API_URL>/v1/runs/<RUN_ID>
 ```
 
 Confirm artifacts exist in GCS:
 
 ```bash
 gsutil ls gs://<BUCKET_NAME>/runs/<RUN_ID>/
+```
+
+### 11b) Worker smoke-test
+
+The worker code path was not modified by the auth/quota refactor; the API still triggers Cloud Run Jobs with `CITYLENS_RUN_ID=<run_id>` and the worker still writes artifacts back to Firestore + GCS. Verify after the first authenticated POST:
+
+```bash
+# After POSTing /v1/runs and receiving { run_id: "<RUN_ID>" }:
+RUN_ID="<RUN_ID>"
+
+# 1) Cloud Run Job execution exists and is running/succeeded
+gcloud run jobs executions list \
+  --job=<JOB_NAME> --region=<REGION> --project=<PROJECT_ID> \
+  --limit=5
+
+# 2) Firestore run doc reflects status changes
+./.venv/bin/python -c "
+from google.cloud import firestore
+c = firestore.Client(project='<PROJECT_ID>')
+print(c.collection('runs').document('${RUN_ID}').get().to_dict())
+"
+
+# 3) Artifacts land in GCS at the expected path
+gsutil ls gs://<BUCKET_NAME>/runs/${RUN_ID}/
+
+# 4) Monthly usage counter incremented
+./.venv/bin/python -c "
+from google.cloud import firestore
+c = firestore.Client(project='<PROJECT_ID>')
+import datetime as dt
+mk = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m')
+APP_USER_ID = '<your app_user_id from /v1/me>'
+print(c.collection('usage_months').document(f'{APP_USER_ID}_{mk}').get().to_dict())
+"
+```
+
+Failure modes to watch for:
+- 401 on `/v1/runs` → the JWT failed JWKS verification. Check `CITYLENS_AUTH_JWKS_URL` is reachable from the Cloud Run service and that the issuer/audience claims line up.
+- 429 with `code=MONTHLY_QUOTA_EXCEEDED` after 5 successful runs → expected free-plan behavior; promote yourself by adding your email to `CITYLENS_ADMIN_EMAILS` (must be `email_verified=true`) or by sub via `CITYLENS_ADMIN_AUTH_SUBS`.
+- Trigger-failure path: if the Cloud Run Job trigger fails, the API decrements the monthly counter automatically. Check the API logs for the `failed to trigger worker job` log line and the run doc's `error.code=TRIGGER_FAILED`.
+
+### 11c) Docs gate smoke-test
+
+```bash
+DOCS_KEY="<the-raw-docs-key-you-hashed-into-CITYLENS_DOCS_ACCESS_KEY_SHA256>"
+curl -i https://<API_URL>/openapi.json                         # 401 if key configured, 404 if not
+curl -i -H "X-Docs-Key: $DOCS_KEY" https://<API_URL>/openapi.json  # 200
+curl -i -X POST -H "X-Docs-Key: $DOCS_KEY" -H 'Content-Type: application/json' \
+  -d '{"address":"x"}' https://<API_URL>/v1/runs               # 401 — docs key cannot create runs
 ```
 
 ### 12) Demo endpoints (optional, for citylens-web “Demo mode”)

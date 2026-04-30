@@ -200,8 +200,9 @@ def test_request_aoi_radius_drives_wms_bbox(monkeypatch, tmp_path: Path) -> None
     from io import BytesIO
     from types import SimpleNamespace
 
-    import services.imagery_inputs as mod
     from PIL import Image as PILImage
+
+    import services.imagery_inputs as mod
 
     monkeypatch.setenv("CITYLENS_ORTHO_BBOX_HALF_SIZE_M", "120")
 
@@ -386,6 +387,7 @@ def test_features_for_bbox_reprojects_output_to_target_crs(monkeypatch) -> None:
     was in EPSG:3857 -> rasterize produced an all-zero mask -> mask_iou=0.
     """
     from rasterio.crs import CRS as RioCRS
+
     import services.imagery_inputs as mod
 
     # Two polygons in the "fake GDB": one inside the query bbox, one outside.

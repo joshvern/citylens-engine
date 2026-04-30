@@ -44,6 +44,18 @@ Current pinned release tag:
 
 - `citylens-core@v0.3.0`
 
+## Auth & quotas
+
+- Real run endpoints (`POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `GET /v1/me`) require `Authorization: Bearer <token>` from Neon Auth (or any compatible OIDC issuer).
+- Admin promotion is via env: `CITYLENS_ADMIN_AUTH_SUBS` (sub allowlist) or `CITYLENS_ADMIN_EMAILS` (verified-email allowlist).
+- Free users get 5 real runs per UTC calendar month (override with `CITYLENS_FREE_MONTHLY_RUNS`); admins are unlimited.
+- Run options are server-locked: `imagery_year=2024`, `baseline_year=2017`, `segmentation_backend=sam2`, `aoi_radius_m=250`, outputs ⊂ `{previews, change, mesh}`. Discover via `GET /v1/run-options`.
+- Demo endpoints (`/v1/demo/*`) and `/v1/health` remain public.
+- Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
+- `CITYLENS_API_KEYS` is deprecated for normal users. Use the optional `CITYLENS_ALLOW_ADMIN_API_KEYS` path only for internal scripts.
+
+See [docs/security.md](docs/security.md) for the full credential model.
+
 ## Demo Mode
 
 The API exposes unauthenticated demo endpoints:

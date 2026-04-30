@@ -125,6 +125,19 @@ def list_runs(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Reactive quota refund: any failed run that hasn't been refunded yet
+    # gets its monthly counter slot back. Idempotent and only writes to runs
+    # that need it, so list-page reads stay cheap when nothing's failed.
+    for run in runs:
+        if str(run.get("status") or "") == "failed" and not run.get("quota_refunded"):
+            try:
+                store.refund_run_quota_if_failed(str(run.get("run_id") or ""))
+            except Exception:
+                logger.exception(
+                    "quota refund failed",
+                    extra={"run_id": run.get("run_id"), "user_id": auth.app_user_id},
+                )
+
     items = [RunListItem(**normalize_run_record(run)) for run in runs]
     return RunListResponse(items=items, next_cursor=next_cursor)
 
@@ -142,6 +155,16 @@ def get_run(
         raise HTTPException(status_code=404, detail="Run not found")
     if run.get("user_id") != auth.app_user_id:
         raise HTTPException(status_code=404, detail="Run not found")
+
+    if str(run.get("status") or "") == "failed" and not run.get("quota_refunded"):
+        try:
+            if store.refund_run_quota_if_failed(run_id):
+                run["quota_refunded"] = True
+        except Exception:
+            logger.exception(
+                "quota refund failed",
+                extra={"run_id": run_id, "user_id": auth.app_user_id},
+            )
 
     artifacts = store.list_artifacts(run_id)
     return build_run_response(run=run, artifacts=artifacts, settings=settings, gcs=gcs)

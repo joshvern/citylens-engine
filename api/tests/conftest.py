@@ -3,15 +3,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
+# Ensure `app` is importable when CI runs `pytest api/tests` from the repo
+# root (`api/` isn't on sys.path by default). This must run at module import
+# time, before the `from app...` import below.
+_API_ROOT = Path(__file__).resolve().parents[1]
+if str(_API_ROOT) not in sys.path:
+    sys.path.insert(0, str(_API_ROOT))
 
-from app.services.auth_context import AuthContext
+import pytest  # noqa: E402
+
+from app.services.auth_context import AuthContext  # noqa: E402
 
 
 def pytest_configure() -> None:
-    api_root = Path(__file__).resolve().parents[1]
-    if str(api_root) not in sys.path:
-        sys.path.insert(0, str(api_root))
+    # Kept for back-compat; the path tweak now happens at module import.
+    if str(_API_ROOT) not in sys.path:
+        sys.path.insert(0, str(_API_ROOT))
 
 
 @pytest.fixture(autouse=True)

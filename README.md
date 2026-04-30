@@ -1,6 +1,15 @@
 # citylens-engine
 
-Cloud Run deployment repo for Citylens.
+The CityLens **API, worker, auth, quotas, and artifact storage**. Powers
+the live product at **https://www.citylens.dev**, served via the API at
+**https://api.citylens.dev**.
+
+Companion repos:
+
+- [`citylens-web`](https://github.com/joshvern/citylens-web) — Next.js
+  product frontend.
+- [`citylens-core`](https://github.com/joshvern/citylens-core) — reusable
+  Python pipeline library (segmentation, change detection, mesh).
 
 This repo is independently runnable under the shared `/home/josh/citylens`
 workspace. For local development, open `citylens-engine/` directly in VS Code, or
@@ -9,10 +18,15 @@ repo-local tooling correctly.
 
 It has two separate deployment surfaces:
 
-- **API**: FastAPI service on Cloud Run
-- **Worker**: Python Cloud Run Job
-- **Metadata**: Firestore (runs/users/artifacts)
-- **Artifacts**: GCS (private bucket; API can optionally return signed URLs)
+- **API**: FastAPI service on Cloud Run (login-gated `/v1/runs*`,
+  `/v1/me`, plus public `/v1/demo/*` and `/v1/run-options`).
+- **Worker**: Python Cloud Run Job that runs the citylens-core pipeline.
+- **Metadata**: Firestore (`runs`, `users`, `auth_identities`,
+  `usage_months`).
+- **Artifacts**: GCS (private bucket; API can optionally return signed URLs).
+- **Auth**: OIDC/JWKS verification (signature, `iss`, `aud`, `exp`); Neon
+  Auth tokens accepted out of the box. Optional admin API keys for
+  internal scripts only.
 
 Critical constraint: this repo **does not define its own pipeline request schema**.
 It imports and uses the canonical `CitylensRequest` and pipeline entrypoint from `citylens-core`.

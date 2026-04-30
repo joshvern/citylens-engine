@@ -215,6 +215,63 @@ class FirestoreStore:
 
         retry_transient(_op)
 
+    def refund_run_quota_if_failed(self, run_id: str) -> bool:
+        """Refund the monthly run quota for a failed run, idempotently.
+
+        Called from API read paths so failed runs naturally refund the user's
+        monthly counter — pipelines that fail outside the user's control
+        (LiDAR coverage, worker timeout, trigger failure) shouldn't burn quota.
+
+        Returns True if a refund was applied, False otherwise (run not failed,
+        or already refunded). Sets `quota_refunded=True` on the run doc to
+        prevent double-refund.
+        """
+
+        ref = self.client.collection(self.runs_collection).document(run_id)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> bool:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return False
+            data = snap.to_dict() or {}
+            if str(data.get("status") or "") != "failed":
+                return False
+            if data.get("quota_refunded") is True:
+                return False
+
+            user_id = str(data.get("user_id") or "")
+            created_at = data.get("created_at")
+            if not user_id or not isinstance(created_at, datetime):
+                return False
+            created_utc = created_at.astimezone(timezone.utc)
+            month_key = f"{created_utc.year:04d}-{created_utc.month:02d}"
+
+            usage_ref = self._usage_doc_ref(app_user_id=user_id, month_key=month_key)
+            usage_snap = usage_ref.get(transaction=transaction)
+            if usage_snap.exists:
+                usage = usage_snap.to_dict() or {}
+                runs_used = int(usage.get("runs_used", 0) or 0)
+                new_used = max(0, runs_used - 1)
+                transaction.set(
+                    usage_ref,
+                    {"runs_used": new_used, "updated_at": utcnow()},
+                    merge=True,
+                )
+
+            transaction.set(
+                ref,
+                {"quota_refunded": True, "updated_at": utcnow()},
+                merge=True,
+            )
+            return True
+
+        def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
     def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
         def _op() -> list[dict[str, Any]]:
             col = (

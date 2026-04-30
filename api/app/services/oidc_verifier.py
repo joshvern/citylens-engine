@@ -42,7 +42,10 @@ class OIDCVerifier:
             raise AuthVerificationError(f"Could not resolve JWKS signing key: {exc}") from exc
 
         decode_kwargs: dict[str, Any] = {
-            "algorithms": ["RS256", "RS512", "ES256", "ES512"],
+            # EdDSA (Ed25519) is what Neon Auth / Better Auth's JWT plugin
+            # signs with by default. RS256/ES256 are kept for OIDC issuers
+            # that use them.
+            "algorithms": ["EdDSA", "RS256", "RS512", "ES256", "ES512"],
             "options": {"require": ["exp", "iat"]},
         }
         if self._audience:

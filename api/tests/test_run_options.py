@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import runs as runs_routes
-from app.services.firestore_store import MonthlyQuotaExceeded
 
 
 class _OkStore:

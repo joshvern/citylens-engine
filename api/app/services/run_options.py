@@ -4,7 +4,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 SUPPORTED_IMAGERY_YEARS: list[int] = [2024]
 SUPPORTED_BASELINE_YEARS: list[int] = [2017]
 SUPPORTED_SEGMENTATION_BACKENDS: list[str] = ["sam2"]

@@ -8,7 +8,6 @@ from ..services.firestore_store import FirestoreStore
 from ..services.quotas import get_quota_state
 from ..services.settings import Settings, get_settings
 
-
 router = APIRouter(tags=["me"])
 
 

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from starlette.responses import PlainTextResponse, Response
 
 from .routes.demo import router as demo_router
@@ -25,7 +25,6 @@ from .services.run_options import (
     SUPPORTED_SEGMENTATION_BACKENDS,
 )
 from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
-
 
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
 

@@ -8,7 +8,7 @@ from services.firestore_store import FirestoreStore
 from services.gcs_artifacts import GcsArtifacts
 from services.logging import configure_json_logging
 from services.pipeline_runner import run as run_pipeline
-from services.run_errors import build_error_payload
+from services.run_errors import LidarCoverageError, build_error_payload
 from services.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,37 @@ def main() -> int:
             settings=settings,
         )
         return 0
+    except LidarCoverageError as e:
+        # Surface a stable, user-facing code instead of leaking the raw
+        # ESRI-style ValueError message into the run document. The point
+        # genuinely has no LAS tile in the configured index layer; the
+        # right product behaviour is to ask the user to try a nearby
+        # address rather than show a stack trace.
+        error = build_error_payload(
+            e,
+            code="LIDAR_NO_COVERAGE",
+            stage="fetch_inputs",
+        )
+        error["message"] = (
+            "LiDAR coverage is not available for this address. "
+            "Try a nearby address."
+        )
+        store.update_run(
+            run_id,
+            {"status": "failed", "stage": "failed", "progress": 100, "error": error},
+        )
+        logger.warning(
+            "lidar coverage missing",
+            extra={
+                "run_id": run_id,
+                "stage": "fetch_inputs",
+                "x": e.x,
+                "y": e.y,
+                "wkid": e.wkid,
+                "layer_url": e.layer_url,
+            },
+        )
+        raise
     except Exception as e:
         error = build_error_payload(e)
         store.update_run(

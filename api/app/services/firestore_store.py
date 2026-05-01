@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -16,6 +17,22 @@ def utcnow() -> datetime:
 
 def identity_id_for(provider: str, subject: str) -> str:
     return hashlib.sha256(f"{provider}:{subject}".encode("utf-8")).hexdigest()
+
+
+# Programmatic user API keys are prefixed so the auth dependency can
+# route them to a DB lookup without trying JWKS verification first.
+USER_API_KEY_PREFIX = "clk_live_"
+# Number of plaintext bytes; encoded as URL-safe base64 (~43 chars after
+# stripping padding). Total visible key length ~ len(prefix) + 43 = 52.
+USER_API_KEY_BYTES = 32
+
+
+def _hash_api_key(plaintext: str) -> str:
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def is_user_api_key(token: str) -> bool:
+    return isinstance(token, str) and token.startswith(USER_API_KEY_PREFIX)
 
 
 class MonthlyQuotaExceeded(Exception):
@@ -37,6 +54,7 @@ class FirestoreStore:
         users_collection: str = "users",
         auth_identities_collection: str = "auth_identities",
         usage_months_collection: str = "usage_months",
+        api_keys_index_collection: str = "api_keys_by_hash",
         client: firestore.Client | None = None,
     ) -> None:
         self.client = client or firestore.Client(project=project_id)
@@ -44,6 +62,7 @@ class FirestoreStore:
         self.users_collection = users_collection
         self.auth_identities_collection = auth_identities_collection
         self.usage_months_collection = usage_months_collection
+        self.api_keys_index_collection = api_keys_index_collection
 
     # ---------- Identity ----------
 
@@ -413,6 +432,148 @@ class FirestoreStore:
         def _op() -> int:
             transaction = self.client.transaction()
             return _txn(transaction)
+
+        return retry_transient(_op)
+
+    # ---------- User API keys ----------
+    #
+    # Two-document layout per key:
+    #   users/{app_user_id}/api_keys/{key_id}  — full record (label,
+    #     created_at, last_used_at, revoked_at, key_prefix, key_hash)
+    #   api_keys_by_hash/{sha256(plaintext)}   — index pointing back at
+    #     {app_user_id, key_id}. Single-read auth lookup.
+    # Plaintext is never stored; we hash on create and discard.
+
+    def _user_api_keys_col(self, app_user_id: str):
+        return (
+            self.client.collection(self.users_collection)
+            .document(app_user_id)
+            .collection("api_keys")
+        )
+
+    def _api_key_index_doc(self, plaintext_hash: str):
+        return self.client.collection(self.api_keys_index_collection).document(plaintext_hash)
+
+    def create_api_key(
+        self, *, app_user_id: str, label: str
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Mint a new user API key. Returns (key_id, plaintext, record).
+
+        `plaintext` is shown to the user once and never retrievable
+        again. `record` is the metadata persisted in the user
+        subcollection (without the hash) — safe to include in the API
+        response.
+        """
+        key_id = uuid.uuid4().hex
+        random_part = secrets.token_urlsafe(USER_API_KEY_BYTES).rstrip("=")
+        plaintext = f"{USER_API_KEY_PREFIX}{random_part}"
+        plaintext_hash = _hash_api_key(plaintext)
+        # First few chars of the random part — stable per-key identifier
+        # users can recognise in their dashboard without exposing the
+        # secret.
+        key_prefix = f"{USER_API_KEY_PREFIX}{random_part[:4]}"
+
+        def _op() -> dict[str, Any]:
+            now = utcnow()
+            record = {
+                "key_id": key_id,
+                "label": str(label or "").strip()[:128] or "untitled",
+                "key_prefix": key_prefix,
+                "key_hash": plaintext_hash,
+                "created_at": now,
+                "last_used_at": None,
+                "revoked_at": None,
+            }
+            user_key_ref = self._user_api_keys_col(app_user_id).document(key_id)
+            user_key_ref.set(record)
+
+            index_ref = self._api_key_index_doc(plaintext_hash)
+            index_ref.set(
+                {
+                    "app_user_id": app_user_id,
+                    "key_id": key_id,
+                    "created_at": now,
+                    "revoked_at": None,
+                }
+            )
+            return record
+
+        record = retry_transient(_op)
+        return key_id, plaintext, record
+
+    def get_user_id_for_api_key(self, plaintext: str) -> Optional[str]:
+        """Resolve a plaintext API key to its owning app_user_id. Returns
+        None if the key is unknown or revoked. Best-effort updates
+        `last_used_at` on hit."""
+        if not is_user_api_key(plaintext):
+            return None
+        plaintext_hash = _hash_api_key(plaintext)
+
+        def _op() -> Optional[str]:
+            index_snap = self._api_key_index_doc(plaintext_hash).get()
+            if not index_snap.exists:
+                return None
+            index_doc = index_snap.to_dict() or {}
+            if index_doc.get("revoked_at") is not None:
+                return None
+            app_user_id = str(index_doc.get("app_user_id") or "")
+            key_id = str(index_doc.get("key_id") or "")
+            if not app_user_id or not key_id:
+                return None
+
+            # Best-effort `last_used_at` update — doesn't block auth on
+            # a transient write failure.
+            try:
+                user_key_ref = self._user_api_keys_col(app_user_id).document(key_id)
+                user_key_ref.set({"last_used_at": utcnow()}, merge=True)
+            except Exception:
+                pass
+
+            return app_user_id
+
+        return retry_transient(_op)
+
+    def list_api_keys(self, *, app_user_id: str) -> list[dict[str, Any]]:
+        """Return non-revoked API keys for the user. Hashes are stripped
+        before returning so the API response never includes secret
+        material."""
+
+        def _op() -> list[dict[str, Any]]:
+            docs = self._user_api_keys_col(app_user_id).stream()
+            out: list[dict[str, Any]] = []
+            for snap in docs:
+                data = snap.to_dict() or {}
+                if data.get("revoked_at") is not None:
+                    continue
+                # Drop the hash from the response.
+                data.pop("key_hash", None)
+                out.append(data)
+            out.sort(
+                key=lambda d: d.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
+            return out
+
+        return retry_transient(_op)
+
+    def revoke_api_key(self, *, app_user_id: str, key_id: str) -> bool:
+        """Mark a key as revoked. Returns False if the key wasn't found
+        or was already revoked."""
+
+        def _op() -> bool:
+            user_key_ref = self._user_api_keys_col(app_user_id).document(key_id)
+            snap = user_key_ref.get()
+            if not snap.exists:
+                return False
+            data = snap.to_dict() or {}
+            if data.get("revoked_at") is not None:
+                return False
+            now = utcnow()
+            user_key_ref.set({"revoked_at": now}, merge=True)
+            key_hash = str(data.get("key_hash") or "")
+            if key_hash:
+                self._api_key_index_doc(key_hash).set({"revoked_at": now}, merge=True)
+            return True
 
         return retry_transient(_op)
 

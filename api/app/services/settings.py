@@ -85,6 +85,7 @@ class Settings:
     users_collection: str = "users"
     auth_identities_collection: str = "auth_identities"
     usage_months_collection: str = "usage_months"
+    api_keys_index_collection: str = "api_keys_by_hash"
 
     sign_urls: bool = False
     sign_url_ttl_seconds: int = 300
@@ -105,6 +106,10 @@ class Settings:
     allow_admin_api_keys: bool = False
     admin_api_keys: list[str] = field(default_factory=list)
     admin_api_key_hashes: list[str] = field(default_factory=list)
+
+    # User-level programmatic API keys (Bearer `clk_live_…`).
+    # Off by default so production deploys must explicitly opt in.
+    allow_user_api_keys: bool = False
 
     # Plan
     free_monthly_runs: int = 5
@@ -129,6 +134,9 @@ def get_settings() -> Settings:
             "CITYLENS_AUTH_IDENTITIES_COLLECTION", "auth_identities"
         ),
         usage_months_collection=os.getenv("CITYLENS_USAGE_MONTHS_COLLECTION", "usage_months"),
+        api_keys_index_collection=os.getenv(
+            "CITYLENS_API_KEYS_INDEX_COLLECTION", "api_keys_by_hash"
+        ),
         sign_urls=_env_bool("CITYLENS_SIGN_URLS", False),
         sign_url_ttl_seconds=_env_int("CITYLENS_SIGN_URL_TTL_SECONDS", 300),
         job_name=_env("CITYLENS_JOB_NAME"),
@@ -145,6 +153,7 @@ def get_settings() -> Settings:
         admin_api_key_hashes=_csv_env(
             "CITYLENS_ADMIN_API_KEY_HASHES", default="", required=False
         ),
+        allow_user_api_keys=_env_bool("CITYLENS_ALLOW_USER_API_KEYS", False),
         free_monthly_runs=_env_int("CITYLENS_FREE_MONTHLY_RUNS", 5),
         docs_access_key_sha256=_opt_env("CITYLENS_DOCS_ACCESS_KEY_SHA256"),
     )

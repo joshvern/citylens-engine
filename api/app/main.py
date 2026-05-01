@@ -12,6 +12,7 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from starlette.responses import PlainTextResponse, Response
 
+from .routes.api_keys import router as api_keys_router
 from .routes.demo import router as demo_router
 from .routes.health import router as health_router
 from .routes.me import router as me_router
@@ -191,6 +192,7 @@ app.include_router(demo_router, prefix="/v1")
 app.include_router(run_options_router, prefix="/v1")
 app.include_router(me_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")
+app.include_router(api_keys_router, prefix="/v1")
 
 
 __all__ = ["app", "Settings"]

@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
 
+from .run_errors import LidarCoverageError
+
 GEOCODER_FIND_URL = (
     "https://gisservices.its.ny.gov/arcgis/rest/services/"
     "Locators/Street_and_Address_Composite/GeocodeServer/findAddressCandidates"
 )
 
-LAS_INDEX_LAYER_URL = (
-    "https://orthos.its.ny.gov/arcgis/rest/services/vector/las_indexes/MapServer/9"
-)
+# Env-overridable so ops can point the worker at a different LAS index
+# layer or LiDAR collection without a code change. Mirrors the existing
+# CITYLENS_ORTHO_WMS_URL knob read in services/imagery_inputs.py.
+LAS_INDEX_LAYER_URL = os.getenv(
+    "CITYLENS_LAS_INDEX_LAYER_URL",
+    "https://orthos.its.ny.gov/arcgis/rest/services/vector/las_indexes/MapServer/9",
+).strip()
 
 ORTHO_WMS_URL = "https://orthos.its.ny.gov/arcgis/rest/services/wms/2024/MapServer/WMSServer"
 
-LIDAR_FILE_BASE = "https://gisdata.ny.gov/elevation/LIDAR/NYC_TopoBathymetric2017"
+LIDAR_FILE_BASE = os.getenv(
+    "CITYLENS_LIDAR_FILE_BASE",
+    "https://gisdata.ny.gov/elevation/LIDAR/NYC_TopoBathymetric2017",
+).strip()
 
 ORTHO_TILE_BASE = "https://gisdata.ny.gov/ortho/nysdop12/new_york_city/spcs/tiles"
 
@@ -125,8 +135,12 @@ class NYSGISAPI:
 
         features = data.get("features") or []
         if not features:
-            raise ValueError(
-                f"No LAS tile found at point ({x}, {y}) in layer {self.las_index_layer_url}"
+            raise LidarCoverageError(
+                f"No LAS tile found at point ({x}, {y}) in layer {self.las_index_layer_url}",
+                x=x,
+                y=y,
+                wkid=wkid,
+                layer_url=self.las_index_layer_url,
             )
 
         attrs = features[0].get("attributes") or {}

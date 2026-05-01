@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException
 
 from .auth_context import AuthContext
-from .firestore_store import FirestoreStore
+from .firestore_store import FirestoreStore, is_user_api_key
 from .oidc_verifier import (
     AuthVerificationError,
     MockVerifier,
@@ -31,6 +31,7 @@ def _store_factory(settings: Settings) -> FirestoreStore:
         users_collection=settings.users_collection,
         auth_identities_collection=settings.auth_identities_collection,
         usage_months_collection=settings.usage_months_collection,
+        api_keys_index_collection=settings.api_keys_index_collection,
     )
 
 
@@ -98,6 +99,37 @@ def require_auth(
     bearer_token: Optional[str] = None
     if authorization and authorization.lower().startswith("bearer "):
         bearer_token = authorization.split(" ", 1)[1].strip() or None
+
+    # User-level programmatic API keys are sent as Bearer tokens with a
+    # known prefix. Resolve them via the store before falling through
+    # to JWKS verification — keys would never validate as JWTs anyway,
+    # and routing them at the top short-circuits a guaranteed-failure
+    # JWKS round trip.
+    if bearer_token and is_user_api_key(bearer_token):
+        if not settings.allow_user_api_keys:
+            raise HTTPException(
+                status_code=401, detail="User API keys are not enabled"
+            )
+        store = _store_factory(settings)
+        owner_id = store.get_user_id_for_api_key(bearer_token)
+        if not owner_id:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        user_doc = store.get_user(owner_id)
+        if not user_doc:
+            # Key resolves to a user that no longer exists. Treat as
+            # revoked rather than 500.
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        plan_type = str(user_doc.get("plan_type") or "free")
+        is_admin = bool(user_doc.get("is_admin"))
+        return AuthContext(
+            app_user_id=str(user_doc.get("user_id") or owner_id),
+            auth_provider="user_api_key",
+            auth_subject=owner_id,
+            email=user_doc.get("email"),
+            email_verified=bool(user_doc.get("email_verified")),
+            is_admin=is_admin,
+            plan_type=plan_type,
+        )
 
     if bearer_token:
         verifier = _get_verifier(settings)

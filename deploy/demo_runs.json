@@ -2,7 +2,7 @@
   "runs": [
     {
       "category": "Featured",
-      "run_id": "b7356fa767aa4605b8a77352bccd427e",
+      "run_id": "ae61afb73b4447cea45492098c923d91",
       "label": "Brooklyn brownstones \u2014 Flatbush",
       "address": "100 E 21st St Brooklyn, NY 11226",
       "imagery_year": 2024,
@@ -16,7 +16,7 @@
     },
     {
       "category": "Featured",
-      "run_id": "305669497afe4776af1093e628498457",
+      "run_id": "f77f14dc37734dfbbc28611546136062",
       "label": "Manhattan towers \u2014 Hudson Yards",
       "address": "15 Hudson Yards, New York, NY 10001",
       "imagery_year": 2024,
@@ -30,7 +30,7 @@
     },
     {
       "category": "Featured",
-      "run_id": "f91112970f1e4116a45635f162f823fc",
+      "run_id": "cdd60bbd52234f6cbfc18f3f4caa5e02",
       "label": "Manhattan mid-rise \u2014 East Village",
       "address": "20 Cooper Square, New York, NY 10003",
       "imagery_year": 2024,
@@ -44,7 +44,7 @@
     },
     {
       "category": "Featured",
-      "run_id": "061f85e29f414ffc9cb95116416f4044",
+      "run_id": "c58a0d1fad334192bb02a9001ebee309",
       "label": "Queens new construction \u2014 Long Island City",
       "address": "5-49 Borden Ave, Long Island City, NY 11101",
       "imagery_year": 2024,
@@ -58,7 +58,7 @@
     },
     {
       "category": "Featured",
-      "run_id": "953ff513366e4c3cb9e6995d31e6b1c3",
+      "run_id": "825a5db7e0184fef83efb18817bf9799",
       "label": "Williamsburg \u2014 rezoned waterfront",
       "address": "240 Bedford Ave, Brooklyn, NY 11211",
       "imagery_year": 2024,

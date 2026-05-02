@@ -1,8 +1,9 @@
 .PHONY: dev test fmt
 
-PYTHON ?= ./.venv/bin/python
+ROOT := $(CURDIR)
+PYTHON ?= $(ROOT)/.venv/bin/python
 UV ?= uv
-CITYLENS_CORE_REF ?= v0.3.22
+CITYLENS_CORE_REF ?= v0.3.23
 CITYLENS_CORE_GIT_URL ?= git+https://github.com/joshvern/citylens-core.git@$(CITYLENS_CORE_REF)
 
 dev:

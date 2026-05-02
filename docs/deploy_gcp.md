@@ -161,7 +161,7 @@ gcloud storage buckets add-iam-policy-binding gs://<BUCKET_NAME> \
 
 The API and worker Dockerfiles default to the pinned core release tag:
 
-- `git+https://github.com/joshvern/citylens-core.git@v0.3.0`
+- `git+https://github.com/joshvern/citylens-core.git@v0.3.23`
 
 You can override that build input with `CITYLENS_CORE_GIT_URL` when you need a different core revision.
 Use the Cloud Build config in `api/cloudbuild.yaml` to build with the default tag or an explicit override, then deploy from the built image.
@@ -173,7 +173,7 @@ Set the core git URL only if you want to override the default tag. Example:
 Build the API image:
 
 ```bash
-CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.0}"
+CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.23}"
 API_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-api:latest"
 
 gcloud builds submit . \
@@ -208,7 +208,7 @@ Build the worker image:
 ```bash
 cd ../worker
 
-CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.0}"
+CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.23}"
 WORKER_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-worker:latest"
 
 gcloud builds submit . \

@@ -300,8 +300,8 @@ def main(argv: list[str]) -> int:
 
             _validate_completed_run(run, run_id=run_id)
         except Exception as exc:
-            # One bad address shouldn't kill the whole batch — log, record,
-            # continue. Surfaces a non-zero exit at the end if anything failed.
+            # Keep evaluating the batch so deploy logs show every bad demo,
+            # but do not publish a partial demo_runs.json.
             print(f"  SKIP {demo.label}: {exc}", file=sys.stderr)
             failures.append((demo.label, str(exc)))
             continue
@@ -319,15 +319,17 @@ def main(argv: list[str]) -> int:
             }
         )
 
-    _write_json(out_path, {"runs": results})
-    print(f"Wrote {out_path} with {len(results)} demo runs", file=sys.stderr)
     if failures:
-        print(f"\n{len(failures)} address(es) skipped:", file=sys.stderr)
+        print(f"\n{len(failures)} address(es) failed:", file=sys.stderr)
         for label, reason in failures:
             print(f"  - {label}: {reason}", file=sys.stderr)
-        # Non-zero exit so CI catches partial failures, but we still wrote
-        # the successful runs to demo_runs.json above.
-        return 2
+        failure_text = "; ".join(f"{label}: {reason}" for label, reason in failures)
+        raise RuntimeError(
+            f"{len(failures)} demo run(s) failed; refusing to write {out_path}: {failure_text}"
+        )
+
+    _write_json(out_path, {"runs": results})
+    print(f"Wrote {out_path} with {len(results)} demo runs", file=sys.stderr)
     return 0
 
 

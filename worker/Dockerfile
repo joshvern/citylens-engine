@@ -16,7 +16,7 @@ COPY services /app/services
 RUN pip install --no-cache-dir -e .
 
 # Install citylens-core from git at build time.
-ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.1
+ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.23
 ARG CITYLENS_SAM2_ASSETS_SIZE=small
 
 # Where citylens-core looks for runtime assets like SAM2 checkpoints.

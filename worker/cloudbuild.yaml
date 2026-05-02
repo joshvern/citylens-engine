@@ -16,6 +16,6 @@ steps:
 images:
   - ${_IMAGE}
 substitutions:
-  _CITYLENS_CORE_GIT_URL: "git+https://github.com/joshvern/citylens-core.git@v0.3.22"
+  _CITYLENS_CORE_GIT_URL: "git+https://github.com/joshvern/citylens-core.git@v0.3.23"
   _CITYLENS_SAM2_ASSETS_SIZE: "small"
   _IMAGE: ""

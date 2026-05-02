@@ -2,7 +2,7 @@
 
 PYTHON ?= ./.venv/bin/python
 UV ?= uv
-CITYLENS_CORE_REF ?= v0.3.21
+CITYLENS_CORE_REF ?= v0.3.22
 CITYLENS_CORE_GIT_URL ?= git+https://github.com/joshvern/citylens-core.git@$(CITYLENS_CORE_REF)
 
 dev:

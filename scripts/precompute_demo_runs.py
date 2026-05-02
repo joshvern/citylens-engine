@@ -256,6 +256,7 @@ def main(argv: list[str]) -> int:
     demos = _load_addresses(addresses_path)
 
     results: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []  # (label, reason)
 
     for demo in demos:
         payload = {
@@ -273,32 +274,37 @@ def main(argv: list[str]) -> int:
             payload["baseline_path"] = demo.baseline_path
 
         print(f"Creating run for: {demo.label} ({demo.address})", file=sys.stderr)
-        create_resp = _http_json("POST", create_url, api_key=args.admin_api_key, body=payload)
-        run_id = _normalize_run_id(create_resp)
-        print(f"  run_id={run_id}", file=sys.stderr)
+        try:
+            create_resp = _http_json("POST", create_url, api_key=args.admin_api_key, body=payload)
+            run_id = _normalize_run_id(create_resp)
+            print(f"  run_id={run_id}", file=sys.stderr)
 
-        get_url = f"{api_base}/v1/runs/{run_id}"
-        deadline = time.time() + float(args.timeout_seconds)
+            get_url = f"{api_base}/v1/runs/{run_id}"
+            deadline = time.time() + float(args.timeout_seconds)
+            run = None
+            while True:
+                run = _http_json("GET", get_url, api_key=args.admin_api_key)
+                status = (run.get("status") if isinstance(run, dict) else None) or "unknown"
+                stage = (run.get("stage") if isinstance(run, dict) else None) or ""
+                progress = (run.get("progress") if isinstance(run, dict) else None)
+                print(f"  status={status} stage={stage} progress={progress}", file=sys.stderr)
+                if status == "succeeded":
+                    break
+                if status == "failed":
+                    err = (run or {}).get("error") or {}
+                    msg = err.get("message") or "worker reported failed"
+                    raise RuntimeError(f"Run failed for {demo.label} (run_id={run_id}): {msg}")
+                if time.time() > deadline:
+                    raise RuntimeError(f"Timed out waiting for run_id={run_id} ({demo.label})")
+                time.sleep(float(args.poll_interval_seconds))
 
-        while True:
-            run = _http_json("GET", get_url, api_key=args.admin_api_key)
-            status = (run.get("status") if isinstance(run, dict) else None) or "unknown"
-            stage = (run.get("stage") if isinstance(run, dict) else None) or ""
-            progress = (run.get("progress") if isinstance(run, dict) else None)
-
-            print(f"  status={status} stage={stage} progress={progress}", file=sys.stderr)
-
-            if status == "succeeded":
-                break
-            if status == "failed":
-                raise RuntimeError(f"Run failed for {demo.label} (run_id={run_id})")
-
-            if time.time() > deadline:
-                raise RuntimeError(f"Timed out waiting for run_id={run_id} ({demo.label})")
-
-            time.sleep(float(args.poll_interval_seconds))
-
-        _validate_completed_run(run, run_id=run_id)
+            _validate_completed_run(run, run_id=run_id)
+        except Exception as exc:
+            # One bad address shouldn't kill the whole batch — log, record,
+            # continue. Surfaces a non-zero exit at the end if anything failed.
+            print(f"  SKIP {demo.label}: {exc}", file=sys.stderr)
+            failures.append((demo.label, str(exc)))
+            continue
 
         results.append(
             {
@@ -315,6 +321,13 @@ def main(argv: list[str]) -> int:
 
     _write_json(out_path, {"runs": results})
     print(f"Wrote {out_path} with {len(results)} demo runs", file=sys.stderr)
+    if failures:
+        print(f"\n{len(failures)} address(es) skipped:", file=sys.stderr)
+        for label, reason in failures:
+            print(f"  - {label}: {reason}", file=sys.stderr)
+        # Non-zero exit so CI catches partial failures, but we still wrote
+        # the successful runs to demo_runs.json above.
+        return 2
     return 0
 
 

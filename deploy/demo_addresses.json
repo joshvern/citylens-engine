@@ -1,8 +1,44 @@
 [
   {
     "category": "Featured",
-    "label": "Brooklyn reference",
+    "label": "Brooklyn brownstones — Flatbush",
     "address": "100 E 21st St Brooklyn, NY 11226",
+    "imagery_year": 2024,
+    "baseline_year": 2017,
+    "segmentation_backend": "sam2",
+    "outputs": ["previews", "change", "mesh"]
+  },
+  {
+    "category": "Featured",
+    "label": "Manhattan towers — Hudson Yards",
+    "address": "15 Hudson Yards, New York, NY 10001",
+    "imagery_year": 2024,
+    "baseline_year": 2017,
+    "segmentation_backend": "sam2",
+    "outputs": ["previews", "change", "mesh"]
+  },
+  {
+    "category": "Featured",
+    "label": "Manhattan mid-rise — East Village",
+    "address": "20 Cooper Square, New York, NY 10003",
+    "imagery_year": 2024,
+    "baseline_year": 2017,
+    "segmentation_backend": "sam2",
+    "outputs": ["previews", "change", "mesh"]
+  },
+  {
+    "category": "Featured",
+    "label": "Queens new construction — Long Island City",
+    "address": "5-49 Borden Ave, Long Island City, NY 11101",
+    "imagery_year": 2024,
+    "baseline_year": 2017,
+    "segmentation_backend": "sam2",
+    "outputs": ["previews", "change", "mesh"]
+  },
+  {
+    "category": "Featured",
+    "label": "Williamsburg — rezoned waterfront",
+    "address": "240 Bedford Ave, Brooklyn, NY 11211",
     "imagery_year": 2024,
     "baseline_year": 2017,
     "segmentation_backend": "sam2",

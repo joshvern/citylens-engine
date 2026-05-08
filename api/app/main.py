@@ -16,6 +16,7 @@ from .routes.api_keys import router as api_keys_router
 from .routes.demo import router as demo_router
 from .routes.health import router as health_router
 from .routes.me import router as me_router
+from .routes.parcel_intel import router as parcel_intel_router
 from .routes.run_options import router as run_options_router
 from .routes.runs import router as runs_router
 from .services.logging import configure_json_logging
@@ -189,6 +190,7 @@ async def validation_exception_handler(
 
 app.include_router(health_router, prefix="/v1")
 app.include_router(demo_router, prefix="/v1")
+app.include_router(parcel_intel_router, prefix="/v1")
 app.include_router(run_options_router, prefix="/v1")
 app.include_router(me_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")

@@ -85,6 +85,11 @@ class ParcelIntelRow(BaseModel):
     land_use: Optional[str] = None
     year_built: Optional[int] = None
     num_floors: Optional[float] = None
+    # Tax-lot centroid (WGS84). Some parcels lack polygon geometry
+    # (condo billing units, transit ROW); those come through with
+    # lat/lng = None and the UI skips them on the map.
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     last_sale_price: Optional[float] = None
     last_sale_year: Optional[int] = None
     years_held: Optional[int] = None

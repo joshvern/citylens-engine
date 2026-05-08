@@ -18,6 +18,24 @@ from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["demo"])
 
+# Demo endpoints serve precomputed, public, semi-static data. Letting CDNs
+# (Vercel/Cloudflare) cache the response at the edge eliminates Cloud Run
+# cold-start latency for the marketing page after the first hit each
+# `s-maxage` window. `stale-while-revalidate` lets the edge serve a
+# slightly-stale response while it revalidates in the background, so a
+# user never waits for a cold start *during* a revalidation either.
+#
+# Tuning: 5-min cache hits the sweet spot — `deploy/demo_runs.json` only
+# changes on redeploy, so even a 1-hour cache would be correct, but 5 min
+# limits how stale a freshly-deployed change can look in the wild.
+_DEMO_LIST_CACHE = "public, s-maxage=300, stale-while-revalidate=60"
+
+# Per-run details + the proxied artifact responses are content-addressed
+# (run_id is immutable, artifacts are SHA-256-pinned). Safe to cache
+# longer at the edge.
+_DEMO_RUN_CACHE = "public, s-maxage=3600, stale-while-revalidate=300"
+_DEMO_ARTIFACT_CACHE = "public, max-age=86400, immutable"
+
 
 def _default_demo_runs_path() -> str:
     # Source-of-truth lives in citylens-engine/deploy/demo_runs.json.
@@ -128,6 +146,7 @@ def _proxy_demo_artifact_urls(run_response: RunResponse) -> RunResponse:
 
 @router.get("/demo/featured", response_model=dict[str, list[DemoRunFeatured]])
 def demo_featured(
+    response: Response,
     _rate_limit: None = Depends(demo_rate_limit),
     registry: DemoRegistry = Depends(get_demo_registry),
 ) -> dict[str, list[DemoRunFeatured]]:
@@ -148,12 +167,14 @@ def demo_featured(
             for m in metas
         ]
 
+    response.headers["Cache-Control"] = _DEMO_LIST_CACHE
     return out
 
 
 @router.get("/demo/runs/{run_id}", response_model=RunResponse)
 def demo_get_run(
     run_id: str,
+    response: Response,
     _rate_limit: None = Depends(demo_rate_limit),
     registry: DemoRegistry = Depends(get_demo_registry),
     settings: Settings = Depends(get_settings),
@@ -167,8 +188,9 @@ def demo_get_run(
         raise HTTPException(status_code=404, detail="Run not found")
 
     artifacts = store.list_artifacts(run_id)
-    response = build_run_response(run=run, artifacts=artifacts, settings=settings, gcs=gcs)
-    return _proxy_demo_artifact_urls(response)
+    run_response = build_run_response(run=run, artifacts=artifacts, settings=settings, gcs=gcs)
+    response.headers["Cache-Control"] = _DEMO_RUN_CACHE
+    return _proxy_demo_artifact_urls(run_response)
 
 
 @router.get("/demo/artifacts/{run_id}/{artifact_name}", name="demo_artifact")
@@ -205,5 +227,8 @@ def demo_artifact(
     return Response(
         content=payload,
         media_type=media_type,
-        headers={"Content-Disposition": f'inline; filename="{artifact_name}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{artifact_name}"',
+            "Cache-Control": _DEMO_ARTIFACT_CACHE,
+        },
     )

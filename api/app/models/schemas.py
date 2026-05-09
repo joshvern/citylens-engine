@@ -114,6 +114,13 @@ class ParcelIntelRow(BaseModel):
     is_historic_district: bool = False
     block_id: Optional[str] = None
     block_rank: Optional[int] = None
+    # Validation status against the latest PLUTO snapshot + labels:
+    # "still_vacant" — never built; safe redev candidate
+    # "active"       — NB-permitted 2019-2024 OR year_built bumped post-2018
+    # "already_built" — completed redev; the publisher filters these out
+    # before reaching here, so this should rarely (never) be the value
+    # in a published row.
+    redev_status: Literal["still_vacant", "active", "already_built"] = "still_vacant"
     # Per-row SHAP feature attributions, top-K by absolute contribution.
     # Defaults to an empty list — older publishes (sweep schema v1) and
     # rows where SHAP failed flow through cleanly.

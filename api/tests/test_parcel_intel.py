@@ -76,6 +76,8 @@ def _row(bbl: str, **overrides) -> dict:
         "is_historic_district": False,
         "block_id": bbl[:6],
         "block_rank": 1,
+        # Default to empty so existing tests keep their pre-SHAP behavior.
+        "top_features": [],
     }
     base.update(overrides)
     return base
@@ -178,6 +180,65 @@ def test_parcel_intel_503_when_no_data_published(monkeypatch) -> None:
     r = client.get("/v1/parcel-intel/index")
     assert r.status_code == 503
     assert "not been published" in r.json()["detail"].lower()
+
+
+def test_parcel_intel_sweep_returns_top_features(monkeypatch) -> None:
+    """When the publisher injects per-row SHAP attributions, the engine must
+    surface them through the response without truncation or reshaping."""
+    _set_required_env(monkeypatch)
+    feats = [
+        {
+            "name": "lot_area",
+            "value": 5000,
+            "contribution_logit": 0.85,
+            "contribution_pct": 0.31,
+        },
+        {
+            "name": "zoning_district",
+            "value": "R7A",
+            "contribution_logit": -0.42,
+            "contribution_pct": 0.15,
+        },
+        {
+            "name": "is_landmark",
+            "value": False,
+            "contribution_logit": 0.18,
+            "contribution_pct": 0.07,
+        },
+    ]
+    rows = [_row("3020000001", top_features=feats)]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    served = body["rows"][0]
+    assert "top_features" in served
+    assert len(served["top_features"]) == 3
+    # Pydantic preserves field names + values; verify the first one
+    # round-trips byte-for-byte.
+    first = served["top_features"][0]
+    assert first["name"] == "lot_area"
+    assert first["value"] == 5000
+    assert first["contribution_logit"] == 0.85
+    assert first["contribution_pct"] == 0.31
+
+
+def test_parcel_intel_sweep_defaults_top_features_to_empty(monkeypatch) -> None:
+    """Older publishes (no top_features field at all) must still deserialize."""
+    _set_required_env(monkeypatch)
+    row_without = _row("3020000002")
+    row_without.pop("top_features")  # simulate v1 sweep
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": [row_without]})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    served = r.json()["rows"][0]
+    assert served["top_features"] == []
 
 
 def test_parcel_intel_invalidates_cache_on_new_generated_at(monkeypatch) -> None:

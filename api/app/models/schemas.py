@@ -69,6 +69,22 @@ class DemoRunFeatured(BaseModel):
 # without breaking this contract.
 
 
+class TopFeature(BaseModel):
+    """A single SHAP-derived feature contribution (logit space).
+
+    Computed once per row by ``citylens-parcel-intel`` at publish time and
+    served through the API verbatim. ``value`` is heterogeneous because
+    the underlying feature can be a numeric (lot area, allowed FAR), a
+    categorical label (zoning district, building class), or a boolean
+    flag (landmark) — clients render whatever shape comes through.
+    """
+
+    name: str
+    value: Optional[Any] = None
+    contribution_logit: float
+    contribution_pct: float
+
+
 class ParcelIntelRow(BaseModel):
     bbl: str
     address: Optional[str] = None
@@ -98,6 +114,10 @@ class ParcelIntelRow(BaseModel):
     is_historic_district: bool = False
     block_id: Optional[str] = None
     block_rank: Optional[int] = None
+    # Per-row SHAP feature attributions, top-K by absolute contribution.
+    # Defaults to an empty list — older publishes (sweep schema v1) and
+    # rows where SHAP failed flow through cleanly.
+    top_features: list[TopFeature] = Field(default_factory=list)
 
 
 class ParcelIntelBorough(BaseModel):

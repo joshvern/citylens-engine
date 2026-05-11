@@ -159,14 +159,14 @@ def test_parcel_intel_rejects_unknown_borough(monkeypatch) -> None:
     assert "borough" in r.json()["detail"].lower()
 
 
-def test_parcel_intel_clamps_top_to_100(monkeypatch) -> None:
+def test_parcel_intel_clamps_top_to_1000(monkeypatch) -> None:
     _set_required_env(monkeypatch)
     fake = _make_fake_gcs(["brooklyn"])
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
     client = TestClient(app)
-    # FastAPI Query(le=100) returns 422 for top=101.
-    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 101})
+    # FastAPI Query(le=1000) returns 422 for top=1001.
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 1001})
     assert r.status_code == 422
 
 

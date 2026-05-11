@@ -179,7 +179,7 @@ def parcel_intel_index(
 def parcel_intel_sweep(
     response: Response,
     borough: str = Query(..., description="One of manhattan/brooklyn/queens/bronx/staten_island"),
-    top: int = Query(20, ge=1, le=100, description="How many rows to return (1-100)."),
+    top: int = Query(20, ge=1, le=1000, description="How many rows to return (1-1000)."),
     _rate_limit: None = Depends(demo_rate_limit),
     gcs: GcsArtifacts = Depends(get_gcs),
     registry: ParcelIntelRegistry = Depends(get_registry),

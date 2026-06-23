@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir \
       "pyjwt[crypto]>=2.8"
 
 # Pin citylens-core via build arg.
-ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.23
+ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.24
 RUN pip install --no-cache-dir "citylens-core @ ${CITYLENS_CORE_GIT_URL}"
 
 # ---- Runtime ----------------------------------------------------------

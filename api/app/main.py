@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from contextlib import asynccontextmanager
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -31,12 +32,53 @@ from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
 
 
+def _prewarm_read_caches(settings: Settings) -> None:
+    """Warm the read-path caches so the first request after a cold boot isn't
+    the one paying GCS latency. Best-effort: any failure here must never block
+    startup — the caches all lazy-fill on first access anyway.
+    """
+    log = logging.getLogger(__name__)
+
+    # Demo registry: cheap, reads local deploy/demo_runs.json.
+    try:
+        from .routes.demo import get_demo_registry
+
+        get_demo_registry().featured()
+        log.info("prewarmed demo registry", extra={"stage": "startup"})
+    except Exception:  # pragma: no cover - warm-up is best-effort
+        log.warning("demo registry prewarm failed", exc_info=True, extra={"stage": "startup"})
+
+    # Parcel-intel registry: one manifest.json GCS fetch (warms the GCS client
+    # + manifest). Borough JSONLs stay lazy so boot stays light.
+    try:
+        from .routes.parcel_intel import get_registry
+        from .services.gcs_artifacts import GcsArtifacts
+
+        get_registry().index(GcsArtifacts(bucket=settings.bucket))
+        log.info("prewarmed parcel-intel manifest", extra={"stage": "startup"})
+    except Exception:  # pragma: no cover - warm-up is best-effort
+        log.warning(
+            "parcel-intel prewarm failed", exc_info=True, extra={"stage": "startup"}
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    app.state.settings = settings
+    configure_json_logging(service_name="citylens-engine-api")
+    logging.getLogger(__name__).info("validated settings", extra={"stage": "startup"})
+    _prewarm_read_caches(settings)
+    yield
+
+
 app = FastAPI(
     title="citylens-engine-api",
     version="0.1.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    lifespan=lifespan,
 )
 
 
@@ -59,14 +101,6 @@ def _is_demo_origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
     if parsed.scheme != "https" or not parsed.hostname:
         return False
     return parsed.hostname.endswith(".vercel.app")
-
-
-@app.on_event("startup")
-def validate_settings() -> None:
-    settings = get_settings()
-    app.state.settings = settings
-    configure_json_logging(service_name="citylens-engine-api")
-    logging.getLogger(__name__).info("validated settings", extra={"stage": "startup"})
 
 
 @app.middleware("http")

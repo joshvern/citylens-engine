@@ -7,7 +7,16 @@ CityLens has three different credentials. They protect different things and neve
 | Surface | Header | Configured by | Purpose |
 | --- | --- | --- | --- |
 | **User login** | `Authorization: Bearer <token>` | Neon Auth (or any OIDC issuer via JWKS) | Authenticates real dashboard users for `/v1/runs*`, `/v1/me` |
-| **Admin API keys (optional)** | `X-API-Key` | `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEYS` / `CITYLENS_ADMIN_API_KEY_HASHES` | Internal scripts only (e.g. `scripts/precompute_demo_runs.py`). Off by default. |
+| **Admin API keys (optional)** | `X-API-Key` | `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEYS` / `CITYLENS_ADMIN_API_KEY_HASHES` | Internal scripts only (e.g. `scripts/precompute_demo_runs.py`). Off by default **in code**. |
+
+> **Hardening item (known):** `deploy/deploy_api.sh` currently *enables* admin
+> keys (`CITYLENS_ALLOW_ADMIN_API_KEYS=true`) and defaults
+> `CITYLENS_ADMIN_API_KEYS` to the same plaintext value as the deploy's
+> `CITYLENS_API_KEYS`. That means whoever holds the deploy key holds an admin
+> key. Before treating this as production-grade: set
+> `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256, hash-only), stop defaulting admin
+> keys to the general key, and drop the plaintext `CITYLENS_ADMIN_API_KEYS`
+> branch in `auth.py`.
 | **Docs access key** | `X-Docs-Key` | `CITYLENS_DOCS_ACCESS_KEY_SHA256` | Gates `/docs`, `/redoc`, `/openapi.json`. Cannot create runs or access user data. |
 
 ## Secrets

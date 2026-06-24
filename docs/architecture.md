@@ -8,8 +8,14 @@ owns the browser UI.
 ## Components
 
 - **API (Cloud Run)**
-  - Auth via `X-API-Key` allowlist (`CITYLENS_API_KEYS`).
+  - Auth: `Authorization: Bearer <token>` — a Neon Auth (OIDC/JWKS) user JWT, or
+    a `clk_live_` user API key resolved against Firestore. An optional admin
+    `X-API-Key` surface exists for internal scripts. See [security.md](security.md).
   - Creates Firestore run docs and triggers a Cloud Run Job execution.
+  - Serves the public read endpoints `/v1/demo/*` and `/v1/parcel-intel/*`.
+  - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
+    `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
+    is lazy, kept off the API cold-start path — the worker runs the pipeline).
   - Optionally returns signed URLs for artifacts.
 
 - **Worker (Cloud Run Job)**
@@ -22,7 +28,9 @@ owns the browser UI.
 ## Data
 
 Firestore:
-- `users/{user_id}`: user record keyed by sha256(api_key)
+- `users/{app_user_id}`: user record (`plan_type`, `email`, `is_admin`)
+- `auth_identities/{sha256(provider:sub)}` → `app_user_id` (OIDC identity map)
+- `usage_months/{app_user_id}_{YYYY-MM}`: monthly run-quota counter (transactional)
 - `runs/{run_id}`: run status/progress/request
 - `runs/{run_id}/artifacts/{artifact_id}`: artifact metadata + GCS URI
 

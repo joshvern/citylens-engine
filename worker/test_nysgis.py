@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 import pytest
 
-from services.nysgis import NYSGISAPI
+from services.nysgis import LAS_INDEX_LAYER_URL, NYSGISAPI
 from services.run_errors import LidarCoverageError
 
 
@@ -31,10 +32,28 @@ class _FakeSession:
         return _FakeResponse(self._payload)
 
 
+def test_default_las_index_is_nyc_topobathymetric_2017_layer() -> None:
+    assert LAS_INDEX_LAYER_URL.endswith("/las_indexes/MapServer/10")
+    assert NYSGISAPI().las_index_layer_url == LAS_INDEX_LAYER_URL
+
+
+def test_las_index_environment_override_is_preserved(monkeypatch) -> None:
+    import services.nysgis as nysgis
+
+    override = "https://example.test/arcgis/rest/services/las/MapServer/42/"
+    with monkeypatch.context() as context:
+        context.setenv("CITYLENS_LAS_INDEX_LAYER_URL", override)
+        reloaded = importlib.reload(nysgis)
+        assert reloaded.NYSGISAPI().las_index_layer_url == override.rstrip("/")
+
+    # Avoid leaving the reloaded module bound to the temporary override for
+    # later worker tests in this process.
+    importlib.reload(nysgis)
+
+
 def test_get_lidar_tile_by_point_raises_typed_error_when_no_features() -> None:
-    """Mid-Manhattan point with no LAS coverage in /MapServer/9 should raise
-    a typed LidarCoverageError carrying the failing point and layer URL,
-    not a generic ValueError. Reproduces run e65200a5..."""
+    """An empty index response should raise a typed LidarCoverageError
+    carrying the failing point and layer URL, not a generic ValueError."""
 
     fake_session = _FakeSession(payload={"features": []})
     api = NYSGISAPI(session=SimpleNamespace(get=fake_session.get))

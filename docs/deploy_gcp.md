@@ -272,7 +272,7 @@ API (Cloud Run service):
   - `CITYLENS_DOCS_ACCESS_KEY_SHA256=$(printf '%s' "$DOCS_KEY" | openssl dgst -sha256 -hex | awk '{print $2}')` — store the **hash**, never the raw key
 - Optional admin API keys (internal scripts only — leave disabled unless you specifically need them):
   - `CITYLENS_ALLOW_ADMIN_API_KEYS=true`
-  - `CITYLENS_ADMIN_API_KEY_HASHES=<comma-separated sha256 hashes>` (preferred over `CITYLENS_ADMIN_API_KEYS`)
+  - `CITYLENS_ADMIN_API_KEY_HASHES=<comma-separated sha256 hashes>` (hash-only; the plaintext `CITYLENS_ADMIN_API_KEYS` env var was removed and is ignored)
 - Optional: `CITYLENS_SIGN_URLS=1` and `CITYLENS_SIGN_URL_TTL_SECONDS=300`
 
 Use Secret Manager for any value that resolves to a real secret (`CITYLENS_DOCS_ACCESS_KEY_SHA256`, `CITYLENS_ADMIN_API_KEY_HASHES`). The literal `*_SHA256` is a hash, not a secret, but treat it conservatively. Never set `CITYLENS_API_KEYS` for normal users — that path is deprecated and the auth dependency ignores it.
@@ -475,7 +475,7 @@ To generate demo runs:
 
 Notes:
 
-- Precompute requires an admin API key (it uses `POST /v1/runs` and waits for completion). By default it uses the first key in `CITYLENS_API_KEYS`, or you can set `CITYLENS_ADMIN_API_KEY` in your `.env`.
+- Precompute requires an admin API key (it uses `POST /v1/runs` and waits for completion). Set `CITYLENS_ADMIN_API_KEY` in your `.env` (or pass `--admin-api-key`); its SHA-256 must be listed in the deployed service's `CITYLENS_ADMIN_API_KEY_HASHES`.
 - `scripts/precompute_demo_runs.py` now rejects incomplete runs. It writes `deploy/demo_runs.json` only after verifying `preview.png`, `change.geojson`, `mesh.ply`, and `run_summary.json`.
 - Commit the updated `deploy/demo_runs.json` after precompute if you want the allowlist versioned in git.
 - Redeploy the API after committing the new allowlist so `/v1/demo/featured` reflects it.

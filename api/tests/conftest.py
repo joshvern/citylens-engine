@@ -27,8 +27,9 @@ def _set_required_env(monkeypatch) -> None:
     monkeypatch.setenv("CITYLENS_REGION", "us-central1")
     monkeypatch.setenv("CITYLENS_BUCKET", "test-bucket")
     monkeypatch.setenv("CITYLENS_JOB_NAME", "test-job")
-    # Tests don't rely on the deprecated user allowlist anymore, but the auth
-    # module still references it for the legacy admin-key path.
+    # Deprecated allowlist: settings still parses it for back-compat, but no
+    # auth path reads it anymore (admin keys are hash-only via
+    # CITYLENS_ADMIN_API_KEY_HASHES).
     monkeypatch.setenv("CITYLENS_API_KEYS", "dev-key-1")
     monkeypatch.setenv(
         "CITYLENS_CORS_ORIGINS",

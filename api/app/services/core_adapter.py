@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # CRITICAL: do not define engine-owned schemas.
 # Import the canonical request model and pipeline entrypoint from citylens-core.
-
 from typing import Any
 
 _CORE_IMPORT_HELP = (
@@ -36,4 +35,5 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["CitylensRequest", "run_citylens"]
+# `run_citylens` is supplied lazily by module-level `__getattr__` above.
+__all__ = ["CitylensRequest", "run_citylens"]  # noqa: F822

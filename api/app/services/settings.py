@@ -103,8 +103,9 @@ class Settings:
     admin_auth_subs: list[str] = field(default_factory=list)
     admin_emails: list[str] = field(default_factory=list)
 
+    # Admin API keys are hash-only: the environment carries SHA-256 hashes
+    # (CITYLENS_ADMIN_API_KEY_HASHES), never the plaintext keys.
     allow_admin_api_keys: bool = False
-    admin_api_keys: list[str] = field(default_factory=list)
     admin_api_key_hashes: list[str] = field(default_factory=list)
 
     # User-level programmatic API keys (Bearer `clk_live_…`).
@@ -149,10 +150,7 @@ def get_settings() -> Settings:
         admin_auth_subs=_csv_env("CITYLENS_ADMIN_AUTH_SUBS", default="", required=False),
         admin_emails=_csv_env("CITYLENS_ADMIN_EMAILS", default="", required=False),
         allow_admin_api_keys=_env_bool("CITYLENS_ALLOW_ADMIN_API_KEYS", False),
-        admin_api_keys=_csv_env("CITYLENS_ADMIN_API_KEYS", default="", required=False),
-        admin_api_key_hashes=_csv_env(
-            "CITYLENS_ADMIN_API_KEY_HASHES", default="", required=False
-        ),
+        admin_api_key_hashes=_csv_env("CITYLENS_ADMIN_API_KEY_HASHES", default="", required=False),
         allow_user_api_keys=_env_bool("CITYLENS_ALLOW_USER_API_KEYS", False),
         free_monthly_runs=_env_int("CITYLENS_FREE_MONTHLY_RUNS", 5),
         docs_access_key_sha256=_opt_env("CITYLENS_DOCS_ACCESS_KEY_SHA256"),

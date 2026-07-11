@@ -72,9 +72,7 @@ def test_gcs_cache_hit_restores_gdb_without_hitting_network(tmp_path: Path, monk
 
     # Network download must NOT fire when the cache hits.
     def _fail_download(url: str, dest_path: Path) -> None:  # noqa: ARG001
-        raise AssertionError(
-            "cache hit should not trigger HTTP download, but got: " + url
-        )
+        raise AssertionError("cache hit should not trigger HTTP download, but got: " + url)
 
     monkeypatch.setattr(reference_data, "_download", _fail_download)
 

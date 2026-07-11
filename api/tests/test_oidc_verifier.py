@@ -29,9 +29,7 @@ def _b64u(data: bytes) -> str:
 
 def _make_eddsa_keypair_and_jwks() -> tuple[bytes, dict, str]:
     sk = Ed25519PrivateKey.generate()
-    pk_raw = sk.public_key().public_bytes(
-        encoding=Encoding.Raw, format=PublicFormat.Raw
-    )
+    pk_raw = sk.public_key().public_bytes(encoding=Encoding.Raw, format=PublicFormat.Raw)
     sk_pem = sk.private_bytes(
         encoding=Encoding.PEM,
         format=PrivateFormat.PKCS8,
@@ -66,6 +64,7 @@ def test_oidc_verifier_accepts_eddsa(monkeypatch) -> None:
         issuer=None,
         audience=None,
     )
+
     # Patch the JWKS client to return our in-memory key without HTTP.
     class _FakeKey:
         def __init__(self, k):
@@ -129,5 +128,6 @@ def test_oidc_verifier_validates_issuer_when_configured() -> None:
 def test_oidc_verifier_algorithm_allowlist_includes_eddsa() -> None:
     """Pin the algorithm list. Removing EdDSA breaks Neon Auth integration."""
     import inspect
+
     src = inspect.getsource(OIDCVerifier.verify)
     assert '"EdDSA"' in src, "OIDCVerifier must accept EdDSA (Neon Auth signs JWTs with Ed25519)"

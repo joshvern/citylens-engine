@@ -58,46 +58,58 @@ def _call_require_auth(token: str = "fake.jwt.token"):
 
 
 def test_email_verified_snake_case(fake_verifier, fake_store):
-    fake_verifier({
-        "sub": "u1",
-        "email": "x@example.com",
-        "email_verified": True,
-        "iat": 1, "exp": 9999999999,
-    })
+    fake_verifier(
+        {
+            "sub": "u1",
+            "email": "x@example.com",
+            "email_verified": True,
+            "iat": 1,
+            "exp": 9999999999,
+        }
+    )
     ctx = _call_require_auth()
     assert ctx.email_verified is True
     assert fake_store["call"]["email_verified"] is True
 
 
 def test_email_verified_camel_case_better_auth(fake_verifier, fake_store):
-    fake_verifier({
-        "sub": "u1",
-        "email": "x@example.com",
-        "emailVerified": True,
-        "iat": 1, "exp": 9999999999,
-    })
+    fake_verifier(
+        {
+            "sub": "u1",
+            "email": "x@example.com",
+            "emailVerified": True,
+            "iat": 1,
+            "exp": 9999999999,
+        }
+    )
     ctx = _call_require_auth()
     assert ctx.email_verified is True, "engine must accept Better Auth's emailVerified"
     assert fake_store["call"]["email_verified"] is True
 
 
 def test_email_verified_neither_field(fake_verifier, fake_store):
-    fake_verifier({
-        "sub": "u1",
-        "email": "x@example.com",
-        "iat": 1, "exp": 9999999999,
-    })
+    fake_verifier(
+        {
+            "sub": "u1",
+            "email": "x@example.com",
+            "iat": 1,
+            "exp": 9999999999,
+        }
+    )
     ctx = _call_require_auth()
     assert ctx.email_verified is False
 
 
 def test_email_verified_explicit_false_either_form(fake_verifier, fake_store):
-    fake_verifier({
-        "sub": "u1",
-        "email": "x@example.com",
-        "email_verified": False,
-        "emailVerified": False,
-        "iat": 1, "exp": 9999999999,
-    })
+    fake_verifier(
+        {
+            "sub": "u1",
+            "email": "x@example.com",
+            "email_verified": False,
+            "emailVerified": False,
+            "iat": 1,
+            "exp": 9999999999,
+        }
+    )
     ctx = _call_require_auth()
     assert ctx.email_verified is False

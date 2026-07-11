@@ -57,9 +57,7 @@ def _prewarm_read_caches(settings: Settings) -> None:
         get_registry().index(GcsArtifacts(bucket=settings.bucket))
         log.info("prewarmed parcel-intel manifest", extra={"stage": "startup"})
     except Exception:  # pragma: no cover - warm-up is best-effort
-        log.warning(
-            "parcel-intel prewarm failed", exc_info=True, extra={"stage": "startup"}
-        )
+        log.warning("parcel-intel prewarm failed", exc_info=True, extra={"stage": "startup"})
 
 
 @asynccontextmanager

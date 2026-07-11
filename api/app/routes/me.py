@@ -30,9 +30,7 @@ def me(
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
 ) -> dict:
-    quota = get_quota_state(
-        store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type
-    )
+    quota = get_quota_state(store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type)
     return {
         "user": {
             "id": auth.app_user_id,

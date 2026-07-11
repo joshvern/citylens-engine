@@ -39,9 +39,7 @@ def get_quota_state(
     }
 
 
-def enforce_concurrent_quota(
-    *, store: FirestoreStore, app_user_id: str, plan_type: str
-) -> None:
+def enforce_concurrent_quota(*, store: FirestoreStore, app_user_id: str, plan_type: str) -> None:
     policy = get_policy(plan_type)
     max_concurrent = policy["max_concurrent_runs"]
     if max_concurrent is None:
@@ -100,9 +98,7 @@ def reserve_monthly_run(
     return mk
 
 
-def release_monthly_run(
-    *, store: FirestoreStore, app_user_id: str, month_key: str
-) -> None:
+def release_monthly_run(*, store: FirestoreStore, app_user_id: str, month_key: str) -> None:
     try:
         store.decrement_monthly_usage(app_user_id=app_user_id, month_key=month_key)
     except Exception:  # pragma: no cover - best-effort release

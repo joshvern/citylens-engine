@@ -55,10 +55,7 @@ def main() -> int:
             code="LIDAR_NO_COVERAGE",
             stage="fetch_inputs",
         )
-        error["message"] = (
-            "LiDAR coverage is not available for this address. "
-            "Try a nearby address."
-        )
+        error["message"] = "LiDAR coverage is not available for this address. Try a nearby address."
         store.update_run(
             run_id,
             {"status": "failed", "stage": "failed", "progress": 100, "error": error},

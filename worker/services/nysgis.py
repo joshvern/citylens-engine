@@ -23,7 +23,7 @@ LAS_INDEX_LAYER_URL = os.getenv(
     "https://orthos.its.ny.gov/arcgis/rest/services/vector/las_indexes/MapServer/10",
 ).strip()
 
-ORTHO_WMS_URL = "https://orthos.its.ny.gov/arcgis/rest/services/wms/2024/MapServer/WMSServer"
+ORTHO_WMS_URL = "https://orthos.its.ny.gov/arcgis/services/wms/2024/MapServer/WMSServer"
 
 LIDAR_FILE_BASE = os.getenv(
     "CITYLENS_LIDAR_FILE_BASE",

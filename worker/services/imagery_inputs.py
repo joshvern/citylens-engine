@@ -618,7 +618,7 @@ class OrthoFetchConfig:
 def _get_config(request_radius: float | None = None) -> OrthoFetchConfig:
     wms_url = os.getenv(
         "CITYLENS_ORTHO_WMS_URL",
-        "https://orthos.its.ny.gov/arcgis/rest/services/wms/2024/MapServer/WMSServer",
+        "https://orthos.its.ny.gov/arcgis/services/wms/2024/MapServer/WMSServer",
     ).strip()
     cache_prefix = os.getenv("CITYLENS_IMAGERY_CACHE_PREFIX", "inputs").strip().strip("/")
     # request.aoi_radius_m wins over env default; env is the fallback for ad-hoc

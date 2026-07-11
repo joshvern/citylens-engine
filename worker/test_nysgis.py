@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.nysgis import LAS_INDEX_LAYER_URL, NYSGISAPI
+from services.nysgis import LAS_INDEX_LAYER_URL, NYSGISAPI, ORTHO_WMS_URL
 from services.run_errors import LidarCoverageError
 
 
@@ -35,6 +35,12 @@ class _FakeSession:
 def test_default_las_index_is_nyc_topobathymetric_2017_layer() -> None:
     assert LAS_INDEX_LAYER_URL.endswith("/las_indexes/MapServer/10")
     assert NYSGISAPI().las_index_layer_url == LAS_INDEX_LAYER_URL
+
+
+def test_default_ortho_url_is_the_wms_endpoint_not_the_rest_directory() -> None:
+    assert "/arcgis/services/" in ORTHO_WMS_URL
+    assert "/arcgis/rest/services/" not in ORTHO_WMS_URL
+    assert NYSGISAPI().ortho_wms_url == ORTHO_WMS_URL
 
 
 def test_las_index_environment_override_is_preserved(monkeypatch) -> None:

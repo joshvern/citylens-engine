@@ -46,17 +46,17 @@ environment with `uv sync --all-packages --all-extras`.
 root `.venv`:
 
 - local dev: `uv pip install --python ./.venv/bin/python -e ../citylens-core`
-- CI default: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@v0.3.24"`
+- CI default: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@v0.3.25"`
 - CI / Docker override: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"`
 
 Use `make sync` to perform the workspace sync plus the sibling-core install when the
 neighboring repo is available. Without the sibling checkout, it falls back to the
-public GitHub repo using `CITYLENS_CORE_REF` (default `v0.3.24`) or an explicit
+public GitHub repo using `CITYLENS_CORE_REF` (default `v0.3.25`) or an explicit
 `CITYLENS_CORE_GIT_URL` override.
 
 Current pinned release tag:
 
-- `citylens-core@v0.3.24`
+- `citylens-core@v0.3.25`
 
 ## Auth & quotas
 
@@ -64,9 +64,9 @@ Current pinned release tag:
 - Admin promotion is via env: `CITYLENS_ADMIN_AUTH_SUBS` (sub allowlist) or `CITYLENS_ADMIN_EMAILS` (verified-email allowlist).
 - Free users get 5 real runs per UTC calendar month (override with `CITYLENS_FREE_MONTHLY_RUNS`); admins are unlimited.
 - Run options are server-locked: `imagery_year=2024`, `baseline_year=2017`, `segmentation_backend=sam2`, `aoi_radius_m=250`, outputs ⊂ `{previews, change, mesh}`. Discover via `GET /v1/run-options`.
-- Demo endpoints (`/v1/demo/*`) and `/v1/health` remain public.
+- Demo endpoints (`/v1/demo/*`), `/v1/health`, `/v1/health/ready`, and `/v1/parcel-intel/index` remain public. `/v1/parcel-intel/sweep` is tiered: public preview (≤25 rows, premium fields stripped) + authenticated full feed.
 - Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
-- `CITYLENS_API_KEYS` is deprecated for normal users. Use the optional `CITYLENS_ALLOW_ADMIN_API_KEYS` path only for internal scripts.
+- `CITYLENS_API_KEYS` is deprecated and ignored by auth. The optional admin `X-API-Key` path (internal scripts only) is hash-only: `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256 of each key).
 
 See [docs/security.md](docs/security.md) for the full credential model.
 

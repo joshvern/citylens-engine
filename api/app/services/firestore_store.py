@@ -37,9 +37,7 @@ def is_user_api_key(token: str) -> bool:
 
 class MonthlyQuotaExceeded(Exception):
     def __init__(self, *, runs_used: int, monthly_run_limit: int, month_key: str) -> None:
-        super().__init__(
-            f"Monthly quota exceeded: {runs_used}/{monthly_run_limit} for {month_key}"
-        )
+        super().__init__(f"Monthly quota exceeded: {runs_used}/{monthly_run_limit} for {month_key}")
         self.runs_used = runs_used
         self.monthly_run_limit = monthly_run_limit
         self.month_key = month_key
@@ -63,6 +61,14 @@ class FirestoreStore:
         self.auth_identities_collection = auth_identities_collection
         self.usage_months_collection = usage_months_collection
         self.api_keys_index_collection = api_keys_index_collection
+
+    # ---------- Health ----------
+
+    def ping(self) -> None:
+        """Cheapest possible reachability probe: a limit-1 read against the
+        users collection. Raises on any transport/auth failure — callers
+        (e.g. /v1/health/ready) decide how to surface that."""
+        list(self.client.collection(self.users_collection).limit(1).stream())
 
     # ---------- Identity ----------
 
@@ -454,9 +460,7 @@ class FirestoreStore:
     def _api_key_index_doc(self, plaintext_hash: str):
         return self.client.collection(self.api_keys_index_collection).document(plaintext_hash)
 
-    def create_api_key(
-        self, *, app_user_id: str, label: str
-    ) -> tuple[str, str, dict[str, Any]]:
+    def create_api_key(self, *, app_user_id: str, label: str) -> tuple[str, str, dict[str, Any]]:
         """Mint a new user API key. Returns (key_id, plaintext, record).
 
         `plaintext` is shown to the user once and never retrievable

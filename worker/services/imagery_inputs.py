@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import zipfile
@@ -35,6 +36,21 @@ _COUNTY_FOOTPRINT_ZIPS: dict[str, str] = {
     "Richmond": "https://gisdata.ny.gov/GISData/State/Building_Footprints/Richmond_Building_Footprints.zip",
 }
 
+_CURRENT_FOOTPRINTS_DATASET = "5zhs-2jue"
+_CURRENT_FOOTPRINTS_DEFAULT_URL = (
+    f"https://data.cityofnewyork.us/resource/{_CURRENT_FOOTPRINTS_DATASET}.geojson"
+)
+_CURRENT_FOOTPRINTS_FIELDS = (
+    "construction_year",
+    "last_status_type",
+    "geom_source",
+    "base_bbl",
+    "mappluto_bbl",
+)
+_CURRENT_FOOTPRINTS_LIMIT = 50_000
+_CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT = 250.0
+_CURRENT_FOOTPRINTS_CACHE_SCHEMA = "current-footprints@v2"
+
 
 def _normalize_address(address: str) -> str:
     return " ".join((address or "").strip().split())
@@ -51,6 +67,322 @@ def _sha256_file(path: Path) -> str:
             if chunk:
                 h.update(chunk)
     return h.hexdigest()
+
+
+def _current_footprints_url() -> str:
+    return (
+        os.getenv("CITYLENS_CURRENT_FOOTPRINTS_URL", "").strip() or _CURRENT_FOOTPRINTS_DEFAULT_URL
+    )
+
+
+def _current_footprints_query_pad_m() -> float:
+    raw = os.getenv(
+        "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M",
+        str(_CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT),
+    ).strip()
+    try:
+        pad_m = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M must be a finite nonnegative number"
+        ) from exc
+    if not math.isfinite(pad_m) or pad_m < 0:
+        raise RuntimeError(
+            "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M must be a finite nonnegative number"
+        )
+    return pad_m
+
+
+def _pad_bbox(
+    bbox: tuple[float, float, float, float], *, pad: float
+) -> tuple[float, float, float, float]:
+    minx, miny, maxx, maxy = (float(value) for value in bbox)
+    return minx - pad, miny - pad, maxx + pad, maxy + pad
+
+
+def _bbox_in_wgs84(
+    bbox: tuple[float, float, float, float], *, source_crs: CRS
+) -> tuple[float, float, float, float]:
+    """Return ``(west, south, east, north)`` for a bbox in ``source_crs``."""
+    minx, miny, maxx, maxy = (float(value) for value in bbox)
+    transformer = Transformer.from_crs(source_crs, CRS.from_epsg(4326), always_xy=True)
+    xs, ys = transformer.transform(
+        [minx, minx, maxx, maxx],
+        [miny, maxy, miny, maxy],
+    )
+    values = [float(value) for value in (*xs, *ys)]
+    if not all(math.isfinite(value) for value in values):
+        raise RuntimeError("Orthophoto bounds could not be transformed to EPSG:4326")
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _validate_feature_collection(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
+        raise RuntimeError("NYC building-footprint response is not a FeatureCollection")
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise RuntimeError("NYC building-footprint response has no features array")
+    if not all(isinstance(feature, dict) for feature in features):
+        raise RuntimeError("NYC building-footprint response contains an invalid feature")
+    return features
+
+
+def _parse_construction_year(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or not numeric.is_integer() or numeric <= 0:
+        return None
+    return int(numeric)
+
+
+def _fetch_current_footprints(
+    *,
+    url: str,
+    bbox: tuple[float, float, float, float],
+    target_crs: CRS,
+    imagery_year: int,
+    session: Any | None = None,
+) -> tuple[dict[str, Any], tuple[float, float, float, float]]:
+    """Fetch, filter, and project current NYC footprints for the ortho bbox."""
+    west, south, east, north = _bbox_in_wgs84(bbox, source_crs=target_crs)
+    params = {
+        "$select": f"the_geom,{','.join(_CURRENT_FOOTPRINTS_FIELDS)}",
+        "$where": (f"within_box(the_geom,{north:.12f},{west:.12f},{south:.12f},{east:.12f})"),
+        "$limit": str(_CURRENT_FOOTPRINTS_LIMIT),
+    }
+    sess = session or requests.Session()
+    headers: dict[str, str] = {}
+    if app_token := os.getenv("NYC_OPENDATA_APP_TOKEN", "").strip():
+        headers["X-App-Token"] = app_token
+    response = sess.get(url, params=params, headers=headers or None, timeout=60)
+    response.raise_for_status()
+    source_features = _validate_feature_collection(response.json())
+
+    to_target = Transformer.from_crs(CRS.from_epsg(4326), target_crs, always_xy=True)
+    output_features: list[dict[str, Any]] = []
+    for feature in source_features:
+        properties = feature.get("properties")
+        geometry = feature.get("geometry")
+        if not isinstance(properties, dict) or not isinstance(geometry, dict):
+            continue
+
+        status = str(properties.get("last_status_type") or "").strip()
+        if status.casefold() != "constructed":
+            continue
+        construction_year = _parse_construction_year(properties.get("construction_year"))
+        if construction_year is not None and construction_year > imagery_year:
+            continue
+
+        try:
+            parsed = shape(geometry)
+            if parsed.is_empty:
+                continue
+            projected = shapely_transform(to_target.transform, parsed)
+        except Exception:
+            continue
+        if projected.is_empty:
+            continue
+
+        output_features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "construction_year": construction_year,
+                    "last_status_type": status,
+                    "geom_source": properties.get("geom_source"),
+                    "base_bbl": properties.get("base_bbl"),
+                    "mappluto_bbl": properties.get("mappluto_bbl"),
+                    "source_dataset": _CURRENT_FOOTPRINTS_DATASET,
+                },
+                "geometry": mapping(projected),
+            }
+        )
+
+    result: dict[str, Any] = {
+        "type": "FeatureCollection",
+        "features": output_features,
+        "crs": {
+            "type": "name",
+            "properties": {"name": target_crs.to_string()},
+        },
+    }
+    return result, (west, south, east, north)
+
+
+def _current_footprints_cache_object(
+    *,
+    cache_prefix: str,
+    url: str,
+    query_bbox: tuple[float, float, float, float],
+    query_pad_m: float,
+    target_crs: CRS,
+    imagery_year: int,
+) -> str:
+    cache_payload = json.dumps(
+        {
+            "schema": _CURRENT_FOOTPRINTS_CACHE_SCHEMA,
+            "dataset": _CURRENT_FOOTPRINTS_DATASET,
+            "url": url,
+            "query_bbox": [float(value) for value in query_bbox],
+            "query_pad_m": float(query_pad_m),
+            "target_crs": target_crs.to_string(),
+            "imagery_year": int(imagery_year),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = _sha256_bytes(cache_payload.encode("utf-8"))
+    normalized_prefix = cache_prefix.strip().strip("/") or "inputs"
+    return f"{normalized_prefix}/current-footprints/{digest}.geojson"
+
+
+def _stage_current_footprints(
+    *,
+    bbox: tuple[float, float, float, float],
+    target_crs: CRS,
+    imagery_year: int,
+    work_dir: Path,
+    gcs_client: Any,
+    bucket: str,
+    cache_prefix: str,
+    session: Any | None = None,
+) -> dict[str, Any]:
+    """Materialize current footprints; core clips the padded query to ``bbox``."""
+    url = _current_footprints_url()
+    ortho_bbox = tuple(float(value) for value in bbox)
+    query_pad_m = _current_footprints_query_pad_m()
+    query_bbox = _pad_bbox(ortho_bbox, pad=query_pad_m)
+    query_bbox_wgs84 = _bbox_in_wgs84(query_bbox, source_crs=target_crs)
+    provenance = {
+        "schema": _CURRENT_FOOTPRINTS_CACHE_SCHEMA,
+        "source_dataset": _CURRENT_FOOTPRINTS_DATASET,
+        "source_url": url,
+        "imagery_year": int(imagery_year),
+        "target_crs": target_crs.to_string(),
+        "ortho_bbox": [float(value) for value in ortho_bbox],
+        "query_bbox": [float(value) for value in query_bbox],
+        "query_bbox_wgs84": [float(value) for value in query_bbox_wgs84],
+        "query_pad_m": float(query_pad_m),
+    }
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    output_path = work_dir / "current_footprints.geojson"
+    cache_object = _current_footprints_cache_object(
+        cache_prefix=cache_prefix,
+        url=url,
+        query_bbox=query_bbox,
+        query_pad_m=query_pad_m,
+        target_crs=target_crs,
+        imagery_year=imagery_year,
+    )
+
+    blob = None
+    try:
+        blob = gcs_client.bucket(bucket).blob(cache_object)
+        if blob.exists():
+            blob.download_to_filename(str(output_path))
+            cached_payload = json.loads(output_path.read_text())
+            features = _validate_feature_collection(cached_payload)
+            if cached_payload.get("citylens_provenance") != provenance:
+                raise RuntimeError("Cached current-footprint provenance does not match query")
+            return {
+                "path": output_path,
+                "sha256": _sha256_file(output_path),
+                "feature_count": len(features),
+                "cache_object": cache_object,
+                "cache_hit": True,
+                **provenance,
+            }
+    except Exception as exc:
+        output_path.unlink(missing_ok=True)
+        _LOG.warning(
+            "current_footprints_cache_read_failed",
+            extra={"cache_object": cache_object, "error": str(exc)},
+        )
+
+    feature_collection, _ = _fetch_current_footprints(
+        url=url,
+        bbox=query_bbox,
+        target_crs=target_crs,
+        imagery_year=imagery_year,
+        session=session,
+    )
+    feature_collection["citylens_provenance"] = provenance
+    tmp_path = output_path.with_suffix(output_path.suffix + ".part")
+    try:
+        tmp_path.write_text(
+            json.dumps(feature_collection, indent=2, sort_keys=False), encoding="utf-8"
+        )
+        os.replace(tmp_path, output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    if blob is not None:
+        try:
+            blob.upload_from_filename(str(output_path))
+        except Exception as exc:
+            _LOG.warning(
+                "current_footprints_cache_write_failed",
+                extra={"cache_object": cache_object, "error": str(exc)},
+            )
+
+    return {
+        "path": output_path,
+        "sha256": _sha256_file(output_path),
+        "feature_count": len(feature_collection["features"]),
+        "cache_object": cache_object,
+        "cache_hit": False,
+        **provenance,
+    }
+
+
+def _stage_current_footprints_optional(
+    *,
+    bbox: tuple[float, float, float, float],
+    target_crs: CRS,
+    imagery_year: int,
+    work_dir: Path,
+    gcs_client: Any,
+    bucket: str,
+    cache_prefix: str,
+    session: Any | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Fail-soft adapter so an NYC OpenData outage preserves AMG fallback."""
+    work_dir = Path(work_dir)
+    try:
+        return (
+            _stage_current_footprints(
+                bbox=bbox,
+                target_crs=target_crs,
+                imagery_year=imagery_year,
+                work_dir=work_dir,
+                gcs_client=gcs_client,
+                bucket=bucket,
+                cache_prefix=cache_prefix,
+                session=session,
+            ),
+            None,
+        )
+    except Exception as exc:
+        (work_dir / "current_footprints.geojson").unlink(missing_ok=True)
+        warning = {
+            "code": "CURRENT_FOOTPRINTS_UNAVAILABLE",
+            "message": str(exc),
+            "source_url": _current_footprints_url(),
+        }
+        _LOG.warning(
+            "current_footprints_unavailable",
+            extra={
+                "source_url": _current_footprints_url(),
+                "imagery_year": imagery_year,
+                "error": str(exc),
+            },
+        )
+        return None, warning
 
 
 def _optional_source_from_env(name: str) -> Path | None:
@@ -618,7 +950,7 @@ class OrthoFetchConfig:
 def _get_config(request_radius: float | None = None) -> OrthoFetchConfig:
     wms_url = os.getenv(
         "CITYLENS_ORTHO_WMS_URL",
-        "https://orthos.its.ny.gov/arcgis/rest/services/wms/2024/MapServer/WMSServer",
+        "https://orthos.its.ny.gov/arcgis/services/wms/2024/MapServer/WMSServer",
     ).strip()
     cache_prefix = os.getenv("CITYLENS_IMAGERY_CACHE_PREFIX", "inputs").strip().strip("/")
     # request.aoi_radius_m wins over env default; env is the fallback for ad-hoc
@@ -668,7 +1000,7 @@ def ensure_work_dir_inputs(
     gcs_client: Any,
     bucket: str,
 ) -> dict[str, Any]:
-    """Materialize orthophoto, baseline footprints, and LiDAR inputs in work_dir."""
+    """Materialize orthophoto, footprint, and LiDAR inputs in work_dir."""
 
     request_radius = getattr(request, "aoi_radius_m", None)
     cfg = _get_config(request_radius=request_radius)
@@ -708,8 +1040,10 @@ def ensure_work_dir_inputs(
         "baseline_path": None,
         "baseline_png_path": None,
         "baseline_footprints_path": None,
+        "current_footprints_path": None,
         "lidar_path": None,
         "assets": {},
+        "warnings": [],
     }
 
     if explicit_ortho:
@@ -767,9 +1101,37 @@ def ensure_work_dir_inputs(
         if len(bbox) != 4:
             raise RuntimeError("Could not determine orthophoto bounds")
 
+    ortho_bbox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    imagery_year = int(getattr(request, "imagery_year", None) or 2024)
+    current_footprints, warning = _stage_current_footprints_optional(
+        bbox=ortho_bbox,
+        target_crs=ortho_crs,
+        imagery_year=imagery_year,
+        work_dir=work_dir,
+        gcs_client=gcs_client,
+        bucket=bucket,
+        cache_prefix=cfg.cache_prefix,
+        session=getattr(resolver, "session", None),
+    )
+    if warning is not None:
+        manifest["warnings"].append(warning)
+        manifest["assets"]["current_footprints"] = {
+            "available": False,
+            **warning,
+        }
+    else:
+        assert current_footprints is not None
+        manifest["current_footprints_path"] = str(current_footprints["path"])
+        manifest["assets"]["current_footprints"] = {
+            **{key: value for key, value in current_footprints.items() if key != "path"},
+            "canonical_path": str(current_footprints["path"]),
+            "local_path": str(current_footprints["path"]),
+            "imagery_year": imagery_year,
+        }
+
     baseline_footprints = _build_baseline_footprints(
         reference_data_dir=reference_data_dir,
-        bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+        bbox=ortho_bbox,
         target_crs=ortho_crs,
         work_dir=work_dir,
         keep_zips=keep_zips,

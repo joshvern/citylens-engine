@@ -3,17 +3,25 @@
 Mirrors `test_demo.py`'s pattern: a FakeGcs that returns canned JSONL +
 manifest bytes via `download_bytes`, the router cache reset between
 tests so each one runs in isolation.
+
+The sweep endpoint is tiered: anonymous callers get a capped preview
+with premium fields stripped; any authenticated caller gets the full
+feed. Authenticated cases install a dependency override for
+`maybe_auth` (mirroring the `auth_override` fixture for `require_auth`).
 """
+
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import parcel_intel as parcel_intel_routes
+from app.services.auth import maybe_auth
+from app.services.auth_context import AuthContext
 
 
 class FakeGcs:
@@ -25,11 +33,7 @@ class FakeGcs:
     def download_bytes(self, *, object_name: str) -> tuple[bytes, str | None]:
         if object_name not in self._store:
             raise FileNotFoundError(object_name)
-        ct = (
-            "application/json"
-            if object_name.endswith(".json")
-            else "application/x-ndjson"
-        )
+        ct = "application/json" if object_name.endswith(".json") else "application/x-ndjson"
         return self._store[object_name], ct
 
 
@@ -38,7 +42,6 @@ def _set_required_env(monkeypatch) -> None:
     monkeypatch.setenv("CITYLENS_REGION", "us-central1")
     monkeypatch.setenv("CITYLENS_BUCKET", "test-bucket")
     monkeypatch.setenv("CITYLENS_JOB_NAME", "test-job")
-    monkeypatch.setenv("CITYLENS_API_KEYS", "dev-key-1")
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +52,24 @@ def _reset_registry_and_overrides():
     yield
     parcel_intel_routes._REGISTRY = parcel_intel_routes.ParcelIntelRegistry()
     app.dependency_overrides = {}
+
+
+def _authed(
+    *, app_user_id: str = "user-pi-1", plan_type: str = "free", is_admin: bool = False
+) -> AuthContext:
+    """Install a maybe_auth override so the sweep sees an authenticated
+    caller. Cleared by the autouse fixture above."""
+    ctx = AuthContext(
+        app_user_id=app_user_id,
+        auth_provider="mock",
+        auth_subject=f"sub-{app_user_id}",
+        email=f"{app_user_id}@example.com",
+        email_verified=True,
+        is_admin=is_admin,
+        plan_type=plan_type,
+    )
+    app.dependency_overrides[maybe_auth] = lambda: ctx
+    return ctx
 
 
 def _row(bbl: str, **overrides) -> dict:
@@ -88,16 +109,21 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
         "schema": "citylens-parcel-intel/published_sweep@v1",
         "generated_at": generated_at,
         "boroughs": [
-            {"slug": b, "display_name": b.title(), "count": 2, "top_score": 0.9}
-            for b in boroughs
+            {"slug": b, "display_name": b.title(), "count": 2, "top_score": 0.9} for b in boroughs
         ],
         "model_metadata": {"feature_year": 2018},
     }
 
 
-def _make_fake_gcs(boroughs: list[str], rows_by_borough: dict[str, list[dict]] | None = None) -> FakeGcs:
+def _make_fake_gcs(
+    boroughs: list[str],
+    rows_by_borough: dict[str, list[dict]] | None = None,
+    generated_at: str = "2026-05-08T00:00:00+00:00",
+) -> FakeGcs:
     store: dict[str, bytes] = {
-        "parcel-intel/v1/manifest.json": json.dumps(_manifest(boroughs)).encode("utf-8"),
+        "parcel-intel/v1/manifest.json": json.dumps(
+            _manifest(boroughs, generated_at=generated_at)
+        ).encode("utf-8"),
     }
     rbb = rows_by_borough or {}
     for slug in boroughs:
@@ -106,6 +132,10 @@ def _make_fake_gcs(boroughs: list[str], rows_by_borough: dict[str, list[dict]] |
             "\n".join(json.dumps(r) for r in rows) + "\n"
         ).encode("utf-8")
     return FakeGcs(store)
+
+
+def _fresh_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
@@ -139,9 +169,14 @@ def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:
     # Public schema fields come through Pydantic.
     sample = body["rows"][0]
     for key in (
-        "bbl", "address", "score_calibrated",
-        "is_landmark", "is_historic_district",
-        "last_sale_price", "block_id", "block_rank",
+        "bbl",
+        "address",
+        "score_calibrated",
+        "is_landmark",
+        "is_historic_district",
+        "last_sale_price",
+        "block_id",
+        "block_rank",
     ):
         assert key in sample
     # Cache header present.
@@ -182,9 +217,10 @@ def test_parcel_intel_503_when_no_data_published(monkeypatch) -> None:
     assert "not been published" in r.json()["detail"].lower()
 
 
-def test_parcel_intel_sweep_returns_top_features(monkeypatch) -> None:
+def test_parcel_intel_sweep_returns_top_features_when_authed(monkeypatch) -> None:
     """When the publisher injects per-row SHAP attributions, the engine must
-    surface them through the response without truncation or reshaping."""
+    surface them through the response without truncation or reshaping.
+    SHAP attributions are a premium field, so this requires auth."""
     _set_required_env(monkeypatch)
     feats = [
         {
@@ -209,6 +245,7 @@ def test_parcel_intel_sweep_returns_top_features(monkeypatch) -> None:
     rows = [_row("3020000001", top_features=feats)]
     fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
 
     client = TestClient(app)
     r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
@@ -227,12 +264,15 @@ def test_parcel_intel_sweep_returns_top_features(monkeypatch) -> None:
 
 
 def test_parcel_intel_sweep_defaults_top_features_to_empty(monkeypatch) -> None:
-    """Older publishes (no top_features field at all) must still deserialize."""
+    """Older publishes (no top_features field at all) must still deserialize.
+    Authed request so the empty list reflects the schema default rather
+    than anonymous stripping."""
     _set_required_env(monkeypatch)
     row_without = _row("3020000002")
     row_without.pop("top_features")  # simulate v1 sweep
     fake = _make_fake_gcs(["brooklyn"], {"brooklyn": [row_without]})
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
 
     client = TestClient(app)
     r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
@@ -247,14 +287,14 @@ def test_parcel_intel_invalidates_cache_on_new_generated_at(monkeypatch) -> None
     _set_required_env(monkeypatch)
     rows_v1 = [_row("3020000001", address="ROW V1")]
     rows_v2 = [_row("3020000002", address="ROW V2")]
-    fake = FakeGcs({
-        "parcel-intel/v1/manifest.json": json.dumps(
-            _manifest(["brooklyn"], generated_at="2026-05-08T00:00:00+00:00")
-        ).encode("utf-8"),
-        "parcel-intel/v1/brooklyn.jsonl": (
-            json.dumps(rows_v1[0]) + "\n"
-        ).encode("utf-8"),
-    })
+    fake = FakeGcs(
+        {
+            "parcel-intel/v1/manifest.json": json.dumps(
+                _manifest(["brooklyn"], generated_at="2026-05-08T00:00:00+00:00")
+            ).encode("utf-8"),
+            "parcel-intel/v1/brooklyn.jsonl": (json.dumps(rows_v1[0]) + "\n").encode("utf-8"),
+        }
+    )
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
     client = TestClient(app)
@@ -265,9 +305,262 @@ def test_parcel_intel_invalidates_cache_on_new_generated_at(monkeypatch) -> None
     fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
         _manifest(["brooklyn"], generated_at="2026-05-09T00:00:00+00:00")
     ).encode("utf-8")
-    fake._store["parcel-intel/v1/brooklyn.jsonl"] = (
-        json.dumps(rows_v2[0]) + "\n"
-    ).encode("utf-8")
+    fake._store["parcel-intel/v1/brooklyn.jsonl"] = (json.dumps(rows_v2[0]) + "\n").encode("utf-8")
 
     second = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
     assert second.json()["rows"][0]["address"] == "ROW V2"
+
+
+# --- Tiered access: public preview + authenticated full feed ---
+
+
+def test_anon_sweep_capped_at_25_rows(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    rows = [_row(f"30200001{i:02d}") for i in range(30)]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 1000})
+    assert r.status_code == 200, r.text
+    # Silently clamped, not an error.
+    assert len(r.json()["rows"]) == 25
+    # Anonymous responses keep the public edge-cache headers.
+    assert "s-maxage=600" in r.headers["cache-control"]
+
+
+def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    feats = [
+        {"name": "lot_area", "value": 5000, "contribution_logit": 0.85, "contribution_pct": 0.31},
+    ]
+    rows = [
+        _row(
+            "3020000001",
+            score_calibrated_p10=0.62,
+            score_calibrated_p90=0.97,
+            top_features=feats,
+            change_added_count=3,
+            change_demolished_count=1,
+            change_modified_count=2,
+            change_latest_imagery_year=2024,
+            recent_change=True,
+            owner_name="ACME REALTY LLC",
+        )
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    served = r.json()["rows"][0]
+    # Non-premium fields still flow through.
+    assert served["bbl"] == "3020000001"
+    assert served["score_calibrated"] == 0.9
+    # Premium fields are stripped/defaulted for anonymous callers.
+    assert served["score_calibrated_p10"] is None
+    assert served["score_calibrated_p90"] is None
+    assert served["top_features"] == []
+    assert served["change_added_count"] == 0
+    assert served["change_demolished_count"] == 0
+    assert served["change_modified_count"] == 0
+    assert served["change_latest_imagery_year"] is None
+    assert served["recent_change"] is False
+    assert served["owner_name"] is None
+
+
+def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            f"30200002{i:02d}",
+            score_calibrated_p10=0.6,
+            score_calibrated_p90=0.95,
+            owner_name="ACME REALTY LLC",
+            recent_change=True,
+        )
+        for i in range(30)
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 1000})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Full feed: no anonymous cap.
+    assert len(body["rows"]) == 30
+    served = body["rows"][0]
+    assert served["score_calibrated_p10"] == 0.6
+    assert served["score_calibrated_p90"] == 0.95
+    assert served["owner_name"] == "ACME REALTY LLC"
+    assert served["recent_change"] is True
+    # Authenticated payloads must never sit in a shared cache.
+    assert r.headers["cache-control"] == "private, no-store"
+
+
+def test_invalid_bearer_on_sweep_is_401_not_anon_downgrade(monkeypatch) -> None:
+    """maybe_auth must reject bad credentials rather than silently serving
+    the anonymous tier. Mock verifier is enabled by conftest env."""
+    _set_required_env(monkeypatch)
+    fake = _make_fake_gcs(["brooklyn"])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn"},
+        headers={"Authorization": "Bearer not-a-valid-token"},
+    )
+    assert r.status_code == 401
+
+
+# --- Robust read path (corrupt manifest / bad JSONL / bad rows) ---
+
+
+def test_corrupt_manifest_returns_503(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = FakeGcs(
+        {
+            "parcel-intel/v1/manifest.json": b"{this is not JSON",
+        }
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/index")
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Parcel intelligence manifest is invalid"
+
+    # The sweep goes through the same manifest refresh.
+    r2 = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r2.status_code == 503
+
+
+def test_bad_jsonl_line_is_skipped_rest_served(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    good1 = _row("3020000001")
+    good2 = _row("3020000002")
+    payload = json.dumps(good1) + "\n" + "{corrupt line!!\n" + json.dumps(good2) + "\n"
+    fake = FakeGcs(
+        {
+            "parcel-intel/v1/manifest.json": json.dumps(_manifest(["brooklyn"])).encode("utf-8"),
+            "parcel-intel/v1/brooklyn.jsonl": payload.encode("utf-8"),
+        }
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    bbls = [row["bbl"] for row in r.json()["rows"]]
+    assert bbls == ["3020000001", "3020000002"]
+
+
+def test_invalid_row_is_skipped_rest_served(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    good = _row("3020000001")
+    bad = _row("3020000002", score_calibrated="not-a-number")
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": [good, bad]})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    bbls = [row["bbl"] for row in r.json()["rows"]]
+    assert bbls == ["3020000001"]
+
+
+# --- Freshness (index age_days / stale) ---
+
+
+def test_index_flags_stale_data(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_fake_gcs(["brooklyn"], generated_at="2026-01-01T00:00:00+00:00")
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/index")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stale"] is True
+    assert body["age_days"] is not None
+    assert body["age_days"] > 45
+
+
+def test_index_fresh_data_not_stale(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_fake_gcs(["brooklyn"], generated_at=_fresh_iso())
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/index")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stale"] is False
+    assert body["age_days"] is not None
+    assert body["age_days"] < 1.0
+
+
+# --- Change-signal + owner schema fields (deploy-order prerequisite) ---
+
+
+def test_change_and_owner_fields_round_trip_when_authed(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            "3020000001",
+            change_added_count=4,
+            change_demolished_count=1,
+            change_modified_count=7,
+            change_latest_imagery_year=2024,
+            recent_change=True,
+            owner_name="100 E 21 ST OWNER LLC",
+        )
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    served = r.json()["rows"][0]
+    assert served["change_added_count"] == 4
+    assert served["change_demolished_count"] == 1
+    assert served["change_modified_count"] == 7
+    assert served["change_latest_imagery_year"] == 2024
+    assert served["recent_change"] is True
+    assert served["owner_name"] == "100 E 21 ST OWNER LLC"
+
+
+def test_change_and_owner_fields_default_when_absent(monkeypatch) -> None:
+    """Old JSONL publishes (no change/owner fields) must still validate and
+    serve schema defaults."""
+    _set_required_env(monkeypatch)
+    old_row = _row("3020000003")  # _row never sets the new fields
+    for key in (
+        "change_added_count",
+        "change_demolished_count",
+        "change_modified_count",
+        "change_latest_imagery_year",
+        "recent_change",
+        "owner_name",
+    ):
+        assert key not in old_row
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": [old_row]})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
+
+    client = TestClient(app)
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    served = r.json()["rows"][0]
+    assert served["change_added_count"] == 0
+    assert served["change_demolished_count"] == 0
+    assert served["change_modified_count"] == 0
+    assert served["change_latest_imagery_year"] is None
+    assert served["recent_change"] is False
+    assert served["owner_name"] is None

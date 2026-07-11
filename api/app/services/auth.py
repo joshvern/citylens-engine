@@ -79,12 +79,16 @@ def _admin_for_oidc(claims: dict, settings: Settings) -> bool:
 
 
 def _check_admin_api_key(provided: str, settings: Settings) -> bool:
+    """Hash-only admin key check.
+
+    Plaintext admin keys (the old CITYLENS_ADMIN_API_KEYS env var) are no
+    longer supported: deploys must configure the SHA-256 of each key via
+    CITYLENS_ADMIN_API_KEY_HASHES so the environment never holds the
+    credential itself.
+    """
     if not settings.allow_admin_api_keys:
         return False
     candidate_hash = sha256_hex(provided)
-    for key in settings.admin_api_keys:
-        if hmac.compare_digest(key, provided):
-            return True
     for stored_hash in settings.admin_api_key_hashes:
         if hmac.compare_digest(stored_hash.lower(), candidate_hash.lower()):
             return True
@@ -107,9 +111,7 @@ def require_auth(
     # JWKS round trip.
     if bearer_token and is_user_api_key(bearer_token):
         if not settings.allow_user_api_keys:
-            raise HTTPException(
-                status_code=401, detail="User API keys are not enabled"
-            )
+            raise HTTPException(status_code=401, detail="User API keys are not enabled")
         store = _store_factory(settings)
         owner_id = store.get_user_id_for_api_key(bearer_token)
         if not owner_id:
@@ -148,9 +150,7 @@ def require_auth(
         # Accept both `email_verified` (OIDC standard, snake_case) and
         # `emailVerified` (Better Auth / Neon Auth's spelling, camelCase).
         # Whichever is present and truthy wins.
-        email_verified = bool(
-            claims.get("email_verified") or claims.get("emailVerified") or False
-        )
+        email_verified = bool(claims.get("email_verified") or claims.get("emailVerified") or False)
         is_admin_override = _admin_for_oidc(claims, settings)
 
         store = _store_factory(settings)
@@ -190,3 +190,20 @@ def require_auth(
     if authorization or x_api_key:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def maybe_auth(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> Optional[AuthContext]:
+    """Optional auth for tiered public endpoints.
+
+    Behaves exactly like ``require_auth`` when credentials are supplied —
+    including raising 401 on *invalid* credentials, so a bad token never
+    silently downgrades a caller to the anonymous tier. Returns ``None``
+    only when no credentials were provided at all.
+    """
+    if not authorization and not x_api_key:
+        return None
+    return require_auth(authorization=authorization, x_api_key=x_api_key, settings=settings)

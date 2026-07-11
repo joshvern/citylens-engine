@@ -125,6 +125,20 @@ class ParcelIntelRow(BaseModel):
     # Defaults to an empty list — older publishes (sweep schema v1) and
     # rows where SHAP failed flow through cleanly.
     top_features: list[TopFeature] = Field(default_factory=list)
+    # --- Change-signal + ownership (premium fields) ---
+    # Populated by a future publisher release that joins the aerial
+    # change-detection output and ACRIS owner-of-record onto each lot.
+    # Declared ahead of the data (deploy-order prerequisite): Pydantic
+    # strips unknown JSONL fields silently, so the API must know these
+    # names before the publisher starts emitting them. Defaults keep old
+    # publishes validating unchanged. All of these are stripped from
+    # anonymous sweep responses.
+    change_added_count: int = 0
+    change_demolished_count: int = 0
+    change_modified_count: int = 0
+    change_latest_imagery_year: Optional[int] = None
+    recent_change: bool = False
+    owner_name: Optional[str] = None
 
 
 class ParcelIntelBorough(BaseModel):
@@ -138,6 +152,10 @@ class ParcelIntelIndex(BaseModel):
     boroughs: list[ParcelIntelBorough] = Field(default_factory=list)
     generated_at: Optional[datetime] = None
     model_metadata: dict[str, Any] = Field(default_factory=dict)
+    # Freshness telemetry, derived from `generated_at` at request time.
+    # Defaults keep older clients (and cached responses) unaffected.
+    age_days: Optional[float] = None
+    stale: bool = False
 
 
 class ParcelIntelSweepResponse(BaseModel):

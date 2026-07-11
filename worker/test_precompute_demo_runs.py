@@ -13,16 +13,17 @@ def test_validate_completed_run_rejects_missing_required_artifacts() -> None:
             {
                 "run_id": "run-123",
                 "artifacts": {
-                    "preview.png": {"name": "preview.png", "signed_url": "https://example.test/preview.png"}
+                    "preview.png": {
+                        "name": "preview.png",
+                        "signed_url": "https://example.test/preview.png",
+                    }
                 },
             },
             run_id="run-123",
         )
 
 
-def test_main_writes_only_valid_precomputed_demo_runs(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_main_writes_only_valid_precomputed_demo_runs(monkeypatch, tmp_path: Path) -> None:
     addresses_path = tmp_path / "demo_addresses.json"
     out_path = tmp_path / "demo_runs.json"
     addresses_path.write_text(
@@ -58,7 +59,10 @@ def test_main_writes_only_valid_precomputed_demo_runs(
                     {"name": "preview.png", "signed_url": "https://example.test/preview.png"},
                     {"name": "change.geojson", "signed_url": "https://example.test/change.geojson"},
                     {"name": "mesh.ply", "signed_url": "https://example.test/mesh.ply"},
-                    {"name": "run_summary.json", "signed_url": "https://example.test/run_summary.json"},
+                    {
+                        "name": "run_summary.json",
+                        "signed_url": "https://example.test/run_summary.json",
+                    },
                 ],
             }
         raise AssertionError(f"Unexpected API call: {method} {url}")
@@ -145,7 +149,9 @@ def test_main_fails_when_completed_run_is_missing_required_artifacts(
                 "status": "succeeded",
                 "stage": "complete",
                 "progress": 100,
-                "artifacts": [{"name": "preview.png", "signed_url": "https://example.test/preview.png"}],
+                "artifacts": [
+                    {"name": "preview.png", "signed_url": "https://example.test/preview.png"}
+                ],
             }
         raise AssertionError(f"Unexpected API call: {method} {url}")
 

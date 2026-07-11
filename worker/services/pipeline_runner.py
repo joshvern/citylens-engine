@@ -181,9 +181,7 @@ def run(
     ]
     if too_small:
         error = build_error_payload(
-            RuntimeError(
-                f"Artifact(s) smaller than placeholder threshold: {too_small}"
-            ),
+            RuntimeError(f"Artifact(s) smaller than placeholder threshold: {too_small}"),
             code="PLACEHOLDER_ARTIFACT_DETECTED",
             stage="done",
         )

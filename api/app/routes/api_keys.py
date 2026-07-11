@@ -75,9 +75,7 @@ def create_api_key(
     store: FirestoreStore = Depends(get_store),
 ) -> dict[str, Any]:
     _ensure_enabled(settings)
-    _, plaintext, record = store.create_api_key(
-        app_user_id=auth.app_user_id, label=body.label
-    )
+    _, plaintext, record = store.create_api_key(app_user_id=auth.app_user_id, label=body.label)
     response = _serialize_record(record)
     # Plaintext is shown ONCE on the create response and never again.
     response["plaintext_key"] = plaintext

@@ -52,9 +52,7 @@ def create_run(
     store: FirestoreStore = Depends(get_store),
     trigger: CloudRunJobTrigger = Depends(get_job_trigger),
 ) -> RunResponse:
-    enforce_concurrent_quota(
-        store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type
-    )
+    enforce_concurrent_quota(store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type)
     month_key = reserve_monthly_run(
         store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type
     )
@@ -76,9 +74,7 @@ def create_run(
     try:
         run_doc = store.create_run(user_id=auth.app_user_id, request_dict=request_dict)
     except Exception:
-        release_monthly_run(
-            store=store, app_user_id=auth.app_user_id, month_key=month_key
-        )
+        release_monthly_run(store=store, app_user_id=auth.app_user_id, month_key=month_key)
         raise
 
     try:
@@ -87,9 +83,7 @@ def create_run(
             store.set_execution_id(run_doc["run_id"], execution_id)
             run_doc["execution_id"] = execution_id
     except Exception as e:
-        release_monthly_run(
-            store=store, app_user_id=auth.app_user_id, month_key=month_key
-        )
+        release_monthly_run(store=store, app_user_id=auth.app_user_id, month_key=month_key)
         error = {
             "code": "TRIGGER_FAILED",
             "message": str(e),
@@ -119,9 +113,7 @@ def list_runs(
     limit = max(1, min(int(limit), 100))
 
     try:
-        runs, next_cursor = store.list_runs(
-            user_id=auth.app_user_id, limit=limit, cursor=cursor
-        )
+        runs, next_cursor = store.list_runs(user_id=auth.app_user_id, limit=limit, cursor=cursor)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

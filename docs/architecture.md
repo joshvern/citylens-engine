@@ -10,9 +10,16 @@ owns the browser UI.
 - **API (Cloud Run)**
   - Auth: `Authorization: Bearer <token>` — a Neon Auth (OIDC/JWKS) user JWT, or
     a `clk_live_` user API key resolved against Firestore. An optional admin
-    `X-API-Key` surface exists for internal scripts. See [security.md](security.md).
+    `X-API-Key` surface (hash-only, `CITYLENS_ADMIN_API_KEY_HASHES`) exists for
+    internal scripts. See [security.md](security.md).
   - Creates Firestore run docs and triggers a Cloud Run Job execution.
-  - Serves the public read endpoints `/v1/demo/*` and `/v1/parcel-intel/*`.
+  - Serves the public read endpoints `/v1/demo/*` and `/v1/parcel-intel/index`.
+    `/v1/parcel-intel/sweep` is tiered: a public preview (≤25 rows, premium
+    fields stripped) + an authenticated full feed (any valid credential; up to
+    1000 rows, `Cache-Control: private, no-store`).
+  - Health: `/v1/health` is the dependency-free keep-warm ping;
+    `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
+    reports parcel-intel presence/freshness flags.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).

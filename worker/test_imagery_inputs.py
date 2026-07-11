@@ -134,6 +134,25 @@ def test_ensure_work_dir_inputs_writes_manifest_and_materializes_georef_inputs(
         Path(dest_path).write_bytes(b"LAS")
         return Path(dest_path)
 
+    captured_current: dict = {}
+
+    def fake_current_footprints(**kwargs):
+        captured_current.update(kwargs)
+        path = tmp_path / "current_footprints.geojson"
+        path.write_text('{"type":"FeatureCollection","features":[]}')
+        return (
+            {
+                "path": path,
+                "sha256": "current123",
+                "feature_count": 0,
+                "source_url": "https://example.test/current.geojson",
+                "source_dataset": "5zhs-2jue",
+                "cache_object": "inputs/current-footprints/test.geojson",
+                "cache_hit": False,
+            },
+            None,
+        )
+
     monkeypatch.setattr("services.imagery_inputs.NYSGISAPI", FakeResolver)
     monkeypatch.setattr("services.imagery_inputs._download_orthophoto_tif", fake_ortho)
     monkeypatch.setattr("services.imagery_inputs._ensure_county_footprints_gdbs", fake_counties)
@@ -142,6 +161,10 @@ def test_ensure_work_dir_inputs_writes_manifest_and_materializes_georef_inputs(
     )
     monkeypatch.setattr("services.imagery_inputs._rasterize_baseline", fake_rasterize_baseline)
     monkeypatch.setattr("services.imagery_inputs._download_lidar_tile", fake_lidar)
+    monkeypatch.setattr(
+        "services.imagery_inputs._stage_current_footprints_optional",
+        fake_current_footprints,
+    )
 
     manifest = ensure_work_dir_inputs(
         request=SimpleNamespace(address="1 Main St"),
@@ -158,15 +181,21 @@ def test_ensure_work_dir_inputs_writes_manifest_and_materializes_georef_inputs(
     assert data["baseline_path"].endswith("baseline.tif")
     assert data["baseline_png_path"].endswith("baseline.png")
     assert data["baseline_footprints_path"].endswith("baseline_footprints.geojson")
+    assert data["current_footprints_path"].endswith("current_footprints.geojson")
     assert data["lidar_path"].endswith("lidar.las")
     assert data["geocode"]["x"] == 100.0
     assert data["tile"]["tile_id"] == "123456"
     assert data["assets"]["baseline_footprints"]["feature_count"] == 0
+    assert data["assets"]["current_footprints"]["source_dataset"] == "5zhs-2jue"
+    assert captured_current["bbox"] == (100.0, 192.0, 108.0, 200.0)
+    assert captured_current["target_crs"].to_epsg() == 3857
+    assert captured_current["imagery_year"] == 2024
     assert (tmp_path / "orthophoto.tif").exists()
     assert (tmp_path / "orthophoto.png").exists()
     assert (tmp_path / "baseline.tif").exists()
     assert (tmp_path / "baseline.png").exists()
     assert (tmp_path / "baseline_footprints.geojson").exists()
+    assert (tmp_path / "current_footprints.geojson").exists()
     assert (tmp_path / "lidar.las").exists()
     assert manifest["input_manifest_path"] == str(manifest_path)
 
@@ -442,9 +471,5 @@ def test_features_for_bbox_reprojects_output_to_target_crs(monkeypatch) -> None:
     ys = [pt[1] for pt in coords]
     # After reprojection, x should be near -8232536 (EPSG:3857) and NOT
     # near 996977 (EPSG:2263). A ~30m tolerance is plenty.
-    assert -8232550 < min(xs) < -8232520, (
-        f"feature x not reprojected to EPSG:3857: xs={xs}"
-    )
-    assert 4961400 < min(ys) < 4961440, (
-        f"feature y not reprojected to EPSG:3857: ys={ys}"
-    )
+    assert -8232550 < min(xs) < -8232520, f"feature x not reprojected to EPSG:3857: xs={xs}"
+    assert 4961400 < min(ys) < 4961440, f"feature y not reprojected to EPSG:3857: ys={ys}"

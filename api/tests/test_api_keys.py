@@ -30,7 +30,7 @@ class FakeApiKeyStore:
 
         # Mimic the real implementation's plaintext shape: prefix + url-safe
         # random. Tests need a deterministic-enough shape to assert on.
-        key_id = f"k-{len(self.users.get(app_user_id, {}))+1}"
+        key_id = f"k-{len(self.users.get(app_user_id, {})) + 1}"
         random_part = secrets.token_urlsafe(32).rstrip("=")
         plaintext = f"{USER_API_KEY_PREFIX}{random_part}"
         plaintext_hash = _hash_api_key(plaintext)

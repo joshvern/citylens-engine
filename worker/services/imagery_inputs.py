@@ -48,6 +48,8 @@ _CURRENT_FOOTPRINTS_FIELDS = (
     "mappluto_bbl",
 )
 _CURRENT_FOOTPRINTS_LIMIT = 50_000
+_CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT = 250.0
+_CURRENT_FOOTPRINTS_CACHE_SCHEMA = "current-footprints@v2"
 
 
 def _normalize_address(address: str) -> str:
@@ -71,6 +73,31 @@ def _current_footprints_url() -> str:
     return (
         os.getenv("CITYLENS_CURRENT_FOOTPRINTS_URL", "").strip() or _CURRENT_FOOTPRINTS_DEFAULT_URL
     )
+
+
+def _current_footprints_query_pad_m() -> float:
+    raw = os.getenv(
+        "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M",
+        str(_CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT),
+    ).strip()
+    try:
+        pad_m = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M must be a finite nonnegative number"
+        ) from exc
+    if not math.isfinite(pad_m) or pad_m < 0:
+        raise RuntimeError(
+            "CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M must be a finite nonnegative number"
+        )
+    return pad_m
+
+
+def _pad_bbox(
+    bbox: tuple[float, float, float, float], *, pad: float
+) -> tuple[float, float, float, float]:
+    minx, miny, maxx, maxy = (float(value) for value in bbox)
+    return minx - pad, miny - pad, maxx + pad, maxy + pad
 
 
 def _bbox_in_wgs84(
@@ -190,15 +217,18 @@ def _current_footprints_cache_object(
     *,
     cache_prefix: str,
     url: str,
-    bbox: tuple[float, float, float, float],
+    query_bbox: tuple[float, float, float, float],
+    query_pad_m: float,
     target_crs: CRS,
     imagery_year: int,
 ) -> str:
     cache_payload = json.dumps(
         {
+            "schema": _CURRENT_FOOTPRINTS_CACHE_SCHEMA,
             "dataset": _CURRENT_FOOTPRINTS_DATASET,
             "url": url,
-            "bbox": [float(value) for value in bbox],
+            "query_bbox": [float(value) for value in query_bbox],
+            "query_pad_m": float(query_pad_m),
             "target_crs": target_crs.to_string(),
             "imagery_year": int(imagery_year),
         },
@@ -221,15 +251,31 @@ def _stage_current_footprints(
     cache_prefix: str,
     session: Any | None = None,
 ) -> dict[str, Any]:
-    """Materialize normalized current footprints, using GCS as a best-effort cache."""
+    """Materialize current footprints; core clips the padded query to ``bbox``."""
     url = _current_footprints_url()
+    ortho_bbox = tuple(float(value) for value in bbox)
+    query_pad_m = _current_footprints_query_pad_m()
+    query_bbox = _pad_bbox(ortho_bbox, pad=query_pad_m)
+    query_bbox_wgs84 = _bbox_in_wgs84(query_bbox, source_crs=target_crs)
+    provenance = {
+        "schema": _CURRENT_FOOTPRINTS_CACHE_SCHEMA,
+        "source_dataset": _CURRENT_FOOTPRINTS_DATASET,
+        "source_url": url,
+        "imagery_year": int(imagery_year),
+        "target_crs": target_crs.to_string(),
+        "ortho_bbox": [float(value) for value in ortho_bbox],
+        "query_bbox": [float(value) for value in query_bbox],
+        "query_bbox_wgs84": [float(value) for value in query_bbox_wgs84],
+        "query_pad_m": float(query_pad_m),
+    }
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     output_path = work_dir / "current_footprints.geojson"
     cache_object = _current_footprints_cache_object(
         cache_prefix=cache_prefix,
         url=url,
-        bbox=bbox,
+        query_bbox=query_bbox,
+        query_pad_m=query_pad_m,
         target_crs=target_crs,
         imagery_year=imagery_year,
     )
@@ -239,15 +285,17 @@ def _stage_current_footprints(
         blob = gcs_client.bucket(bucket).blob(cache_object)
         if blob.exists():
             blob.download_to_filename(str(output_path))
-            features = _validate_feature_collection(json.loads(output_path.read_text()))
+            cached_payload = json.loads(output_path.read_text())
+            features = _validate_feature_collection(cached_payload)
+            if cached_payload.get("citylens_provenance") != provenance:
+                raise RuntimeError("Cached current-footprint provenance does not match query")
             return {
                 "path": output_path,
                 "sha256": _sha256_file(output_path),
                 "feature_count": len(features),
-                "source_url": url,
-                "source_dataset": _CURRENT_FOOTPRINTS_DATASET,
                 "cache_object": cache_object,
                 "cache_hit": True,
+                **provenance,
             }
     except Exception as exc:
         output_path.unlink(missing_ok=True)
@@ -256,13 +304,14 @@ def _stage_current_footprints(
             extra={"cache_object": cache_object, "error": str(exc)},
         )
 
-    feature_collection, query_bbox = _fetch_current_footprints(
+    feature_collection, _ = _fetch_current_footprints(
         url=url,
-        bbox=bbox,
+        bbox=query_bbox,
         target_crs=target_crs,
         imagery_year=imagery_year,
         session=session,
     )
+    feature_collection["citylens_provenance"] = provenance
     tmp_path = output_path.with_suffix(output_path.suffix + ".part")
     try:
         tmp_path.write_text(
@@ -285,11 +334,9 @@ def _stage_current_footprints(
         "path": output_path,
         "sha256": _sha256_file(output_path),
         "feature_count": len(feature_collection["features"]),
-        "source_url": url,
-        "source_dataset": _CURRENT_FOOTPRINTS_DATASET,
-        "query_bbox_wgs84": [float(value) for value in query_bbox],
         "cache_object": cache_object,
         "cache_hit": False,
+        **provenance,
     }
 
 

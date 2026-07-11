@@ -10,11 +10,18 @@ from pyproj import CRS, Transformer
 
 from services.imagery_inputs import (
     _CURRENT_FOOTPRINTS_DEFAULT_URL,
+    _CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT,
+    _current_footprints_query_pad_m,
     _current_footprints_url,
     _fetch_current_footprints,
     _stage_current_footprints,
     _stage_current_footprints_optional,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_query_pad_override(monkeypatch) -> None:
+    monkeypatch.delenv("CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M", raising=False)
 
 
 class FakeResponse:
@@ -113,12 +120,38 @@ def _ortho_bbox() -> tuple[float, float, float, float]:
     return west, south, east, north
 
 
+def _where_bbox(call: dict[str, Any]) -> tuple[float, float, float, float]:
+    where = call["params"]["$where"]
+    assert where.startswith("within_box(the_geom,") and where.endswith(")")
+    north, west, south, east = [
+        float(value) for value in where.removeprefix("within_box(the_geom,")[:-1].split(",")
+    ]
+    return west, south, east, north
+
+
 def test_current_footprints_url_has_official_default_and_env_override(monkeypatch) -> None:
     monkeypatch.delenv("CITYLENS_CURRENT_FOOTPRINTS_URL", raising=False)
     assert _current_footprints_url() == _CURRENT_FOOTPRINTS_DEFAULT_URL
 
     monkeypatch.setenv("CITYLENS_CURRENT_FOOTPRINTS_URL", "https://mirror.example/current.geojson")
     assert _current_footprints_url() == "https://mirror.example/current.geojson"
+
+
+def test_current_footprints_query_pad_has_default_and_zero_override(monkeypatch) -> None:
+    assert _current_footprints_query_pad_m() == _CURRENT_FOOTPRINTS_QUERY_PAD_M_DEFAULT
+
+    monkeypatch.setenv("CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M", "0")
+    assert _current_footprints_query_pad_m() == 0.0
+
+
+@pytest.mark.parametrize("value", ["-0.01", "nan", "inf", "not-a-number"])
+def test_current_footprints_query_pad_rejects_invalid_values(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M", value)
+    with pytest.raises(
+        RuntimeError,
+        match="CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M must be a finite nonnegative number",
+    ):
+        _current_footprints_query_pad_m()
 
 
 def test_fetch_current_footprints_queries_filters_reprojects_and_uses_token(
@@ -155,15 +188,7 @@ def test_fetch_current_footprints_queries_filters_reprojects_and_uses_token(
     assert call["params"]["$select"] == (
         "the_geom,construction_year,last_status_type,geom_source,base_bbl,mappluto_bbl"
     )
-    where = call["params"]["$where"]
-    assert where.startswith("within_box(the_geom,") and where.endswith(")")
-    north, west, south, east = [
-        float(value) for value in where.removeprefix("within_box(the_geom,")[:-1].split(",")
-    ]
-    assert west == pytest.approx(query_bbox[0])
-    assert south == pytest.approx(query_bbox[1])
-    assert east == pytest.approx(query_bbox[2])
-    assert north == pytest.approx(query_bbox[3])
+    assert _where_bbox(call) == pytest.approx(query_bbox)
 
     assert result["type"] == "FeatureCollection"
     assert result["crs"]["properties"]["name"] == "EPSG:3857"
@@ -211,6 +236,49 @@ def test_fetch_current_footprints_rejects_http_and_payload_errors(
         )
 
 
+def test_stage_pads_query_without_clipping_boundary_crossing_feature(
+    tmp_path: Path,
+) -> None:
+    to_mercator = Transformer.from_crs(4326, 3857, always_xy=True)
+    center_x, center_y = to_mercator.transform(-73.98, 40.75)
+    ortho_bbox = (center_x - 5, center_y - 5, center_x + 5, center_y + 5)
+    session = FakeSession(
+        FakeResponse(
+            {
+                "type": "FeatureCollection",
+                "features": [_polygon_feature(lon=-73.98, lat=40.75)],
+            }
+        )
+    )
+
+    result = _stage_current_footprints(
+        bbox=ortho_bbox,
+        target_crs=CRS.from_epsg(3857),
+        imagery_year=2024,
+        work_dir=tmp_path,
+        gcs_client=MemoryGcsClient(),
+        bucket="test-bucket",
+        cache_prefix="inputs",
+        session=session,
+    )
+
+    expected_query_bbox = (
+        ortho_bbox[0] - 250,
+        ortho_bbox[1] - 250,
+        ortho_bbox[2] + 250,
+        ortho_bbox[3] + 250,
+    )
+    assert result["ortho_bbox"] == pytest.approx(ortho_bbox)
+    assert result["query_bbox"] == pytest.approx(expected_query_bbox)
+    assert result["query_pad_m"] == 250.0
+    assert _where_bbox(session.calls[0]) == pytest.approx(result["query_bbox_wgs84"])
+
+    staged = json.loads((tmp_path / "current_footprints.geojson").read_text())
+    assert staged["citylens_provenance"]["query_bbox"] == pytest.approx(expected_query_bbox)
+    xs = [point[0] for point in staged["features"][0]["geometry"]["coordinates"][0]]
+    assert max(xs) > ortho_bbox[2]
+
+
 def test_stage_current_footprints_reuses_gcs_input_cache(tmp_path: Path) -> None:
     gcs = MemoryGcsClient()
     first_session = FakeSession(
@@ -238,6 +306,8 @@ def test_stage_current_footprints_reuses_gcs_input_cache(tmp_path: Path) -> None
     assert first["cache_hit"] is False
     assert first["cache_object"].startswith("inputs/current-footprints/")
     assert first["cache_object"] in gcs.objects
+    assert first["query_pad_m"] == 250.0
+    assert first["query_bbox"][0] == pytest.approx(_ortho_bbox()[0] - 250)
     assert len(first_session.calls) == 1
 
     class NoNetworkSession:
@@ -259,9 +329,55 @@ def test_stage_current_footprints_reuses_gcs_input_cache(tmp_path: Path) -> None
 
     assert second["cache_hit"] is True
     assert second["feature_count"] == 1
+    assert second["query_bbox"] == first["query_bbox"]
+    assert second["query_bbox_wgs84"] == first["query_bbox_wgs84"]
     assert json.loads((second_dir / "current_footprints.geojson").read_text())["type"] == (
         "FeatureCollection"
     )
+
+
+def test_current_footprints_cache_identity_changes_with_query_padding(
+    monkeypatch, tmp_path: Path
+) -> None:
+    gcs = MemoryGcsClient()
+    session = FakeSession(
+        FakeResponse(
+            {
+                "type": "FeatureCollection",
+                "features": [_polygon_feature()],
+            }
+        )
+    )
+
+    monkeypatch.setenv("CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M", "0")
+    no_pad = _stage_current_footprints(
+        bbox=_ortho_bbox(),
+        target_crs=CRS.from_epsg(3857),
+        imagery_year=2024,
+        work_dir=tmp_path / "no-pad",
+        gcs_client=gcs,
+        bucket="test-bucket",
+        cache_prefix="inputs",
+        session=session,
+    )
+
+    monkeypatch.setenv("CITYLENS_CURRENT_FOOTPRINTS_QUERY_PAD_M", "250")
+    padded = _stage_current_footprints(
+        bbox=_ortho_bbox(),
+        target_crs=CRS.from_epsg(3857),
+        imagery_year=2024,
+        work_dir=tmp_path / "padded",
+        gcs_client=gcs,
+        bucket="test-bucket",
+        cache_prefix="inputs",
+        session=session,
+    )
+
+    assert no_pad["query_bbox"] == pytest.approx(_ortho_bbox())
+    assert padded["query_pad_m"] == 250.0
+    assert no_pad["cache_object"] != padded["cache_object"]
+    assert len(gcs.objects) == 2
+    assert len(session.calls) == 2
 
 
 def test_stage_current_footprints_survives_gcs_cache_failure(tmp_path: Path) -> None:

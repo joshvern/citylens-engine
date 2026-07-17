@@ -18,6 +18,7 @@ from .routes.demo import router as demo_router
 from .routes.health import router as health_router
 from .routes.me import router as me_router
 from .routes.parcel_intel import router as parcel_intel_router
+from .routes.parcel_workflow import router as parcel_workflow_router
 from .routes.run_options import router as run_options_router
 from .routes.runs import router as runs_router
 from .services.logging import configure_json_logging
@@ -117,7 +118,7 @@ async def cors_middleware(request: Request, call_next):
         response = Response(status_code=204)
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "false"
-        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = request.headers.get(
             "access-control-request-headers",
             "*",
@@ -129,7 +130,9 @@ async def cors_middleware(request: Request, call_next):
     if origin and origin_allowed:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "false"
-        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+        )
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Vary"] = "Origin"
     return response
@@ -223,6 +226,7 @@ async def validation_exception_handler(
 app.include_router(health_router, prefix="/v1")
 app.include_router(demo_router, prefix="/v1")
 app.include_router(parcel_intel_router, prefix="/v1")
+app.include_router(parcel_workflow_router, prefix="/v1")
 app.include_router(run_options_router, prefix="/v1")
 app.include_router(me_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")

@@ -162,6 +162,7 @@ class ParcelIntelRegistry:
             boroughs=boroughs,
             generated_at=generated_at,
             model_metadata=manifest.get("model_metadata") or {},
+            data_sources=manifest.get("data_sources") or {},
             age_days=age_days,
             stale=stale,
         )
@@ -269,8 +270,14 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "change_demolished_count": 0,
     "change_modified_count": 0,
     "change_latest_imagery_year": None,
+    "observed_imagery_year": None,
     "recent_change": False,
     "owner_name": None,
+    "assemblage_id": None,
+    "assemblage_lot_count": None,
+    "assemblage_combined_lot_area_sqft": None,
+    "assemblage_combined_buildable_sqft": None,
+    "assemblage_member_bbls": [],
 }
 
 
@@ -324,4 +331,5 @@ def parcel_intel_sweep(
         rows=rows,
         generated_at=generated_at,
         model_metadata=(manifest or {}).get("model_metadata") or {},
+        data_sources=(manifest or {}).get("data_sources") or {},
     )

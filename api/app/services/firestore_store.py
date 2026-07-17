@@ -361,6 +361,114 @@ class FirestoreStore:
 
         return retry_transient(_op)
 
+    # ---------- Parcel acquisition workflow ----------
+
+    def _parcel_workflow_col(self, app_user_id: str):
+        return (
+            self.client.collection(self.users_collection)
+            .document(app_user_id)
+            .collection("parcel_workflow")
+        )
+
+    def list_parcel_workflow(self, *, app_user_id: str) -> list[dict[str, Any]]:
+        def _op() -> list[dict[str, Any]]:
+            docs = self._parcel_workflow_col(app_user_id).limit(500).stream()
+            return [snap.to_dict() or {} for snap in docs]
+
+        return retry_transient(_op)
+
+    def upsert_parcel_workflow(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        def _op() -> dict[str, Any]:
+            ref = self._parcel_workflow_col(app_user_id).document(bbl)
+            snap = ref.get()
+            existing = snap.to_dict() if snap.exists else {}
+            now = utcnow()
+            doc = {
+                **(existing or {}),
+                **payload,
+                "bbl": bbl,
+                "user_id": app_user_id,
+                "saved_at": (existing or {}).get("saved_at") or now,
+                "updated_at": now,
+            }
+            ref.set(doc)
+            return doc
+
+        return retry_transient(_op)
+
+    def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
+        def _op() -> bool:
+            ref = self._parcel_workflow_col(app_user_id).document(bbl)
+            snap = ref.get()
+            if not snap.exists:
+                return False
+            ref.delete()
+            return True
+
+        return retry_transient(_op)
+
+    def _parcel_saved_searches_col(self, app_user_id: str):
+        return (
+            self.client.collection(self.users_collection)
+            .document(app_user_id)
+            .collection("parcel_saved_searches")
+        )
+
+    def list_parcel_saved_searches(self, *, app_user_id: str) -> list[dict[str, Any]]:
+        def _op() -> list[dict[str, Any]]:
+            return [
+                snap.to_dict() or {}
+                for snap in self._parcel_saved_searches_col(app_user_id)
+                .limit(100)
+                .stream()
+            ]
+
+        return retry_transient(_op)
+
+    def upsert_parcel_saved_search(
+        self,
+        *,
+        app_user_id: str,
+        search_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        def _op() -> dict[str, Any]:
+            ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
+            snap = ref.get()
+            existing = snap.to_dict() if snap.exists else {}
+            now = utcnow()
+            doc = {
+                **(existing or {}),
+                **payload,
+                "search_id": search_id,
+                "user_id": app_user_id,
+                "created_at": (existing or {}).get("created_at") or now,
+                "updated_at": now,
+            }
+            ref.set(doc)
+            return doc
+
+        return retry_transient(_op)
+
+    def delete_parcel_saved_search(
+        self, *, app_user_id: str, search_id: str
+    ) -> bool:
+        def _op() -> bool:
+            ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
+            snap = ref.get()
+            if not snap.exists:
+                return False
+            ref.delete()
+            return True
+
+        return retry_transient(_op)
+
     # ---------- Quotas helpers ----------
 
     def count_user_concurrent_runs(self, *, user_id: str) -> int:

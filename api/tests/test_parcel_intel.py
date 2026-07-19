@@ -112,6 +112,9 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
             {"slug": b, "display_name": b.title(), "count": 2, "top_score": 0.9} for b in boroughs
         ],
         "model_metadata": {"feature_year": 2018},
+        "data_sources": {
+            "property_facts": {"source": "NYC PLUTO", "as_of": "2026-07-01"}
+        },
     }
 
 
@@ -149,6 +152,7 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     body = r.json()
     assert {b["slug"] for b in body["boroughs"]} == {"brooklyn", "manhattan"}
     assert body["model_metadata"] == {"feature_year": 2018}
+    assert body["data_sources"]["property_facts"]["source"] == "NYC PLUTO"
     # Cache header is the gating metric for whether Vercel/CDN edge-caches.
     assert "cache-control" in r.headers
     assert "s-maxage=600" in r.headers["cache-control"]
@@ -177,6 +181,9 @@ def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:
         "last_sale_price",
         "block_id",
         "block_rank",
+        "priority_tier",
+        "opportunity_category",
+        "property_facts_current",
     ):
         assert key in sample
     # Cache header present.
@@ -344,8 +351,14 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
             change_demolished_count=1,
             change_modified_count=2,
             change_latest_imagery_year=2024,
+            observed_imagery_year=2024,
             recent_change=True,
             owner_name="ACME REALTY LLC",
+            assemblage_id="assembly-1",
+            assemblage_lot_count=2,
+            assemblage_combined_lot_area_sqft=10000,
+            assemblage_combined_buildable_sqft=40000,
+            assemblage_member_bbls=["3020000001", "3020000002"],
         )
     ]
     fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
@@ -366,8 +379,14 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
     assert served["change_demolished_count"] == 0
     assert served["change_modified_count"] == 0
     assert served["change_latest_imagery_year"] is None
+    assert served["observed_imagery_year"] is None
     assert served["recent_change"] is False
     assert served["owner_name"] is None
+    assert served["assemblage_id"] is None
+    assert served["assemblage_lot_count"] is None
+    assert served["assemblage_combined_lot_area_sqft"] is None
+    assert served["assemblage_combined_buildable_sqft"] is None
+    assert served["assemblage_member_bbls"] == []
 
 
 def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:

@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.models.schemas import ParcelIntelRow
 from app.routes import parcel_intel as parcel_intel_routes
 from app.services.auth import maybe_auth
 from app.services.auth_context import AuthContext
@@ -80,6 +81,14 @@ def _row(bbl: str, **overrides) -> dict:
         "score_calibrated": 0.9,
         "score_calibrated_p10": None,
         "score_calibrated_p90": None,
+        "priority_rank": 1,
+        "priority_tier": "highest",
+        "model_rank": 42,
+        "acquisition_rank": 1,
+        "citywide_rank": 3,
+        "acquisition_eligible": True,
+        "acquisition_status": "eligible",
+        "acquisition_exclusion_reasons": [],
         "lot_area_sqft": 5000.0,
         "allowed_far": 4.0,
         "max_floor_area_sqft": 20000.0,
@@ -97,6 +106,7 @@ def _row(bbl: str, **overrides) -> dict:
         "is_historic_district": False,
         "block_id": bbl[:6],
         "block_rank": 1,
+        "owner_type": None,
         # Default to empty so existing tests keep their pre-SHAP behavior.
         "top_features": [],
     }
@@ -104,9 +114,16 @@ def _row(bbl: str, **overrides) -> dict:
     return base
 
 
+def test_v4_row_keeps_acquisition_fields_unknown_for_rollout_fallback():
+    row = ParcelIntelRow.model_validate({"bbl": "1000010001"})
+
+    assert row.acquisition_eligible is None
+    assert row.acquisition_status is None
+
+
 def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:00") -> dict:
     return {
-        "schema": "citylens-parcel-intel/published_sweep@v1",
+        "schema": "citylens-parcel-intel/published_sweep@v5",
         "generated_at": generated_at,
         "boroughs": [
             {"slug": b, "display_name": b.title(), "count": 2, "top_score": 0.9} for b in boroughs
@@ -115,6 +132,7 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
         "data_sources": {
             "property_facts": {"source": "NYC PLUTO", "as_of": "2026-07-01"}
         },
+        "quality_gate": {"passed": True, "failures": []},
     }
 
 
@@ -153,6 +171,7 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     assert {b["slug"] for b in body["boroughs"]} == {"brooklyn", "manhattan"}
     assert body["model_metadata"] == {"feature_year": 2018}
     assert body["data_sources"]["property_facts"]["source"] == "NYC PLUTO"
+    assert body["quality_gate"]["passed"] is True
     # Cache header is the gating metric for whether Vercel/CDN edge-caches.
     assert "cache-control" in r.headers
     assert "s-maxage=600" in r.headers["cache-control"]
@@ -182,6 +201,11 @@ def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:
         "block_id",
         "block_rank",
         "priority_tier",
+        "model_rank",
+        "acquisition_rank",
+        "citywide_rank",
+        "acquisition_eligible",
+        "acquisition_status",
         "opportunity_category",
         "property_facts_current",
     ):

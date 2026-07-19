@@ -94,6 +94,21 @@ class ParcelIntelRow(BaseModel):
     score_calibrated_p90: Optional[float] = None
     priority_rank: Optional[int] = None
     priority_tier: Literal["highest", "high", "medium", "watch"] = "watch"
+    model_rank: Optional[int] = None
+    acquisition_rank: Optional[int] = None
+    citywide_rank: Optional[int] = None
+    # Optional during the v4 -> v5 feed rollout. ``None`` lets clients use
+    # the legacy opportunity-category fallback until every borough object has
+    # been replaced by the v5 publisher.
+    acquisition_eligible: Optional[bool] = None
+    acquisition_status: Optional[Literal[
+        "eligible",
+        "active_project",
+        "completed_project",
+        "constrained",
+        "incomplete_data",
+    ]] = None
+    acquisition_exclusion_reasons: list[str] = Field(default_factory=list)
     lot_area_sqft: Optional[float] = None
     allowed_far: Optional[float] = None
     max_floor_area_sqft: Optional[float] = None
@@ -119,13 +134,19 @@ class ParcelIntelRow(BaseModel):
     block_rank: Optional[int] = None
     # Validation status against the latest PLUTO snapshot + current DOB:
     # "still_vacant" — never built; safe redev candidate
-    # "active"       — recent non-closed NB activity OR year_built bumped
+    # "active"       — recent non-terminated project activity OR year_built bumped
     # "already_built" — completed redev; the publisher filters these out
     # before reaching here, so this should rarely (never) be the value
     # in a published row.
     redev_status: Literal["still_vacant", "active", "already_built"] = "still_vacant"
     latest_nb_filing_year: Optional[int] = None
     latest_nb_status: Optional[str] = None
+    latest_project_filing_year: Optional[int] = None
+    latest_project_status: Optional[str] = None
+    latest_project_type: Literal[
+        "new_building", "alt_co_new_building", "demolition"
+    ] | None = None
+    latest_project_job_number: Optional[str] = None
     opportunity_category: Literal[
         "vacant_site",
         "ground_up_candidate",
@@ -161,6 +182,8 @@ class ParcelIntelRow(BaseModel):
     observed_imagery_year: Optional[int] = None
     recent_change: bool = False
     owner_name: Optional[str] = None
+    owner_name_source: Literal["acris", "pluto"] | None = None
+    owner_type: Optional[str] = None
 
 
 class ParcelIntelBorough(BaseModel):
@@ -175,6 +198,7 @@ class ParcelIntelIndex(BaseModel):
     generated_at: Optional[datetime] = None
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     data_sources: dict[str, Any] = Field(default_factory=dict)
+    quality_gate: dict[str, Any] = Field(default_factory=dict)
     # Freshness telemetry, derived from `generated_at` at request time.
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None
@@ -187,6 +211,7 @@ class ParcelIntelSweepResponse(BaseModel):
     generated_at: Optional[datetime] = None
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     data_sources: dict[str, Any] = Field(default_factory=dict)
+    quality_gate: dict[str, Any] = Field(default_factory=dict)
 
 
 ParcelWorkflowStage = Literal[

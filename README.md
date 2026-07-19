@@ -65,6 +65,11 @@ Current pinned release tag:
 - Free users get 5 real runs per UTC calendar month (override with `CITYLENS_FREE_MONTHLY_RUNS`); admins are unlimited.
 - Run options are server-locked: `imagery_year=2024`, `baseline_year=2017`, `segmentation_backend=sam2`, `aoi_radius_m=250`, outputs ⊂ `{previews, change, mesh}`. Discover via `GET /v1/run-options`.
 - Demo endpoints (`/v1/demo/*`), `/v1/health`, `/v1/health/ready`, and `/v1/parcel-intel/index` remain public. `/v1/parcel-intel/sweep` is tiered: public preview (≤25 rows, premium fields stripped) + authenticated full feed.
+- Parcel Intelligence accepts the `published_sweep@v5` contract: separate
+  historical-model, borough-acquisition, and citywide-acquisition ranks;
+  explicit eligibility/exclusion evidence; owner provenance; current-project
+  context; and a publisher quality-gate summary exposed by the index/sweep
+  endpoints.
 - Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
 - `CITYLENS_API_KEYS` is deprecated and ignored by auth. The optional admin `X-API-Key` path (internal scripts only) is hash-only: `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256 of each key).
 

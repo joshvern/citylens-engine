@@ -192,10 +192,13 @@ gcloud run deploy <API_SERVICE_NAME> \
   --region <REGION> \
   --project <PROJECT_ID> \
   --service-account <API_SA>@<PROJECT_ID>.iam.gserviceaccount.com \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=<PROJECT_ID>,CITYLENS_REGION=<REGION>,CITYLENS_BUCKET=<BUCKET_NAME>,CITYLENS_JOB_NAME=<JOB_NAME>,CITYLENS_API_KEYS=<COMMA_SEPARATED_KEYS>
+  --update-env-vars GOOGLE_CLOUD_PROJECT=<PROJECT_ID>,CITYLENS_REGION=<REGION>,CITYLENS_BUCKET=<BUCKET_NAME>,CITYLENS_JOB_NAME=<JOB_NAME>
 ```
 
-Note: `--set-env-vars` replaces the entire env-var set for the service/job. If you later want to tweak only one or two values (e.g., enabling `CITYLENS_SIGN_URLS=1`), prefer `gcloud run services update ... --update-env-vars KEY=VALUE` (or re-specify all required env vars).
+Use `--update-env-vars` for image releases so the service retains separately
+managed OIDC, quota, CORS, signing, and optional hash-only admin-key settings.
+The retired plaintext `CITYLENS_API_KEYS` and `CITYLENS_ADMIN_API_KEYS`
+variables are ignored and should not be configured.
 
 ### 8) Build & create Cloud Run Job for worker
 

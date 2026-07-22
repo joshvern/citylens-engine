@@ -121,6 +121,29 @@ def test_v4_row_keeps_acquisition_fields_unknown_for_rollout_fallback():
     assert row.acquisition_status is None
 
 
+def test_row_preserves_zap_entitlement_provenance():
+    row = ParcelIntelRow.model_validate(
+        _row(
+            "3058920038",
+            acquisition_eligible=False,
+            acquisition_status="active_project",
+            acquisition_exclusion_reasons=["approved_land_use_project"],
+            latest_project_type="land_use_entitlement",
+            latest_project_job_number="2023K0205",
+            latest_project_status="Completed — approved",
+            latest_project_url=(
+                "https://zap.planning.nyc.gov/projects/2023K0205"
+            ),
+            land_use_activity_as_of="2026-07-22",
+        )
+    )
+
+    assert row.latest_project_type == "land_use_entitlement"
+    assert row.latest_project_job_number == "2023K0205"
+    assert row.latest_project_url.endswith("/projects/2023K0205")
+    assert row.land_use_activity_as_of == "2026-07-22"
+
+
 def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:00") -> dict:
     return {
         "schema": "citylens-parcel-intel/published_sweep@v5",

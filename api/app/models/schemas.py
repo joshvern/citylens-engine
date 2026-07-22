@@ -144,9 +144,13 @@ class ParcelIntelRow(BaseModel):
     latest_project_filing_year: Optional[int] = None
     latest_project_status: Optional[str] = None
     latest_project_type: Literal[
-        "new_building", "alt_co_new_building", "demolition"
+        "new_building",
+        "alt_co_new_building",
+        "demolition",
+        "land_use_entitlement",
     ] | None = None
     latest_project_job_number: Optional[str] = None
+    latest_project_url: Optional[str] = None
     opportunity_category: Literal[
         "vacant_site",
         "ground_up_candidate",
@@ -158,6 +162,7 @@ class ParcelIntelRow(BaseModel):
     property_facts_as_of: Optional[str] = None
     ownership_as_of: Optional[str] = None
     project_activity_as_of: Optional[str] = None
+    land_use_activity_as_of: Optional[str] = None
     data_warnings: list[str] = Field(default_factory=list)
     assemblage_id: Optional[str] = None
     assemblage_lot_count: Optional[int] = None

@@ -147,6 +147,12 @@ class ParcelIntelRow(BaseModel):
     hpd_latest_inspection_date: Optional[str] = None
     critical_violation_count: Optional[int] = 0
     violation_data_as_of: Optional[str] = None
+    # Current PLUTO parcel intersections with FEMA's 1% annual-chance
+    # floodplains. These authenticated diligence fields are post-score.
+    firm07_floodplain: Optional[bool] = None
+    pfirm15_floodplain: Optional[bool] = None
+    floodplain_1pct: Optional[bool] = None
+    floodplain_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -247,6 +253,7 @@ class ParcelIntelMapRow(BaseModel):
     years_held: Optional[int] = None
     tax_lien_sale_year: Optional[int] = None
     critical_violation_count: Optional[int] = 0
+    floodplain_1pct: Optional[bool] = None
     owner_name: Optional[str] = None
     recent_change: bool = False
     opportunity_category: Literal[

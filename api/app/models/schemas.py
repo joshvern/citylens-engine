@@ -134,6 +134,19 @@ class ParcelIntelRow(BaseModel):
     tax_lien_sale_year: Optional[int] = None
     tax_lien_water_debt_only: Optional[bool] = None
     tax_lien_data_as_of: Optional[str] = None
+    # Current official NYC violation snapshots. These authenticated diligence
+    # fields are post-score and never change rank or acquisition eligibility.
+    dob_safety_active_count: int = 0
+    dob_safety_latest_issue_date: Optional[str] = None
+    ecb_active_count: int = 0
+    ecb_class_1_count: int = 0
+    ecb_balance_due: float = 0.0
+    ecb_latest_issue_date: Optional[str] = None
+    hpd_open_count: int = 0
+    hpd_class_c_count: int = 0
+    hpd_latest_inspection_date: Optional[str] = None
+    critical_violation_count: Optional[int] = 0
+    violation_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -233,6 +246,7 @@ class ParcelIntelMapRow(BaseModel):
     last_sale_year: Optional[int] = None
     years_held: Optional[int] = None
     tax_lien_sale_year: Optional[int] = None
+    critical_violation_count: Optional[int] = 0
     owner_name: Optional[str] = None
     recent_change: bool = False
     opportunity_category: Literal[

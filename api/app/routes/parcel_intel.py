@@ -357,6 +357,17 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "tax_lien_sale_year": None,
     "tax_lien_water_debt_only": None,
     "tax_lien_data_as_of": None,
+    "dob_safety_active_count": 0,
+    "dob_safety_latest_issue_date": None,
+    "ecb_active_count": 0,
+    "ecb_class_1_count": 0,
+    "ecb_balance_due": 0.0,
+    "ecb_latest_issue_date": None,
+    "hpd_open_count": 0,
+    "hpd_class_c_count": 0,
+    "hpd_latest_inspection_date": None,
+    "critical_violation_count": None,
+    "violation_data_as_of": None,
     "assemblage_id": None,
     "assemblage_lot_count": None,
     "assemblage_combined_lot_area_sqft": None,
@@ -371,7 +382,11 @@ def _strip_premium_fields(row: ParcelIntelRow) -> ParcelIntelRow:
 
 def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
     return row.model_copy(
-        update={"owner_name": None, "tax_lien_sale_year": None}
+        update={
+            "owner_name": None,
+            "tax_lien_sale_year": None,
+            "critical_violation_count": None,
+        }
     )
 
 

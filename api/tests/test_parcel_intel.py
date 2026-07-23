@@ -106,6 +106,17 @@ def _row(bbl: str, **overrides) -> dict:
         "tax_lien_sale_year": 2025,
         "tax_lien_water_debt_only": False,
         "tax_lien_data_as_of": "2026-07-23",
+        "dob_safety_active_count": 4,
+        "dob_safety_latest_issue_date": "2026-07-20",
+        "ecb_active_count": 3,
+        "ecb_class_1_count": 2,
+        "ecb_balance_due": -3125.0,
+        "ecb_latest_issue_date": "2026-07-18",
+        "hpd_open_count": 7,
+        "hpd_class_c_count": 1,
+        "hpd_latest_inspection_date": "2026-07-19",
+        "critical_violation_count": 3,
+        "violation_data_as_of": "2026-07-23",
         "is_landmark": False,
         "is_historic_district": False,
         "block_id": bbl[:6],
@@ -286,6 +297,9 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
     }
     assert all(row["owner_name"] is None for row in body["rows"])
     assert all(row["tax_lien_sale_year"] is None for row in body["rows"])
+    assert all(
+        row["critical_violation_count"] is None for row in body["rows"]
+    )
     assert "s-maxage=600" in response.headers["cache-control"]
     assert response.headers["content-encoding"] == "gzip"
     # Compact rows do not serialize expensive detail-only fields.
@@ -316,6 +330,7 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert len(response.json()["rows"]) == 30
     assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
     assert response.json()["rows"][0]["tax_lien_sale_year"] == 2025
+    assert response.json()["rows"][0]["critical_violation_count"] == 3
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -351,6 +366,11 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert public.json()["owner_name"] is None
     assert public.json()["tax_lien_sale_year"] is None
     assert public.json()["tax_lien_sale_date"] is None
+    assert public.json()["dob_safety_active_count"] == 0
+    assert public.json()["ecb_active_count"] == 0
+    assert public.json()["hpd_open_count"] == 0
+    assert public.json()["critical_violation_count"] is None
+    assert public.json()["violation_data_as_of"] is None
     assert public.json()["top_features"] == []
     assert public.json()["parcel_geometry"] == geometry
     assert "s-maxage=600" in public.headers["cache-control"]
@@ -364,6 +384,12 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert private.json()["owner_name"] == "ACME REALTY LLC"
     assert private.json()["tax_lien_sale_year"] == 2025
     assert private.json()["tax_lien_sale_date"] == "2025-06-01"
+    assert private.json()["dob_safety_active_count"] == 4
+    assert private.json()["ecb_class_1_count"] == 2
+    assert private.json()["ecb_balance_due"] == -3125.0
+    assert private.json()["hpd_class_c_count"] == 1
+    assert private.json()["critical_violation_count"] == 3
+    assert private.json()["violation_data_as_of"] == "2026-07-23"
     assert len(private.json()["top_features"]) == 1
     assert private.headers["cache-control"] == "private, no-store"
 

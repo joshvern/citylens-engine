@@ -64,7 +64,13 @@ Current pinned release tag:
 - Admin promotion is via env: `CITYLENS_ADMIN_AUTH_SUBS` (sub allowlist) or `CITYLENS_ADMIN_EMAILS` (verified-email allowlist).
 - Free users get 5 real runs per UTC calendar month (override with `CITYLENS_FREE_MONTHLY_RUNS`); admins are unlimited.
 - Run options are server-locked: `imagery_year=2024`, `baseline_year=2017`, `segmentation_backend=sam2`, `aoi_radius_m=250`, outputs ⊂ `{previews, change, mesh}`. Discover via `GET /v1/run-options`.
-- Demo endpoints (`/v1/demo/*`), `/v1/health`, `/v1/health/ready`, and `/v1/parcel-intel/index` remain public. `/v1/parcel-intel/sweep` is tiered: public preview (≤25 rows, premium fields stripped) + authenticated full feed.
+- Demo endpoints (`/v1/demo/*`), `/v1/health`, `/v1/health/ready`, and
+  `/v1/parcel-intel/index` remain public. Parcel Intelligence progressively
+  loads `/v1/parcel-intel/map`, fetches full selected-parcel detail from
+  `/v1/parcel-intel/parcel/{bbl}`, and reserves `/v1/parcel-intel/sweep` for
+  CSV/export and compatibility. Public inventory is capped at 25 rows per
+  borough with premium fields stripped; authenticated users can load 1,000
+  rows per borough. Large JSON responses are gzip-compressed.
 - Parcel Intelligence accepts the `published_sweep@v5` contract: separate
   historical-model, borough-acquisition, and citywide-acquisition ranks;
   explicit eligibility/exclusion evidence; owner provenance; current-project

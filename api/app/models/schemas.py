@@ -191,6 +191,53 @@ class ParcelIntelRow(BaseModel):
     owner_type: Optional[str] = None
 
 
+class ParcelIntelMapRow(BaseModel):
+    """Compact citywide explorer row.
+
+    Polygon geometry, SHAP explanations, and full diligence fields stay in the
+    per-parcel response and are fetched only when the user opens a site.
+    """
+
+    bbl: str
+    address: Optional[str] = None
+    borough: str
+    score_calibrated: Optional[float] = None
+    priority_rank: Optional[int] = None
+    priority_tier: Literal["highest", "high", "medium", "watch"] = "watch"
+    model_rank: Optional[int] = None
+    acquisition_rank: Optional[int] = None
+    citywide_rank: Optional[int] = None
+    acquisition_eligible: Optional[bool] = None
+    acquisition_status: Optional[
+        Literal[
+            "eligible",
+            "active_project",
+            "completed_project",
+            "constrained",
+            "incomplete_data",
+        ]
+    ] = None
+    lot_area_sqft: Optional[float] = None
+    unused_floor_area_sqft: Optional[float] = None
+    far_utilization_pct: Optional[float] = None
+    zoning_district_1: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    last_sale_price: Optional[float] = None
+    last_sale_year: Optional[int] = None
+    years_held: Optional[int] = None
+    owner_name: Optional[str] = None
+    recent_change: bool = False
+    opportunity_category: Literal[
+        "vacant_site",
+        "ground_up_candidate",
+        "conversion_or_overbuilt",
+        "active_project",
+        "completed_project",
+    ] = "ground_up_candidate"
+    assemblage_lot_count: Optional[int] = None
+
+
 class ParcelIntelBorough(BaseModel):
     slug: str
     display_name: str
@@ -208,6 +255,11 @@ class ParcelIntelIndex(BaseModel):
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None
     stale: bool = False
+
+
+class ParcelIntelMapResponse(BaseModel):
+    rows: list[ParcelIntelMapRow] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
 
 
 class ParcelIntelSweepResponse(BaseModel):

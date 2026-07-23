@@ -41,6 +41,8 @@ from pydantic import ValidationError
 from ..models.schemas import (
     ParcelIntelBorough,
     ParcelIntelIndex,
+    ParcelIntelMapResponse,
+    ParcelIntelMapRow,
     ParcelIntelRow,
     ParcelIntelSweepResponse,
 )
@@ -61,6 +63,8 @@ _SWEEP_CACHE = "public, s-maxage=600, stale-while-revalidate=300"
 # Authenticated sweep responses carry user-tier data — keep them out of
 # shared caches entirely.
 _SWEEP_CACHE_AUTHED = "private, no-store"
+_MAP_CACHE = "public, s-maxage=600, stale-while-revalidate=300"
+_MAP_CACHE_AUTHED = "private, no-store"
 
 # Anonymous preview cap: unauthenticated callers get at most this many
 # rows per borough (silently clamped, not an error).
@@ -75,6 +79,13 @@ _STALE_THRESHOLD_DAYS = 45.0
 _BOROUGH_SLUGS: frozenset[str] = frozenset(
     ("manhattan", "brooklyn", "queens", "bronx", "staten_island")
 )
+_BBL_BOROUGH = {
+    "1": "manhattan",
+    "2": "bronx",
+    "3": "brooklyn",
+    "4": "queens",
+    "5": "staten_island",
+}
 
 _GCS_PREFIX = "parcel-intel/v1"
 
@@ -97,6 +108,7 @@ class ParcelIntelRegistry:
         self._manifest: dict[str, Any] | None = None
         self._manifest_generated_at: str | None = None
         self._rows_by_borough: dict[str, list[dict]] = {}
+        self._map_rows: list[ParcelIntelMapRow] | None = None
 
     def _gcs_object_name(self, leaf: str) -> str:
         return f"{_GCS_PREFIX}/{leaf}"
@@ -131,6 +143,7 @@ class ParcelIntelRegistry:
             if new_at != self._manifest_generated_at:
                 # Drop borough caches; they'll lazy-reload on next read.
                 self._rows_by_borough = {}
+                self._map_rows = None
                 self._manifest_generated_at = new_at
             self._manifest = manifest
         return manifest
@@ -232,6 +245,72 @@ class ParcelIntelRegistry:
             )
         return rows, manifest
 
+    def citywide_map(
+        self, gcs: GcsArtifacts
+    ) -> tuple[list[ParcelIntelMapRow], dict[str, Any] | None]:
+        """Load the compact citywide explorer artifact."""
+        manifest = self._refresh_manifest(gcs)
+        with self._lock:
+            cached = self._map_rows
+        if cached is None:
+            try:
+                payload, _ = gcs.download_bytes(
+                    object_name=self._gcs_object_name("map.jsonl")
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Compact parcel map has not been published yet; "
+                        "re-run the parcel publisher."
+                    ),
+                ) from exc
+            validated: list[ParcelIntelMapRow] = []
+            bad_lines = 0
+            for line in payload.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    bad_lines += 1
+                    continue
+                if not isinstance(parsed, dict):
+                    bad_lines += 1
+                    continue
+                try:
+                    validated.append(ParcelIntelMapRow(**parsed))
+                except ValidationError as exc:
+                    bad_lines += 1
+                    log.warning(
+                        "parcel-intel map: skipping invalid row (bbl=%s): %s",
+                        parsed.get("bbl"),
+                        exc,
+                    )
+            if bad_lines:
+                log.warning(
+                    "parcel-intel map.jsonl: skipped %d invalid line(s)",
+                    bad_lines,
+                )
+            with self._lock:
+                self._map_rows = validated
+            cached = validated
+
+        return cached, manifest
+
+    def parcel(
+        self, gcs: GcsArtifacts, bbl: str
+    ) -> tuple[ParcelIntelRow, dict[str, Any] | None]:
+        """Resolve a full parcel record from its BBL."""
+        slug = _BBL_BOROUGH.get(bbl[:1])
+        if len(bbl) != 10 or not bbl.isdigit() or slug is None:
+            raise HTTPException(status_code=404, detail="Unknown parcel")
+        rows, manifest = self.borough(gcs, slug)
+        for row in rows:
+            if row.bbl == bbl:
+                return row, manifest
+        raise HTTPException(status_code=404, detail="Parcel not found")
+
 
 _REGISTRY = ParcelIntelRegistry()
 
@@ -286,6 +365,10 @@ def _strip_premium_fields(row: ParcelIntelRow) -> ParcelIntelRow:
     return row.model_copy(update=dict(_ANON_STRIPPED_FIELDS))
 
 
+def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
+    return row.model_copy(update={"owner_name": None})
+
+
 @router.get("/parcel-intel/index", response_model=ParcelIntelIndex)
 def parcel_intel_index(
     response: Response,
@@ -296,6 +379,66 @@ def parcel_intel_index(
     out = registry.index(gcs)
     response.headers["Cache-Control"] = _INDEX_CACHE
     return out
+
+
+@router.get("/parcel-intel/map", response_model=ParcelIntelMapResponse)
+def parcel_intel_map(
+    response: Response,
+    top_per_borough: int = Query(
+        1000,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum rows per borough. Unauthenticated requests are silently "
+            f"capped at {_ANON_TOP_CAP}."
+        ),
+    ),
+    auth: Optional[AuthContext] = Depends(maybe_auth),
+    _rate_limit: None = Depends(demo_rate_limit),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> ParcelIntelMapResponse:
+    rows, manifest = registry.citywide_map(gcs)
+    cap = top_per_borough if auth is not None else min(
+        top_per_borough, _ANON_TOP_CAP
+    )
+    counts: dict[str, int] = {}
+    selected: list[ParcelIntelMapRow] = []
+    for row in rows:
+        count = counts.get(row.borough, 0)
+        if count >= cap:
+            continue
+        counts[row.borough] = count + 1
+        selected.append(
+            row if auth is not None else _strip_map_premium_fields(row)
+        )
+    response.headers["Cache-Control"] = (
+        _MAP_CACHE_AUTHED if auth is not None else _MAP_CACHE
+    )
+    return ParcelIntelMapResponse(
+        rows=selected,
+        generated_at=_parse_iso((manifest or {}).get("generated_at")),
+    )
+
+
+@router.get("/parcel-intel/parcel/{bbl}", response_model=ParcelIntelRow)
+def parcel_intel_parcel(
+    bbl: str,
+    response: Response,
+    auth: Optional[AuthContext] = Depends(maybe_auth),
+    _rate_limit: None = Depends(demo_rate_limit),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> ParcelIntelRow:
+    row, _manifest = registry.parcel(gcs, bbl)
+    if auth is None:
+        rank = row.acquisition_rank
+        if not isinstance(rank, int) or rank > _ANON_TOP_CAP:
+            raise HTTPException(status_code=404, detail="Parcel not found")
+        response.headers["Cache-Control"] = _SWEEP_CACHE
+        return _strip_premium_fields(row)
+    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    return row
 
 
 @router.get("/parcel-intel/sweep", response_model=ParcelIntelSweepResponse)

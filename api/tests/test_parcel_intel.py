@@ -170,11 +170,16 @@ def _make_fake_gcs(
         ).encode("utf-8"),
     }
     rbb = rows_by_borough or {}
+    map_rows: list[dict] = []
     for slug in boroughs:
         rows = rbb.get(slug) or [_row(f"3{slug[:1].upper()}{i:08d}") for i in range(2)]
         store[f"parcel-intel/v1/{slug}.jsonl"] = (
             "\n".join(json.dumps(r) for r in rows) + "\n"
         ).encode("utf-8")
+        map_rows.extend({**row, "borough": slug} for row in rows)
+    store["parcel-intel/v1/map.jsonl"] = (
+        "\n".join(json.dumps(row) for row in map_rows) + "\n"
+    ).encode("utf-8")
     return FakeGcs(store)
 
 
@@ -235,6 +240,122 @@ def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:
         assert key in sample
     # Cache header present.
     assert "s-maxage=600" in r.headers["cache-control"]
+
+
+def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    rows_by_borough = {
+        "brooklyn": [
+            _row(
+                f"30200001{i:02d}",
+                acquisition_rank=i + 1,
+                citywide_rank=i * 2 + 1,
+                owner_name="BROOKLYN OWNER LLC",
+            )
+            for i in range(30)
+        ],
+        "queens": [
+            _row(
+                f"40200001{i:02d}",
+                acquisition_rank=i + 1,
+                citywide_rank=i * 2 + 2,
+                owner_name="QUEENS OWNER LLC",
+            )
+            for i in range(30)
+        ],
+    }
+    fake = _make_fake_gcs(
+        ["brooklyn", "queens"], rows_by_borough
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["rows"]) == 50
+    assert {row["borough"] for row in body["rows"]} == {
+        "brooklyn",
+        "queens",
+    }
+    assert all(row["owner_name"] is None for row in body["rows"])
+    assert "s-maxage=600" in response.headers["cache-control"]
+    assert response.headers["content-encoding"] == "gzip"
+    # Compact rows do not serialize expensive detail-only fields.
+    assert "parcel_geometry" not in body["rows"][0]
+    assert "top_features" not in body["rows"][0]
+
+
+def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            f"30200002{i:02d}",
+            acquisition_rank=i + 1,
+            citywide_rank=i + 1,
+            owner_name="ACME REALTY LLC",
+        )
+        for i in range(30)
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["rows"]) == 30
+    assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [[[-73.9, 40.7], [-73.8, 40.7], [-73.9, 40.7]]],
+    }
+    rows = [
+        _row(
+            "3020000001",
+            acquisition_rank=1,
+            owner_name="ACME REALTY LLC",
+            parcel_geometry=geometry,
+            top_features=[
+                {
+                    "name": "lot_area",
+                    "value": 5000,
+                    "contribution_logit": 0.8,
+                    "contribution_pct": 0.3,
+                }
+            ],
+        ),
+        _row("3020000026", acquisition_rank=26),
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    client = TestClient(app)
+
+    public = client.get("/v1/parcel-intel/parcel/3020000001")
+    assert public.status_code == 200, public.text
+    assert public.json()["owner_name"] is None
+    assert public.json()["top_features"] == []
+    assert public.json()["parcel_geometry"] == geometry
+    assert "s-maxage=600" in public.headers["cache-control"]
+
+    hidden = client.get("/v1/parcel-intel/parcel/3020000026")
+    assert hidden.status_code == 404
+
+    _authed()
+    private = client.get("/v1/parcel-intel/parcel/3020000001")
+    assert private.status_code == 200, private.text
+    assert private.json()["owner_name"] == "ACME REALTY LLC"
+    assert len(private.json()["top_features"]) == 1
+    assert private.headers["cache-control"] == "private, no-store"
 
 
 def test_parcel_intel_rejects_unknown_borough(monkeypatch) -> None:

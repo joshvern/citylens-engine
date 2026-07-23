@@ -2,9 +2,9 @@
 
 Serves per-borough rankings of redevelopment candidates. The data comes
 from the citylens-parcel-intel repo's `scripts/publish_sweep.py`, which
-uploads trimmed JSONL + a manifest.json to
-`gs://<bucket>/parcel-intel/v1/`. We read those bytes through the
-existing `GcsArtifacts` plumbing — no new GCS code needed.
+uploads immutable generation-addressed JSONL and commits a stable
+`manifest.json` pointer under `gs://<bucket>/parcel-intel/v1/`. Legacy flat
+publishes remain readable during the migration.
 
 Access tiers:
 - `/v1/parcel-intel/index` is fully public (aggregate metadata only) and
@@ -18,9 +18,8 @@ Access tiers:
 
 Caching strategy:
 - Process-level: a module-level registry caches parsed JSONL keyed on
-  manifest.generated_at. Cheap re-loads on each Cloud Run instance
-  (~80 KB per borough). Invalidated automatically when the publisher
-  re-uploads.
+  `manifest.artifact_generation` (or legacy `generated_at`). Immutable
+  generation paths prevent mixed-feed reads during a publish.
 - Edge: anonymous responses keep Cache-Control headers tuned for
   ~10-minute revalidation since the sweep cadence is monthly.
   Authenticated sweep responses are `private, no-store` — the full feed
@@ -29,8 +28,10 @@ Caching strategy:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -88,6 +89,11 @@ _BBL_BOROUGH = {
 }
 
 _GCS_PREFIX = "parcel-intel/v1"
+_ATOMIC_PUBLICATION_SCHEMA = "citylens-parcel-intel/atomic-publication@v1"
+_GENERATION_RE = re.compile(
+    r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def get_gcs(settings: Settings = Depends(get_settings)) -> GcsArtifacts:
@@ -99,19 +105,133 @@ class ParcelIntelRegistry:
 
     Threadsafe via a single lock — cold-fill races just redundantly
     fetch from GCS, no correctness impact. Invalidation key is
-    ``manifest.generated_at``: when the publisher re-uploads, the
-    timestamp changes and we lazily reload that borough on next access.
+    ``manifest.artifact_generation`` (falling back to `generated_at` for
+    legacy feeds): when the publisher commits a new pointer, we lazily reload
+    that generation on next access.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._manifest: dict[str, Any] | None = None
-        self._manifest_generated_at: str | None = None
-        self._rows_by_borough: dict[str, list[dict]] = {}
-        self._map_rows: list[ParcelIntelMapRow] | None = None
+        self._manifest_cache_key: str | None = None
+        self._rows_by_borough: dict[tuple[str, str], list[dict]] = {}
+        self._map_rows: dict[str, list[ParcelIntelMapRow]] = {}
 
     def _gcs_object_name(self, leaf: str) -> str:
         return f"{_GCS_PREFIX}/{leaf}"
+
+    def _cache_key(self, manifest: dict[str, Any]) -> str:
+        generation = manifest.get("artifact_generation")
+        if (
+            manifest.get("artifact_prefix") is not None
+            and isinstance(generation, str)
+            and generation
+        ):
+            return f"generation:{generation}"
+        generated_at = manifest.get("generated_at")
+        return f"legacy:{generated_at}" if isinstance(generated_at, str) else "legacy:"
+
+    def _atomic_artifact_metadata(
+        self, manifest: dict[str, Any], leaf: str
+    ) -> dict[str, Any] | None:
+        prefix = manifest.get("artifact_prefix")
+        if prefix is None:
+            return None
+        generation = manifest.get("artifact_generation")
+        expected_prefix = (
+            f"{_GCS_PREFIX}/generations/{generation}"
+            if isinstance(generation, str)
+            else None
+        )
+        artifacts = manifest.get("artifacts")
+        metadata = artifacts.get(leaf) if isinstance(artifacts, dict) else None
+        valid = (
+            manifest.get("publication_schema") == _ATOMIC_PUBLICATION_SCHEMA
+            and isinstance(generation, str)
+            and _GENERATION_RE.fullmatch(generation) is not None
+            and prefix == expected_prefix
+            and isinstance(metadata, dict)
+            and metadata.get("object_name") == f"{prefix}/{leaf}"
+            and isinstance(metadata.get("sha256"), str)
+            and _SHA256_RE.fullmatch(metadata["sha256"]) is not None
+            and isinstance(metadata.get("size_bytes"), int)
+            and metadata["size_bytes"] >= 0
+            and isinstance(metadata.get("row_count"), int)
+            and metadata["row_count"] >= 0
+        )
+        if not valid:
+            log.error(
+                "parcel-intel atomic manifest metadata is invalid for %s",
+                leaf,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Parcel intelligence manifest is invalid",
+            )
+        return metadata
+
+    def _validate_publication_manifest(
+        self, manifest: dict[str, Any]
+    ) -> None:
+        atomic_keys = {
+            "publication_schema",
+            "artifact_generation",
+            "artifact_prefix",
+            "artifacts",
+        }
+        present = atomic_keys.intersection(manifest)
+        if not present:
+            return
+        if present != atomic_keys:
+            log.error(
+                "parcel-intel manifest has partial atomic metadata: %s",
+                sorted(present),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Parcel intelligence manifest is invalid",
+            )
+        leaves = ["map.jsonl"]
+        for borough in manifest.get("boroughs") or []:
+            if isinstance(borough, dict) and borough.get("slug") in _BOROUGH_SLUGS:
+                leaves.append(f"{borough['slug']}.jsonl")
+        for leaf in leaves:
+            self._atomic_artifact_metadata(manifest, leaf)
+
+    def _download_artifact(
+        self,
+        gcs: GcsArtifacts,
+        manifest: dict[str, Any],
+        leaf: str,
+    ) -> tuple[bytes, int | None]:
+        metadata = self._atomic_artifact_metadata(manifest, leaf)
+        object_name = (
+            metadata["object_name"]
+            if metadata is not None
+            else self._gcs_object_name(leaf)
+        )
+        payload, _ = gcs.download_bytes(object_name=object_name)
+        if metadata is None:
+            return payload, None
+        actual_sha = hashlib.sha256(payload).hexdigest()
+        if (
+            len(payload) != metadata["size_bytes"]
+            or actual_sha != metadata["sha256"]
+        ):
+            log.error(
+                "parcel-intel artifact integrity mismatch: object=%s "
+                "expected_size=%s actual_size=%s expected_sha=%s actual_sha=%s",
+                object_name,
+                metadata["size_bytes"],
+                len(payload),
+                metadata["sha256"],
+                actual_sha,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Parcel intelligence artifact integrity check failed",
+            )
+        return payload, metadata["row_count"]
 
     def _refresh_manifest(self, gcs: GcsArtifacts) -> dict[str, Any]:
         try:
@@ -138,13 +258,14 @@ class ParcelIntelRegistry:
                 status_code=503,
                 detail="Parcel intelligence manifest is invalid",
             )
+        self._validate_publication_manifest(manifest)
         with self._lock:
-            new_at = manifest.get("generated_at")
-            if new_at != self._manifest_generated_at:
+            new_key = self._cache_key(manifest)
+            if new_key != self._manifest_cache_key:
                 # Drop borough caches; they'll lazy-reload on next read.
                 self._rows_by_borough = {}
-                self._map_rows = None
-                self._manifest_generated_at = new_at
+                self._map_rows = {}
+                self._manifest_cache_key = new_key
             self._manifest = manifest
         return manifest
 
@@ -187,13 +308,24 @@ class ParcelIntelRegistry:
         if slug not in _BOROUGH_SLUGS:
             raise HTTPException(status_code=404, detail="Unknown borough")
         manifest = self._refresh_manifest(gcs)
+        cache_key = self._cache_key(manifest)
+        cache_id = (cache_key, slug)
 
         with self._lock:
-            cached = self._rows_by_borough.get(slug)
+            cached = self._rows_by_borough.get(cache_id)
         if cached is None:
             try:
-                payload, _ = gcs.download_bytes(object_name=self._gcs_object_name(f"{slug}.jsonl"))
+                payload, expected_rows = self._download_artifact(
+                    gcs, manifest, f"{slug}.jsonl"
+                )
             except FileNotFoundError as exc:
+                if self._atomic_artifact_metadata(
+                    manifest, f"{slug}.jsonl"
+                ) is not None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Parcel intelligence referenced artifact is missing",
+                    ) from exc
                 raise HTTPException(
                     status_code=404, detail=f"No data published for {slug}"
                 ) from exc
@@ -219,8 +351,23 @@ class ParcelIntelRegistry:
                     bad_lines,
                     len(cached),
                 )
+            if expected_rows is not None and (
+                bad_lines or len(cached) != expected_rows
+            ):
+                log.error(
+                    "parcel-intel atomic artifact row-count mismatch: "
+                    "slug=%s expected=%d parsed=%d bad_lines=%d",
+                    slug,
+                    expected_rows,
+                    len(cached),
+                    bad_lines,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence artifact row-count check failed",
+                )
             with self._lock:
-                self._rows_by_borough[slug] = cached
+                self._rows_by_borough[cache_id] = cached
 
         rows: list[ParcelIntelRow] = []
         bad_rows = 0
@@ -236,6 +383,13 @@ class ParcelIntelRegistry:
                     exc,
                 )
         if bad_rows:
+            if self._atomic_artifact_metadata(
+                manifest, f"{slug}.jsonl"
+            ) is not None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence artifact schema check failed",
+                )
             log.warning(
                 "parcel-intel %s: %d row(s) failed schema validation and were "
                 "skipped; serving the remaining %d",
@@ -250,12 +404,13 @@ class ParcelIntelRegistry:
     ) -> tuple[list[ParcelIntelMapRow], dict[str, Any] | None]:
         """Load the compact citywide explorer artifact."""
         manifest = self._refresh_manifest(gcs)
+        cache_key = self._cache_key(manifest)
         with self._lock:
-            cached = self._map_rows
+            cached = self._map_rows.get(cache_key)
         if cached is None:
             try:
-                payload, _ = gcs.download_bytes(
-                    object_name=self._gcs_object_name("map.jsonl")
+                payload, expected_rows = self._download_artifact(
+                    gcs, manifest, "map.jsonl"
                 )
             except FileNotFoundError as exc:
                 raise HTTPException(
@@ -292,8 +447,22 @@ class ParcelIntelRegistry:
                     "parcel-intel map.jsonl: skipped %d invalid line(s)",
                     bad_lines,
                 )
+            if expected_rows is not None and (
+                bad_lines or len(validated) != expected_rows
+            ):
+                log.error(
+                    "parcel-intel atomic map row-count mismatch: "
+                    "expected=%d parsed=%d bad_lines=%d",
+                    expected_rows,
+                    len(validated),
+                    bad_lines,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence artifact row-count check failed",
+                )
             with self._lock:
-                self._map_rows = validated
+                self._map_rows[cache_key] = validated
             cached = validated
 
         return cached, manifest

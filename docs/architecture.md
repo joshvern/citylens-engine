@@ -24,6 +24,11 @@ owns the browser UI.
     Safety/OATH/HPD violation fields are premium diligence context and never
     exposed anonymously. These overlays are post-score and do not modify
     acquisition ranks.
+  - Parcel feed generations are immutable. A stable GCS manifest pointer names
+    the active generation and records each object's SHA-256, byte size, and row
+    count; readers validate all of these and retain a legacy-flat fallback.
+    Generation-keyed caches prevent an in-flight old reader from repopulating a
+    new generation's cache.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
     reports parcel-intel presence/freshness flags.

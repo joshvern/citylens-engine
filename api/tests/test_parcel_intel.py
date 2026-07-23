@@ -12,6 +12,7 @@ feed. Authenticated cases install a dependency override for
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 
@@ -30,8 +31,10 @@ class FakeGcs:
 
     def __init__(self, store: dict[str, bytes] | None = None) -> None:
         self._store = store or {}
+        self.requests: list[str] = []
 
     def download_bytes(self, *, object_name: str) -> tuple[bytes, str | None]:
+        self.requests.append(object_name)
         if object_name not in self._store:
             raise FileNotFoundError(object_name)
         ct = "application/json" if object_name.endswith(".json") else "application/x-ndjson"
@@ -199,6 +202,63 @@ def _make_fake_gcs(
     store["parcel-intel/v1/map.jsonl"] = (
         "\n".join(json.dumps(row) for row in map_rows) + "\n"
     ).encode("utf-8")
+    return FakeGcs(store)
+
+
+def _make_atomic_fake_gcs(
+    boroughs: list[str],
+    rows_by_borough: dict[str, list[dict]] | None = None,
+    *,
+    generation: str = "20260723T230308737433Z-aaaaaaaaaaaa",
+    generated_at: str = "2026-07-23T23:03:08.737433+00:00",
+) -> FakeGcs:
+    manifest = _manifest(boroughs, generated_at=generated_at)
+    prefix = f"parcel-intel/v1/generations/{generation}"
+    store: dict[str, bytes] = {}
+    artifacts: dict[str, dict] = {}
+    map_rows: list[dict] = []
+    rbb = rows_by_borough or {}
+    for slug in boroughs:
+        rows = rbb.get(slug) or [
+            _row(f"3{slug[:1].upper()}{i:08d}") for i in range(2)
+        ]
+        leaf = f"{slug}.jsonl"
+        body = (
+            "\n".join(json.dumps(row) for row in rows) + "\n"
+        ).encode("utf-8")
+        object_name = f"{prefix}/{leaf}"
+        store[object_name] = body
+        artifacts[leaf] = {
+            "object_name": object_name,
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "size_bytes": len(body),
+            "row_count": len(rows),
+        }
+        map_rows.extend({**row, "borough": slug} for row in rows)
+    map_body = (
+        "\n".join(json.dumps(row) for row in map_rows) + "\n"
+    ).encode("utf-8")
+    map_object = f"{prefix}/map.jsonl"
+    store[map_object] = map_body
+    artifacts["map.jsonl"] = {
+        "object_name": map_object,
+        "sha256": hashlib.sha256(map_body).hexdigest(),
+        "size_bytes": len(map_body),
+        "row_count": len(map_rows),
+    }
+    manifest.update(
+        {
+            "publication_schema": (
+                "citylens-parcel-intel/atomic-publication@v1"
+            ),
+            "artifact_generation": generation,
+            "artifact_prefix": prefix,
+            "artifacts": artifacts,
+        }
+    )
+    store["parcel-intel/v1/manifest.json"] = json.dumps(manifest).encode(
+        "utf-8"
+    )
     return FakeGcs(store)
 
 
@@ -585,6 +645,159 @@ def test_parcel_intel_invalidates_cache_on_new_generated_at(monkeypatch) -> None
 
     second = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
     assert second.json()["rows"][0]["address"] == "ROW V2"
+
+
+def test_atomic_manifest_reads_immutable_generation_not_legacy_files(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    atomic_row = _row("3020000001", address="ATOMIC GENERATION")
+    legacy_row = _row("3020000002", address="LEGACY FILE")
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"], {"brooklyn": [atomic_row]}
+    )
+    fake._store["parcel-intel/v1/brooklyn.jsonl"] = (
+        json.dumps(legacy_row) + "\n"
+    ).encode("utf-8")
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    sweep = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+    map_response = client.get(
+        "/v1/parcel-intel/map", params={"top_per_borough": 1}
+    )
+
+    assert sweep.status_code == 200, sweep.text
+    assert sweep.json()["rows"][0]["address"] == "ATOMIC GENERATION"
+    assert map_response.status_code == 200, map_response.text
+    assert map_response.json()["rows"][0]["address"] == "ATOMIC GENERATION"
+    assert "parcel-intel/v1/brooklyn.jsonl" not in fake.requests
+    assert "parcel-intel/v1/map.jsonl" not in fake.requests
+
+
+def test_atomic_artifact_checksum_mismatch_fails_closed(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        {"brooklyn": [_row("3020000001", address="ORIGINAL")]},
+    )
+    manifest = json.loads(fake._store["parcel-intel/v1/manifest.json"])
+    object_name = manifest["artifacts"]["brooklyn.jsonl"]["object_name"]
+    fake._store[object_name] = (
+        json.dumps(_row("3020000002", address="TAMPERED")) + "\n"
+    ).encode("utf-8")
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Parcel intelligence artifact integrity check failed"
+    )
+
+
+def test_atomic_manifest_rejects_untrusted_artifact_prefix(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    manifest = json.loads(fake._store["parcel-intel/v1/manifest.json"])
+    manifest["artifact_prefix"] = "parcel-intel/v1/generations/../../private"
+    fake._store["parcel-intel/v1/manifest.json"] = json.dumps(manifest).encode(
+        "utf-8"
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Parcel intelligence manifest is invalid"
+    assert all("../" not in object_name for object_name in fake.requests)
+
+
+def test_index_rejects_partial_atomic_manifest(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    manifest = _manifest(["brooklyn"])
+    manifest["artifact_generation"] = (
+        "20260723T230308737433Z-aaaaaaaaaaaa"
+    )
+    fake = FakeGcs(
+        {
+            "parcel-intel/v1/manifest.json": json.dumps(manifest).encode(
+                "utf-8"
+            )
+        }
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Parcel intelligence manifest is invalid"
+
+
+def test_atomic_manifest_missing_referenced_borough_fails_closed(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    manifest = json.loads(fake._store["parcel-intel/v1/manifest.json"])
+    object_name = manifest["artifacts"]["brooklyn.jsonl"]["object_name"]
+    del fake._store[object_name]
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Parcel intelligence referenced artifact is missing"
+    )
+
+
+def test_atomic_cache_uses_generation_even_when_generated_at_is_unchanged(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    generated_at = "2026-07-23T23:03:08.737433+00:00"
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        {"brooklyn": [_row("3020000001", address="GENERATION ONE")]},
+        generation="20260723T230308737433Z-aaaaaaaaaaaa",
+        generated_at=generated_at,
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    client = TestClient(app)
+
+    first = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+    assert first.json()["rows"][0]["address"] == "GENERATION ONE"
+
+    second_store = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        {"brooklyn": [_row("3020000002", address="GENERATION TWO")]},
+        generation="20260723T230308737433Z-bbbbbbbbbbbb",
+        generated_at=generated_at,
+    )._store
+    fake._store.update(second_store)
+
+    second = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 1},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["rows"][0]["address"] == "GENERATION TWO"
 
 
 # --- Tiered access: public preview + authenticated full feed ---

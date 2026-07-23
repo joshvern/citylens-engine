@@ -214,6 +214,28 @@ class ParcelIntelRow(BaseModel):
     owner_name: Optional[str] = None
     owner_name_source: Literal["acris", "pluto"] | None = None
     owner_type: Optional[str] = None
+    owner_entity_type: Literal[
+        "unknown",
+        "individual",
+        "llc",
+        "corp",
+        "partnership",
+        "trust",
+        "estate",
+        "government",
+        "religious",
+        "nonprofit",
+        "hdfc",
+    ] | None = None
+    owner_portfolio_id: Optional[str] = None
+    owner_portfolio_match_method: Literal[
+        "exact_normalized_pluto_owner_name"
+    ] | None = None
+    owner_portfolio_lot_count: Optional[int] = None
+    owner_portfolio_borough_count: Optional[int] = None
+    owner_portfolio_total_lot_area_sqft: Optional[float] = None
+    owner_portfolio_candidate_count: Optional[int] = None
+    owner_portfolio_data_as_of: Optional[str] = None
 
 
 class ParcelIntelMapRow(BaseModel):
@@ -255,6 +277,11 @@ class ParcelIntelMapRow(BaseModel):
     critical_violation_count: Optional[int] = 0
     floodplain_1pct: Optional[bool] = None
     owner_name: Optional[str] = None
+    owner_entity_type: Optional[str] = None
+    owner_portfolio_id: Optional[str] = None
+    owner_portfolio_lot_count: Optional[int] = None
+    owner_portfolio_borough_count: Optional[int] = None
+    owner_portfolio_candidate_count: Optional[int] = None
     recent_change: bool = False
     opportunity_category: Literal[
         "vacant_site",

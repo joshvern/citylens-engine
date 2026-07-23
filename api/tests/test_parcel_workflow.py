@@ -11,10 +11,16 @@ from app.routes import parcel_workflow
 class FakeWorkflowStore:
     def __init__(self) -> None:
         self.items: dict[str, dict] = {}
+        self.events: dict[str, list[dict]] = {}
         self.searches: dict[str, dict] = {}
 
-    def list_parcel_workflow(self, *, app_user_id: str) -> list[dict]:
-        return list(self.items.values())
+    def list_parcel_workflow(
+        self, *, app_user_id: str, include_archived: bool = False
+    ) -> list[dict]:
+        rows = list(self.items.values())
+        return rows if include_archived else [
+            row for row in rows if row.get("archived_at") is None
+        ]
 
     def upsert_parcel_workflow(self, *, app_user_id: str, bbl: str, payload: dict) -> dict:
         now = datetime.now(timezone.utc)
@@ -26,10 +32,37 @@ class FakeWorkflowStore:
             "updated_at": now,
         }
         self.items[bbl] = doc
+        events = self.events.setdefault(bbl, [])
+        events.insert(
+            0,
+            {
+                "event_id": f"event-{len(events) + 1}",
+                "schema_version": "citylens/parcel-workflow-event@v1",
+                "bbl": bbl,
+                "event_type": "created" if len(events) == 0 else "updated",
+                "occurred_at": now,
+                "from_stage": None,
+                "to_stage": payload.get("stage"),
+                "from_outcome": None,
+                "to_outcome": payload.get("outcome"),
+                "from_decision_reason": None,
+                "to_decision_reason": payload.get("decision_reason"),
+                "changed_fields": sorted(payload),
+            },
+        )
+        doc["event_count"] = len(events)
         return doc
 
     def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
-        return self.items.pop(bbl, None) is not None
+        if bbl not in self.items or self.items[bbl].get("archived_at") is not None:
+            return False
+        self.items[bbl]["archived_at"] = datetime.now(timezone.utc)
+        return True
+
+    def list_parcel_workflow_events(
+        self, *, app_user_id: str, bbl: str
+    ) -> list[dict]:
+        return self.events.get(bbl, [])
 
     def list_parcel_saved_searches(self, *, app_user_id: str) -> list[dict]:
         return list(self.searches.values())
@@ -83,6 +116,49 @@ def test_workflow_crud(auth_override) -> None:
 
     removed = client.delete("/v1/parcel-intel/workflow/3020960069")
     assert removed.status_code == 204
+    assert client.get("/v1/parcel-intel/workflow").json() == []
+
+
+def test_workflow_events_and_prospective_analytics(auth_override) -> None:
+    auth_override(app_user_id="workflow-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    body = {
+        "borough": "brooklyn",
+        "stage": "underwriting",
+        "outcome": "qualified",
+        "snapshot": {
+            "feed_generated_at": "2026-07-23T23:38:01Z",
+            "citywide_rank": 82,
+            "acquisition_rank": 21,
+            "priority_tier": "highest",
+            "opportunity_category": "ground_up_candidate",
+        },
+    }
+    assert client.put("/v1/parcel-intel/workflow/3020960069", json=body).status_code == 200
+
+    events = client.get("/v1/parcel-intel/workflow/3020960069/events")
+    assert events.status_code == 200
+    assert events.json()[0]["event_type"] == "created"
+    assert "notes" not in events.json()[0]
+
+    analytics = client.get("/v1/parcel-intel/workflow/analytics")
+    assert analytics.status_code == 200, analytics.text
+    payload = analytics.json()
+    assert payload["schema_version"] == "citylens/parcel-workflow-analytics@v1"
+    assert payload["measurement_status"] == "collecting"
+    assert payload["total_records"] == 1
+    assert payload["funnel"]["contacted"] == 1
+    assert payload["funnel"]["qualified"] == 1
+    assert payload["funnel"]["contacted_per_saved"]["denominator"] == 1
+    assert payload["rank_snapshot_records"] == 1
+    assert any(
+        cohort["dimension"] == "rank_band"
+        and cohort["value"] == "1-100"
+        and cohort["total"] == 1
+        for cohort in payload["cohorts"]
+    )
 
 
 def test_saved_search_crud(auth_override) -> None:
@@ -150,13 +226,21 @@ def test_workflow_snapshot_and_saved_filters_are_typed(auth_override) -> None:
     )
     assert workflow.status_code == 200, workflow.text
     assert workflow.json()["snapshot"] == {
+        "feed_generated_at": None,
         "property_facts_as_of": None,
+        "citywide_rank": None,
+        "acquisition_rank": None,
+        "priority_tier": None,
+        "opportunity_category": None,
+        "score_calibrated": None,
         "zoning_district_1": "R7A",
         "land_use": None,
         "year_built": None,
         "allowed_far": 4.0,
         "unused_floor_area_sqft": None,
         "owner_name": None,
+        "owner_entity_type": None,
+        "owner_portfolio_lot_count": None,
         "last_sale_year": None,
         "latest_nb_filing_year": None,
         "latest_nb_status": None,

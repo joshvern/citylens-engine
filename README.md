@@ -86,6 +86,13 @@ Current pinned release tag:
   and dates load on parcel selection. Portfolio matching preserves legal form,
   never groups natural-person names, and does not infer beneficial ownership or
   related LLCs.
+- The authenticated acquisition workflow preserves an immutable,
+  value-minimized event history and soft-archives removed leads. The
+  user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports explicit
+  saved/contacted/qualified/offered/contracted/closed denominators and cohort
+  coverage; it is prospective workflow evidence, not model accuracy. Per-lead
+  audit events are available from
+  `/v1/parcel-intel/workflow/{bbl}/events`.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
   plus one stable manifest pointer. The API validates the pointer path,

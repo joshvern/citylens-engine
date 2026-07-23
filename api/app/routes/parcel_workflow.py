@@ -7,12 +7,15 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from ..models.schemas import (
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
+    ParcelWorkflowAnalytics,
+    ParcelWorkflowEvent,
     ParcelWorkflowItem,
     ParcelWorkflowUpdate,
 )
 from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
+from ..services.parcel_workflow_analytics import build_workflow_analytics
 from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["parcel-workflow"])
@@ -43,6 +46,37 @@ def list_workflow(
     store: FirestoreStore = Depends(get_store),
 ) -> list[dict]:
     return store.list_parcel_workflow(app_user_id=auth.app_user_id)
+
+
+@router.get(
+    "/parcel-intel/workflow/analytics", response_model=ParcelWorkflowAnalytics
+)
+def workflow_analytics(
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    items = store.list_parcel_workflow(
+        app_user_id=auth.app_user_id, include_archived=True
+    )
+    return build_workflow_analytics(items)
+
+
+@router.get(
+    "/parcel-intel/workflow/{bbl}/events",
+    response_model=list[ParcelWorkflowEvent],
+)
+def list_workflow_events(
+    bbl: str,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> list[dict]:
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    return store.list_parcel_workflow_events(
+        app_user_id=auth.app_user_id, bbl=bbl
+    )
 
 
 @router.put("/parcel-intel/workflow/{bbl}", response_model=ParcelWorkflowItem)

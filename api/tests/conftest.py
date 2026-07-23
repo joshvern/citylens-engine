@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 # Ensure `app` is importable when CI runs `pytest api/tests` from the repo
@@ -12,6 +13,7 @@ if str(_API_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 
+from app.services import rate_limit  # noqa: E402
 from app.services.auth_context import AuthContext  # noqa: E402
 
 
@@ -22,7 +24,11 @@ def pytest_configure() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _set_required_env(monkeypatch) -> None:
+def _set_required_env(monkeypatch) -> Iterator[None]:
+    # Every TestClient uses the same synthetic client IP. Keep the global,
+    # in-memory production limiter from coupling otherwise independent tests.
+    with rate_limit._lock:
+        rate_limit._buckets.clear()
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     monkeypatch.setenv("CITYLENS_REGION", "us-central1")
     monkeypatch.setenv("CITYLENS_BUCKET", "test-bucket")
@@ -39,6 +45,9 @@ def _set_required_env(monkeypatch) -> None:
     monkeypatch.setenv("CITYLENS_ALLOW_MOCK_AUTH", "true")
     monkeypatch.setenv("CITYLENS_AUTH_REQUIRED", "true")
     monkeypatch.setenv("CITYLENS_FREE_MONTHLY_RUNS", "5")
+    yield
+    with rate_limit._lock:
+        rate_limit._buckets.clear()
 
 
 @pytest.fixture

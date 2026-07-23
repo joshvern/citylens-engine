@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import PlainTextResponse, Response
 
 from .routes.api_keys import router as api_keys_router
@@ -79,6 +80,11 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
+# Browser-facing parcel feeds are JSON-heavy. Cloud Run's frontend does not
+# currently compress these responses for us, so compress them in the
+# application before they cross the network. The compact citywide map is about
+# 3 MB as JSON and roughly 0.4 MB with gzip.
+app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
 
 
 def _allowed_origins() -> list[str]:

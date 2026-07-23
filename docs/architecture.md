@@ -13,10 +13,14 @@ owns the browser UI.
     `X-API-Key` surface (hash-only, `CITYLENS_ADMIN_API_KEY_HASHES`) exists for
     internal scripts. See [security.md](security.md).
   - Creates Firestore run docs and triggers a Cloud Run Job execution.
-  - Serves the public read endpoints `/v1/demo/*` and `/v1/parcel-intel/index`.
-    `/v1/parcel-intel/sweep` is tiered: a public preview (≤25 rows, premium
-    fields stripped) + an authenticated full feed (any valid credential; up to
-    1000 rows, `Cache-Control: private, no-store`).
+  - Serves the public read endpoints `/v1/demo/*` and
+    `/v1/parcel-intel/index`. Parcel Intelligence progressively loads a
+    compact `/v1/parcel-intel/map` projection, fetches a full record from
+    `/v1/parcel-intel/parcel/{bbl}` only when selected, and reserves
+    `/v1/parcel-intel/sweep` for CSV/export and compatibility. Public inventory
+    is capped at 25 rows per borough with premium fields stripped;
+    authenticated users can load 1,000 per borough. Large JSON responses are
+    gzip-compressed.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
     reports parcel-intel presence/freshness flags.

@@ -20,7 +20,8 @@ owns the browser UI.
     `/v1/parcel-intel/sweep` for CSV/export and compatibility. Public inventory
     is capped at 25 rows per borough with premium fields stripped;
     authenticated users can load 1,000 per borough. Large JSON responses are
-    gzip-compressed.
+    gzip-compressed. Historical NYC DOF final lien-sale fields are treated as
+    premium diligence context and never exposed anonymously.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
     reports parcel-intel presence/freshness flags.

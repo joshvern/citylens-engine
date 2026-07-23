@@ -128,6 +128,12 @@ class ParcelIntelRow(BaseModel):
     last_sale_year: Optional[int] = None
     years_held: Optional[int] = None
     has_recent_sale_5yr: bool = False
+    # Historical NYC DOF final tax-lien sale record. This is a diligence
+    # signal, not an assertion that a balance is still unpaid.
+    tax_lien_sale_date: Optional[str] = None
+    tax_lien_sale_year: Optional[int] = None
+    tax_lien_water_debt_only: Optional[bool] = None
+    tax_lien_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -226,6 +232,7 @@ class ParcelIntelMapRow(BaseModel):
     last_sale_price: Optional[float] = None
     last_sale_year: Optional[int] = None
     years_held: Optional[int] = None
+    tax_lien_sale_year: Optional[int] = None
     owner_name: Optional[str] = None
     recent_change: bool = False
     opportunity_category: Literal[

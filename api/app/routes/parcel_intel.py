@@ -353,6 +353,10 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "observed_imagery_year": None,
     "recent_change": False,
     "owner_name": None,
+    "tax_lien_sale_date": None,
+    "tax_lien_sale_year": None,
+    "tax_lien_water_debt_only": None,
+    "tax_lien_data_as_of": None,
     "assemblage_id": None,
     "assemblage_lot_count": None,
     "assemblage_combined_lot_area_sqft": None,
@@ -366,7 +370,9 @@ def _strip_premium_fields(row: ParcelIntelRow) -> ParcelIntelRow:
 
 
 def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
-    return row.model_copy(update={"owner_name": None})
+    return row.model_copy(
+        update={"owner_name": None, "tax_lien_sale_year": None}
+    )
 
 
 @router.get("/parcel-intel/index", response_model=ParcelIntelIndex)

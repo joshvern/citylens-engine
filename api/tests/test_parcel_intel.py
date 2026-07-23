@@ -117,6 +117,10 @@ def _row(bbl: str, **overrides) -> dict:
         "hpd_latest_inspection_date": "2026-07-19",
         "critical_violation_count": 3,
         "violation_data_as_of": "2026-07-23",
+        "firm07_floodplain": False,
+        "pfirm15_floodplain": True,
+        "floodplain_1pct": True,
+        "floodplain_data_as_of": "2026-07-23",
         "is_landmark": False,
         "is_historic_district": False,
         "block_id": bbl[:6],
@@ -300,6 +304,7 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
     assert all(
         row["critical_violation_count"] is None for row in body["rows"]
     )
+    assert all(row["floodplain_1pct"] is None for row in body["rows"])
     assert "s-maxage=600" in response.headers["cache-control"]
     assert response.headers["content-encoding"] == "gzip"
     # Compact rows do not serialize expensive detail-only fields.
@@ -331,6 +336,7 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
     assert response.json()["rows"][0]["tax_lien_sale_year"] == 2025
     assert response.json()["rows"][0]["critical_violation_count"] == 3
+    assert response.json()["rows"][0]["floodplain_1pct"] is True
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -371,6 +377,10 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert public.json()["hpd_open_count"] == 0
     assert public.json()["critical_violation_count"] is None
     assert public.json()["violation_data_as_of"] is None
+    assert public.json()["firm07_floodplain"] is None
+    assert public.json()["pfirm15_floodplain"] is None
+    assert public.json()["floodplain_1pct"] is None
+    assert public.json()["floodplain_data_as_of"] is None
     assert public.json()["top_features"] == []
     assert public.json()["parcel_geometry"] == geometry
     assert "s-maxage=600" in public.headers["cache-control"]
@@ -390,6 +400,10 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert private.json()["hpd_class_c_count"] == 1
     assert private.json()["critical_violation_count"] == 3
     assert private.json()["violation_data_as_of"] == "2026-07-23"
+    assert private.json()["firm07_floodplain"] is False
+    assert private.json()["pfirm15_floodplain"] is True
+    assert private.json()["floodplain_1pct"] is True
+    assert private.json()["floodplain_data_as_of"] == "2026-07-23"
     assert len(private.json()["top_features"]) == 1
     assert private.headers["cache-control"] == "private, no-store"
 

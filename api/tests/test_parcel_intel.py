@@ -270,6 +270,11 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
                 acquisition_rank=i + 1,
                 citywide_rank=i * 2 + 1,
                 owner_name="BROOKLYN OWNER LLC",
+                owner_entity_type="llc",
+                owner_portfolio_id="brooklyn-owner",
+                owner_portfolio_lot_count=8,
+                owner_portfolio_borough_count=1,
+                owner_portfolio_candidate_count=4,
             )
             for i in range(30)
         ],
@@ -279,6 +284,11 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
                 acquisition_rank=i + 1,
                 citywide_rank=i * 2 + 2,
                 owner_name="QUEENS OWNER LLC",
+                owner_entity_type="llc",
+                owner_portfolio_id="queens-owner",
+                owner_portfolio_lot_count=5,
+                owner_portfolio_borough_count=2,
+                owner_portfolio_candidate_count=3,
             )
             for i in range(30)
         ],
@@ -300,6 +310,11 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         "queens",
     }
     assert all(row["owner_name"] is None for row in body["rows"])
+    assert all(row["owner_entity_type"] is None for row in body["rows"])
+    assert all(row["owner_portfolio_id"] is None for row in body["rows"])
+    assert all(
+        row["owner_portfolio_lot_count"] is None for row in body["rows"]
+    )
     assert all(row["tax_lien_sale_year"] is None for row in body["rows"])
     assert all(
         row["critical_violation_count"] is None for row in body["rows"]
@@ -320,6 +335,11 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
             acquisition_rank=i + 1,
             citywide_rank=i + 1,
             owner_name="ACME REALTY LLC",
+            owner_entity_type="llc",
+            owner_portfolio_id="acme-portfolio",
+            owner_portfolio_lot_count=9,
+            owner_portfolio_borough_count=3,
+            owner_portfolio_candidate_count=4,
         )
         for i in range(30)
     ]
@@ -334,6 +354,11 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert response.status_code == 200, response.text
     assert len(response.json()["rows"]) == 30
     assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert response.json()["rows"][0]["owner_entity_type"] == "llc"
+    assert response.json()["rows"][0]["owner_portfolio_id"] == "acme-portfolio"
+    assert response.json()["rows"][0]["owner_portfolio_lot_count"] == 9
+    assert response.json()["rows"][0]["owner_portfolio_borough_count"] == 3
+    assert response.json()["rows"][0]["owner_portfolio_candidate_count"] == 4
     assert response.json()["rows"][0]["tax_lien_sale_year"] == 2025
     assert response.json()["rows"][0]["critical_violation_count"] == 3
     assert response.json()["rows"][0]["floodplain_1pct"] is True
@@ -351,6 +376,14 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
             "3020000001",
             acquisition_rank=1,
             owner_name="ACME REALTY LLC",
+            owner_entity_type="llc",
+            owner_portfolio_id="acme-portfolio",
+            owner_portfolio_match_method="exact_normalized_pluto_owner_name",
+            owner_portfolio_lot_count=9,
+            owner_portfolio_borough_count=3,
+            owner_portfolio_total_lot_area_sqft=72000.0,
+            owner_portfolio_candidate_count=4,
+            owner_portfolio_data_as_of="2026-07-23",
             parcel_geometry=geometry,
             top_features=[
                 {
@@ -370,6 +403,14 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     public = client.get("/v1/parcel-intel/parcel/3020000001")
     assert public.status_code == 200, public.text
     assert public.json()["owner_name"] is None
+    assert public.json()["owner_entity_type"] is None
+    assert public.json()["owner_portfolio_id"] is None
+    assert public.json()["owner_portfolio_match_method"] is None
+    assert public.json()["owner_portfolio_lot_count"] is None
+    assert public.json()["owner_portfolio_borough_count"] is None
+    assert public.json()["owner_portfolio_total_lot_area_sqft"] is None
+    assert public.json()["owner_portfolio_candidate_count"] is None
+    assert public.json()["owner_portfolio_data_as_of"] is None
     assert public.json()["tax_lien_sale_year"] is None
     assert public.json()["tax_lien_sale_date"] is None
     assert public.json()["dob_safety_active_count"] == 0
@@ -392,6 +433,16 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     private = client.get("/v1/parcel-intel/parcel/3020000001")
     assert private.status_code == 200, private.text
     assert private.json()["owner_name"] == "ACME REALTY LLC"
+    assert private.json()["owner_entity_type"] == "llc"
+    assert private.json()["owner_portfolio_id"] == "acme-portfolio"
+    assert private.json()["owner_portfolio_match_method"] == (
+        "exact_normalized_pluto_owner_name"
+    )
+    assert private.json()["owner_portfolio_lot_count"] == 9
+    assert private.json()["owner_portfolio_borough_count"] == 3
+    assert private.json()["owner_portfolio_total_lot_area_sqft"] == 72000.0
+    assert private.json()["owner_portfolio_candidate_count"] == 4
+    assert private.json()["owner_portfolio_data_as_of"] == "2026-07-23"
     assert private.json()["tax_lien_sale_year"] == 2025
     assert private.json()["tax_lien_sale_date"] == "2025-06-01"
     assert private.json()["dob_safety_active_count"] == 4
@@ -572,6 +623,14 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
             observed_imagery_year=2024,
             recent_change=True,
             owner_name="ACME REALTY LLC",
+            owner_entity_type="llc",
+            owner_portfolio_id="acme-portfolio",
+            owner_portfolio_match_method="exact_normalized_pluto_owner_name",
+            owner_portfolio_lot_count=9,
+            owner_portfolio_borough_count=3,
+            owner_portfolio_total_lot_area_sqft=72000.0,
+            owner_portfolio_candidate_count=4,
+            owner_portfolio_data_as_of="2026-07-23",
             assemblage_id="assembly-1",
             assemblage_lot_count=2,
             assemblage_combined_lot_area_sqft=10000,
@@ -600,6 +659,14 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
     assert served["observed_imagery_year"] is None
     assert served["recent_change"] is False
     assert served["owner_name"] is None
+    assert served["owner_entity_type"] is None
+    assert served["owner_portfolio_id"] is None
+    assert served["owner_portfolio_match_method"] is None
+    assert served["owner_portfolio_lot_count"] is None
+    assert served["owner_portfolio_borough_count"] is None
+    assert served["owner_portfolio_total_lot_area_sqft"] is None
+    assert served["owner_portfolio_candidate_count"] is None
+    assert served["owner_portfolio_data_as_of"] is None
     assert served["assemblage_id"] is None
     assert served["assemblage_lot_count"] is None
     assert served["assemblage_combined_lot_area_sqft"] is None
@@ -615,6 +682,14 @@ def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:
             score_calibrated_p10=0.6,
             score_calibrated_p90=0.95,
             owner_name="ACME REALTY LLC",
+            owner_entity_type="llc",
+            owner_portfolio_id="acme-portfolio",
+            owner_portfolio_match_method="exact_normalized_pluto_owner_name",
+            owner_portfolio_lot_count=9,
+            owner_portfolio_borough_count=3,
+            owner_portfolio_total_lot_area_sqft=72000.0,
+            owner_portfolio_candidate_count=4,
+            owner_portfolio_data_as_of="2026-07-23",
             recent_change=True,
         )
         for i in range(30)
@@ -633,6 +708,12 @@ def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:
     assert served["score_calibrated_p10"] == 0.6
     assert served["score_calibrated_p90"] == 0.95
     assert served["owner_name"] == "ACME REALTY LLC"
+    assert served["owner_entity_type"] == "llc"
+    assert served["owner_portfolio_id"] == "acme-portfolio"
+    assert served["owner_portfolio_lot_count"] == 9
+    assert served["owner_portfolio_borough_count"] == 3
+    assert served["owner_portfolio_total_lot_area_sqft"] == 72000.0
+    assert served["owner_portfolio_candidate_count"] == 4
     assert served["recent_change"] is True
     # Authenticated payloads must never sit in a shared cache.
     assert r.headers["cache-control"] == "private, no-store"

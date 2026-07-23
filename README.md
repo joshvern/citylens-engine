@@ -76,13 +76,16 @@ Current pinned release tag:
   explicit eligibility/exclusion evidence; owner provenance; current-project
   context; historical NYC DOF final lien-sale diligence; current DOB
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
-  PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; and a publisher
-  quality-gate summary
+  PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; exact-name,
+  current-PLUTO legal-entity portfolio summaries; and a publisher quality-gate
+  summary
   exposed by the index/sweep endpoints. Owner, lien-sale, and violation fields
-  plus floodplain fields are stripped from anonymous map, sweep, and detail
-  responses. The authenticated compact map carries only
-  `critical_violation_count` and `floodplain_1pct`; detailed agency/map fields
-  and dates load on parcel selection.
+  plus portfolio and floodplain fields are stripped from anonymous map, sweep,
+  and detail responses. The authenticated compact map carries portfolio counts,
+  `critical_violation_count`, and `floodplain_1pct`; detailed agency/map fields
+  and dates load on parcel selection. Portfolio matching preserves legal form,
+  never groups natural-person names, and does not infer beneficial ownership or
+  related LLCs.
 - Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
 - `CITYLENS_API_KEYS` is deprecated and ignored by auth. The optional admin `X-API-Key` path (internal scripts only) is hash-only: `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256 of each key).
 

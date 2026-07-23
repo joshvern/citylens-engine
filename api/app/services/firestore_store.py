@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from google.cloud import firestore
 
+from .parcel_workflow_analytics import milestone_patch
 from .retry import retry_transient
 
 
@@ -370,10 +371,15 @@ class FirestoreStore:
             .collection("parcel_workflow")
         )
 
-    def list_parcel_workflow(self, *, app_user_id: str) -> list[dict[str, Any]]:
+    def list_parcel_workflow(
+        self, *, app_user_id: str, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
         def _op() -> list[dict[str, Any]]:
             docs = self._parcel_workflow_col(app_user_id).limit(500).stream()
-            return [snap.to_dict() or {} for snap in docs]
+            rows = [snap.to_dict() or {} for snap in docs]
+            if not include_archived:
+                rows = [row for row in rows if row.get("archived_at") is None]
+            return rows
 
         return retry_transient(_op)
 
@@ -384,32 +390,130 @@ class FirestoreStore:
         bbl: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        def _op() -> dict[str, Any]:
-            ref = self._parcel_workflow_col(app_user_id).document(bbl)
-            snap = ref.get()
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any]:
+            snap = ref.get(transaction=transaction)
             existing = snap.to_dict() if snap.exists else {}
             now = utcnow()
+            existing = existing or {}
+            changed_fields = sorted(
+                key
+                for key, value in payload.items()
+                if existing.get(key) != value
+            )
+            was_archived = existing.get("archived_at") is not None
+            event_type = (
+                "created" if not snap.exists else "restored" if was_archived else "updated"
+            )
+            milestones = milestone_patch(
+                outcome=str(payload.get("outcome") or "unknown"),
+                existing=existing,
+                occurred_at=now,
+            )
+            event_count = int(existing.get("event_count") or 0)
+            should_write_event = bool(changed_fields or was_archived or not snap.exists)
             doc = {
-                **(existing or {}),
+                **existing,
                 **payload,
+                **milestones,
                 "bbl": bbl,
                 "user_id": app_user_id,
-                "saved_at": (existing or {}).get("saved_at") or now,
+                "saved_at": existing.get("saved_at") or now,
                 "updated_at": now,
+                "archived_at": None,
+                "event_count": event_count + (1 if should_write_event else 0),
             }
-            ref.set(doc)
+            transaction.set(ref, doc)
+            if should_write_event:
+                event = {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": event_type,
+                    "occurred_at": now,
+                    "from_stage": existing.get("stage"),
+                    "to_stage": payload.get("stage"),
+                    "from_outcome": existing.get("outcome"),
+                    "to_outcome": payload.get("outcome"),
+                    "from_decision_reason": existing.get("decision_reason"),
+                    "to_decision_reason": payload.get("decision_reason"),
+                    # Preserve an audit trail without copying note or assignee
+                    # values into an analytics-facing event record.
+                    "changed_fields": changed_fields,
+                }
+                transaction.set(ref.collection("events").document(event_id), event)
             return doc
+
+        def _op() -> dict[str, Any]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
 
         return retry_transient(_op)
 
     def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
-        def _op() -> bool:
-            ref = self._parcel_workflow_col(app_user_id).document(bbl)
-            snap = ref.get()
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> bool:
+            snap = ref.get(transaction=transaction)
             if not snap.exists:
                 return False
-            ref.delete()
+            data = snap.to_dict() or {}
+            if data.get("archived_at") is not None:
+                return False
+            now = utcnow()
+            transaction.set(
+                ref,
+                {
+                    "archived_at": now,
+                    "updated_at": now,
+                    "event_count": int(data.get("event_count") or 0) + 1,
+                },
+                merge=True,
+            )
+            transaction.set(
+                ref.collection("events").document(event_id),
+                {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": "archived",
+                    "occurred_at": now,
+                    "from_stage": data.get("stage"),
+                    "to_stage": data.get("stage"),
+                    "from_outcome": data.get("outcome"),
+                    "to_outcome": data.get("outcome"),
+                    "from_decision_reason": data.get("decision_reason"),
+                    "to_decision_reason": data.get("decision_reason"),
+                    "changed_fields": ["archived_at"],
+                },
+            )
             return True
+
+        def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def list_parcel_workflow_events(
+        self, *, app_user_id: str, bbl: str
+    ) -> list[dict[str, Any]]:
+        def _op() -> list[dict[str, Any]]:
+            ref = self._parcel_workflow_col(app_user_id).document(bbl)
+            if not ref.get().exists:
+                return []
+            docs = (
+                ref.collection("events")
+                .order_by("occurred_at", direction=firestore.Query.DESCENDING)
+                .limit(200)
+                .stream()
+            )
+            return [snap.to_dict() or {} for snap in docs]
 
         return retry_transient(_op)
 

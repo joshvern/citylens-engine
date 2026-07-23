@@ -330,6 +330,18 @@ ParcelWorkflowStage = Literal[
     "new", "reviewing", "contacted", "underwriting", "pursue", "pass"
 ]
 
+ParcelWorkflowOutcome = Literal[
+    "unknown",
+    "owner_contacted",
+    "meeting_scheduled",
+    "qualified",
+    "offer_submitted",
+    "under_contract",
+    "closed",
+    "rejected",
+    "lost",
+]
+
 
 class ParcelWorkflowUpdate(BaseModel):
     borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
@@ -339,17 +351,7 @@ class ParcelWorkflowUpdate(BaseModel):
     assignee: Optional[str] = Field(default=None, max_length=128)
     watching: bool = True
     decision_reason: Optional[str] = Field(default=None, max_length=80)
-    outcome: Optional[
-        Literal[
-            "unknown",
-            "owner_contacted",
-            "meeting_scheduled",
-            "offer_submitted",
-            "under_contract",
-            "closed",
-            "lost",
-        ]
-    ] = "unknown"
+    outcome: Optional[ParcelWorkflowOutcome] = "unknown"
     snapshot: "ParcelWorkflowSnapshot" = Field(
         default_factory=lambda: ParcelWorkflowSnapshot()
     )
@@ -358,13 +360,45 @@ class ParcelWorkflowUpdate(BaseModel):
 class ParcelWorkflowSnapshot(BaseModel):
     """Small, typed baseline used to detect decision-relevant parcel changes."""
 
+    feed_generated_at: Optional[str] = Field(default=None, max_length=40)
     property_facts_as_of: Optional[str] = Field(default=None, max_length=32)
+    citywide_rank: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    acquisition_rank: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    priority_tier: Optional[
+        Literal["highest", "high", "medium", "watch"]
+    ] = None
+    opportunity_category: Optional[
+        Literal[
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+            "completed_project",
+        ]
+    ] = None
+    score_calibrated: Optional[float] = Field(default=None, ge=0, le=1)
     zoning_district_1: Optional[str] = Field(default=None, max_length=32)
     land_use: Optional[str] = Field(default=None, max_length=8)
     year_built: Optional[int] = Field(default=None, ge=0, le=2100)
     allowed_far: Optional[float] = Field(default=None, ge=0, le=100)
     unused_floor_area_sqft: Optional[float] = None
     owner_name: Optional[str] = Field(default=None, max_length=256)
+    owner_entity_type: Optional[
+        Literal[
+            "unknown",
+            "individual",
+            "llc",
+            "corp",
+            "partnership",
+            "trust",
+            "estate",
+            "government",
+            "religious",
+            "nonprofit",
+            "hdfc",
+        ]
+    ] = None
+    owner_portfolio_lot_count: Optional[int] = Field(default=None, ge=1)
     last_sale_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_nb_filing_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_nb_status: Optional[str] = Field(default=None, max_length=256)
@@ -378,6 +412,81 @@ class ParcelWorkflowItem(ParcelWorkflowUpdate):
     bbl: str
     saved_at: datetime
     updated_at: datetime
+
+
+class ParcelWorkflowEvent(BaseModel):
+    event_id: str
+    schema_version: Literal["citylens/parcel-workflow-event@v1"]
+    bbl: str
+    event_type: Literal["created", "updated", "archived", "restored"]
+    occurred_at: datetime
+    from_stage: Optional[ParcelWorkflowStage] = None
+    to_stage: Optional[ParcelWorkflowStage] = None
+    from_outcome: Optional[ParcelWorkflowOutcome] = None
+    to_outcome: Optional[ParcelWorkflowOutcome] = None
+    from_decision_reason: Optional[str] = None
+    to_decision_reason: Optional[str] = None
+    changed_fields: list[str] = Field(default_factory=list)
+
+
+class ParcelWorkflowRate(BaseModel):
+    numerator: int
+    denominator: int
+    rate: Optional[float] = None
+    sufficient_denominator: bool
+
+
+class ParcelWorkflowFunnel(BaseModel):
+    saved: int
+    contacted: int
+    meeting_scheduled: int
+    qualified: int
+    offer_submitted: int
+    under_contract: int
+    closed: int
+    rejected: int
+    lost: int
+    contacted_per_saved: ParcelWorkflowRate
+    qualified_per_contacted: ParcelWorkflowRate
+    offer_per_qualified: ParcelWorkflowRate
+    contract_per_offer: ParcelWorkflowRate
+    close_per_contract: ParcelWorkflowRate
+
+
+class ParcelWorkflowCohort(BaseModel):
+    dimension: Literal["borough", "rank_band", "opportunity"]
+    value: str
+    total: int
+    contacted: int
+    qualified: int
+    offer_submitted: int
+    under_contract: int
+    closed: int
+    rejected: int
+    lost: int
+    contacted_rate: Optional[float] = None
+    qualified_rate: Optional[float] = None
+    close_rate: Optional[float] = None
+
+
+class ParcelWorkflowAnalytics(BaseModel):
+    schema_version: Literal["citylens/parcel-workflow-analytics@v1"]
+    generated_at: datetime
+    measurement_status: Literal["collecting", "directional", "usable"]
+    measurement_label: str
+    total_records: int
+    active_records: int
+    archived_records: int
+    event_history_records: int
+    rank_snapshot_records: int
+    minimum_cohort_size: int
+    minimum_rate_denominator: int
+    stage_counts: dict[str, int]
+    outcome_counts: dict[str, int]
+    decision_reason_counts: dict[str, int]
+    funnel: ParcelWorkflowFunnel
+    cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ParcelSavedSearchUpdate(BaseModel):

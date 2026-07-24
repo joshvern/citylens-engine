@@ -716,6 +716,88 @@ def validate_index(
         "index: land-use project-detail failure IDs are not empty",
         failures,
     )
+    current_tax_lot_candidate_count = land_use_reconciliation.get(
+        "current_tax_lot_reconciliation_candidate_count"
+    )
+    current_tax_lot_relation_count = land_use_reconciliation.get(
+        "current_tax_lot_reconciled_relation_count"
+    )
+    current_tax_lot_project_count = land_use_reconciliation.get(
+        "current_tax_lot_reconciled_project_count"
+    )
+    current_tax_lot_project_ids = land_use_reconciliation.get(
+        "current_tax_lot_reconciled_project_ids"
+    )
+    current_tax_lot_unmatched_count = land_use_reconciliation.get(
+        "current_tax_lot_unmatched_user_input_count"
+    )
+    current_tax_lot_universe_count = land_use_reconciliation.get(
+        "current_tax_lot_universe_count"
+    )
+    current_tax_lot_index_sha256 = land_use_reconciliation.get(
+        "current_tax_lot_index_sha256"
+    )
+    _expect(
+        isinstance(current_tax_lot_candidate_count, int)
+        and not isinstance(current_tax_lot_candidate_count, bool)
+        and current_tax_lot_candidate_count > 0,
+        "index: current-tax-lot reconciliation has no candidates",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_relation_count, int)
+        and not isinstance(current_tax_lot_relation_count, bool)
+        and current_tax_lot_relation_count > 0
+        and isinstance(current_tax_lot_candidate_count, int)
+        and current_tax_lot_relation_count <= current_tax_lot_candidate_count,
+        "index: current-tax-lot reconciled relation count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_project_count, int)
+        and not isinstance(current_tax_lot_project_count, bool)
+        and current_tax_lot_project_count > 0
+        and isinstance(current_tax_lot_relation_count, int)
+        and current_tax_lot_project_count <= current_tax_lot_relation_count,
+        "index: current-tax-lot reconciled project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_project_ids, list)
+        and all(
+            isinstance(project_id, str) and bool(project_id.strip())
+            for project_id in current_tax_lot_project_ids
+        )
+        and len(set(current_tax_lot_project_ids))
+        == len(current_tax_lot_project_ids)
+        and len(current_tax_lot_project_ids) == current_tax_lot_project_count,
+        "index: current-tax-lot reconciled project IDs are invalid",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_unmatched_count, int)
+        and not isinstance(current_tax_lot_unmatched_count, bool)
+        and current_tax_lot_unmatched_count >= 0,
+        "index: current-tax-lot unmatched input count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_universe_count, int)
+        and not isinstance(current_tax_lot_universe_count, bool)
+        and current_tax_lot_universe_count >= 800_000,
+        "index: current PLUTO tax-lot universe is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(current_tax_lot_index_sha256, str)
+        and len(current_tax_lot_index_sha256) == 64
+        and all(
+            character in "0123456789abcdef"
+            for character in current_tax_lot_index_sha256
+        ),
+        "index: current PLUTO tax-lot digest is invalid",
+        failures,
+    )
     _expect(
         isinstance(
             land_use_reconciliation.get("candidate_blocked_bbl_count"), int

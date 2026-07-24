@@ -118,6 +118,29 @@ class ParcelDecisionAuditCheck(BaseModel):
     affects_acquisition_eligibility: bool = False
 
 
+class ParcelDecisionReadiness(BaseModel):
+    """Conservative, evidence-derived next step for an acquisition screen.
+
+    This is workflow guidance, not a model output or purchase recommendation.
+    The builder must preserve the same anonymous/private boundary as the
+    underlying audit checks.
+    """
+
+    status: Literal[
+        "blocked",
+        "incomplete",
+        "review_required",
+        "initial_review_ready",
+        "limited_preview",
+    ]
+    label: str
+    recommended_action: str
+    blockers: list[str] = Field(default_factory=list)
+    review_items: list[str] = Field(default_factory=list)
+    cleared_items: list[str] = Field(default_factory=list)
+    disclaimer: str
+
+
 class ParcelDecisionAudit(BaseModel):
     schema_version: Literal["citylens/parcel-decision-audit@v1"]
     overall_status: Literal[
@@ -128,6 +151,7 @@ class ParcelDecisionAudit(BaseModel):
     ]
     overall_label: str
     validation: ParcelDecisionAuditValidation
+    readiness: ParcelDecisionReadiness
     checks: list[ParcelDecisionAuditCheck] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 

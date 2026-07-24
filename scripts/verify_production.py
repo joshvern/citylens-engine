@@ -626,6 +626,63 @@ def validate_public_decision_audit(
         failures,
     )
 
+    readiness = audit.get("readiness")
+    _expect(
+        isinstance(readiness, dict),
+        "parcel detail: decision readiness block is missing",
+        failures,
+    )
+    readiness = readiness if isinstance(readiness, dict) else {}
+    _expect(
+        readiness.get("status") == "limited_preview",
+        "parcel detail: anonymous decision readiness is not a limited preview",
+        failures,
+    )
+    _expect(
+        isinstance(readiness.get("recommended_action"), str)
+        and bool(readiness["recommended_action"].strip()),
+        "parcel detail: decision readiness action is missing",
+        failures,
+    )
+    for key in ("blockers", "review_items", "cleared_items"):
+        _expect(
+            isinstance(readiness.get(key), list),
+            f"parcel detail: decision readiness {key} is invalid",
+            failures,
+        )
+    _expect(
+        readiness.get("blockers") == [],
+        "parcel detail: public eligible lead unexpectedly has readiness blockers",
+        failures,
+    )
+    readiness_disclaimer = str(readiness.get("disclaimer") or "").lower()
+    for phrase in ("purchase recommendation", "seller-intent score"):
+        _expect(
+            phrase in readiness_disclaimer,
+            f"parcel detail: readiness disclaimer omits {phrase}",
+            failures,
+        )
+    public_readiness_text = " ".join(
+        [
+            str(readiness.get("label") or ""),
+            str(readiness.get("recommended_action") or ""),
+            *(str(value) for value in readiness.get("review_items", [])),
+            *(str(value) for value in readiness.get("cleared_items", [])),
+        ]
+    ).lower()
+    for phrase in (
+        "tax-lien",
+        "immediate-hazard",
+        "floodplain",
+        "environmental review",
+        "recent aerial change",
+    ):
+        _expect(
+            phrase not in public_readiness_text,
+            f"parcel detail: anonymous readiness exposed {phrase}",
+            failures,
+        )
+
     validation = audit.get("validation")
     _expect(
         isinstance(validation, dict),

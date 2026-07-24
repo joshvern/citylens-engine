@@ -31,7 +31,10 @@ owns the browser UI.
     declares whether it can affect model rank or acquisition eligibility.
     Public responses retain methodology and current-gate explanations but
     replace owner and diligence evidence with sign-in gates. User workflow
-    evidence remains a separate authenticated contract.
+    evidence remains a separate authenticated contract. A server-derived
+    `readiness` block converts those same checks into a conservative next
+    diligence state and suggested workflow action without changing the rank or
+    making a purchase, seller-intent, or transaction-probability claim.
   - Parcel feed generations are immutable. A stable GCS manifest pointer names
     the active generation and records each object's SHA-256, byte size, and row
     count; readers validate all of these and retain a legacy-flat fallback.

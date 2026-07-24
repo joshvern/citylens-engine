@@ -329,6 +329,26 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
         "schema_version": "citylens/parcel-decision-audit@v1",
         "overall_status": "screened",
         "overall_label": "Eligible lead after current gates",
+        "readiness": {
+            "status": "limited_preview",
+            "label": "Sign in to complete the decision screen",
+            "recommended_action": (
+                "Review ownership provenance and current diligence overlays "
+                "before acting."
+            ),
+            "blockers": [],
+            "review_items": [
+                "Protected ownership and diligence evidence is withheld in this preview."
+            ],
+            "cleared_items": [
+                "Current project and acquisition eligibility gates passed.",
+                "Current PLUTO property facts matched this tax lot.",
+            ],
+            "disclaimer": (
+                "Decision readiness is not a purchase recommendation or "
+                "seller-intent score."
+            ),
+        },
         "validation": {
             "target": "dob_nb_job_filing",
             "evaluation_scope": "2024 PLUTO to 2025 DOB NB filings",
@@ -420,6 +440,9 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
 
     bad = deepcopy(payload)
     bad["decision_audit"]["validation"]["precision_at_100"] = 0.99
+    bad["decision_audit"]["readiness"]["review_items"] = [
+        "Review the private tax-lien evidence."
+    ]
     bad["decision_audit"]["checks"][4]["summary"] = "PRIVATE OWNER LLC"
     bad["decision_audit"]["checks"][5]["affects_model_rank"] = True
     failures = validate_public_decision_audit(
@@ -427,6 +450,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
         model_metadata=model_metadata,
     )
     assert any("precision_at_100 does not match" in failure for failure in failures)
+    assert any("anonymous readiness exposed tax-lien" in failure for failure in failures)
     assert any("anonymous ownership evidence" in failure for failure in failures)
     assert any("diligence-only role is ambiguous" in failure for failure in failures)
 

@@ -76,5 +76,18 @@ on the server:
 
 A due date without a concrete action is rejected. Closing, rejecting, losing,
 or passing on a lead clears its stale reminder and removes it from the open
-queue. These operational completeness states do not change ranks, fabricate
-outcomes, or relax the fixed-horizon measurement rules.
+queue. The response also reports plan, assignee, and outcome-review coverage
+over valid open workflow rows; an empty queue reports no percentage rather
+than inventing 100% adoption.
+
+`POST /v1/parcel-intel/workflow/{bbl}/reminder` snoozes the current
+server-derived reminder for 1, 3, 7, or 14 days; `days=0` restores it. A
+server-owned fingerprint binds that snooze to the lead's current action, due
+date, assignee, stage, and outcome. Changing any of those fields invalidates
+the old snooze immediately, and repeated requests for the same active snooze
+do not create duplicate audit events. Reminder timestamps and internal
+fingerprints do not alter the lead's substantive `updated_at`.
+
+These operational completeness states do not change ranks, fabricate
+outcomes, relax the fixed-horizon measurement rules, or claim outbound email
+or webhook delivery.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -71,11 +72,37 @@ def _as_date(value: Any) -> date | None:
     return None
 
 
-def _is_terminal(item: dict[str, Any]) -> bool:
+def workflow_is_terminal(item: dict[str, Any]) -> bool:
     return (
         str(item.get("stage") or "") in _TERMINAL_STAGES
         or str(item.get("outcome") or "") in _TERMINAL_OUTCOMES
     )
+
+
+def workflow_reminder_fingerprint(item: dict[str, Any]) -> str:
+    """Return a stable identity for the current follow-up commitment.
+
+    Snoozing applies only while these decision-relevant workflow fields remain
+    unchanged. Editing the action, due date, assignee, stage, or outcome
+    invalidates the old snooze without requiring a cleanup write.
+    """
+
+    values = (
+        item.get("bbl"),
+        item.get("stage"),
+        item.get("outcome"),
+        item.get("assignee"),
+        item.get("next_action"),
+        item.get("next_action_due_date"),
+    )
+    encoded = "\x1f".join(str(value or "").strip() for value in values)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _coverage(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator, 4)
 
 
 def build_workflow_actions(
@@ -88,7 +115,7 @@ def build_workflow_actions(
         generated_at = generated_at.replace(tzinfo=timezone.utc)
     generated_at = generated_at.astimezone(timezone.utc)
     today = generated_at.date()
-    open_items = [item for item in items if not _is_terminal(item)]
+    open_items = [item for item in items if not workflow_is_terminal(item)]
     completed_count = len(items) - len(open_items)
     output: list[dict[str, Any]] = []
 
@@ -104,6 +131,11 @@ def build_workflow_actions(
         due_date = _as_date(item.get("next_action_due_date"))
         days_since_update = max((today - updated_at.date()).days, 0)
         days_since_save = max((today - saved_at.date()).days, 0)
+        needs_assignee = not bool(str(item.get("assignee") or "").strip())
+        needs_outcome_update = (
+            str(item.get("outcome") or "unknown") == "unknown"
+            and days_since_save >= OUTCOME_UPDATE_AFTER_DAYS
+        )
         if next_action is None or due_date is None:
             state = "unscheduled"
             days_overdue = 0
@@ -123,6 +155,13 @@ def build_workflow_actions(
         snapshot = (
             item.get("snapshot") if isinstance(item.get("snapshot"), dict) else {}
         )
+        snoozed_until = _as_datetime(item.get("reminder_snoozed_until"))
+        is_snoozed = bool(
+            snoozed_until
+            and snoozed_until > generated_at
+            and item.get("reminder_fingerprint")
+            == workflow_reminder_fingerprint(item)
+        )
         output.append(
             {
                 "bbl": str(item.get("bbl") or ""),
@@ -136,11 +175,18 @@ def build_workflow_actions(
                 "action_state": state,
                 "days_overdue": days_overdue,
                 "days_since_update": days_since_update,
-                "needs_assignee": not bool(str(item.get("assignee") or "").strip()),
-                "needs_outcome_update": (
-                    str(item.get("outcome") or "unknown") == "unknown"
-                    and days_since_save >= OUTCOME_UPDATE_AFTER_DAYS
+                "needs_assignee": needs_assignee,
+                "needs_outcome_update": needs_outcome_update,
+                "requires_attention": (
+                    state
+                    in {"overdue", "due_today", "due_soon", "unscheduled"}
+                    or needs_assignee
+                    or needs_outcome_update
                 ),
+                # Never expose an expired or invalidated stored timestamp as
+                # an effective reminder state.
+                "reminder_snoozed_until": snoozed_until if is_snoozed else None,
+                "is_snoozed": is_snoozed,
                 "citywide_rank": snapshot.get("citywide_rank"),
                 "priority_tier": snapshot.get("priority_tier"),
                 "opportunity_category": snapshot.get("opportunity_category"),
@@ -166,6 +212,16 @@ def build_workflow_actions(
         state: sum(1 for item in output if item["action_state"] == state)
         for state in _STATE_ORDER
     }
+    complete_plan_count = sum(
+        1
+        for item in output
+        if item["next_action"] and item["next_action_due_date"]
+    )
+    assigned_count = sum(1 for item in output if not item["needs_assignee"])
+    outcome_current_count = sum(
+        1 for item in output if not item["needs_outcome_update"]
+    )
+    attention_items = [item for item in output if item["requires_attention"]]
     return {
         "schema_version": ACTION_SCHEMA,
         "generated_at": generated_at,
@@ -181,5 +237,17 @@ def build_workflow_actions(
         "outcome_update_due_count": sum(
             1 for item in output if item["needs_outcome_update"]
         ),
+        "attention_count": sum(
+            1 for item in attention_items if not item["is_snoozed"]
+        ),
+        "snoozed_count": sum(
+            1 for item in attention_items if item["is_snoozed"]
+        ),
+        "complete_plan_count": complete_plan_count,
+        "plan_coverage_rate": _coverage(complete_plan_count, len(output)),
+        "assigned_count": assigned_count,
+        "assignee_coverage_rate": _coverage(assigned_count, len(output)),
+        "outcome_current_count": outcome_current_count,
+        "outcome_current_rate": _coverage(outcome_current_count, len(output)),
         "items": output,
     }

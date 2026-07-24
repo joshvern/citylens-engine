@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from google.cloud import firestore
 
+from .parcel_workflow_actions import (
+    workflow_is_terminal,
+    workflow_reminder_fingerprint,
+)
 from .parcel_workflow_analytics import milestone_patch
 from .retry import retry_transient
 
@@ -526,6 +530,83 @@ class FirestoreStore:
             return True
 
         def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def set_parcel_workflow_reminder_snooze(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        days: int,
+    ) -> dict[str, Any] | None:
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any] | None:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return None
+            existing = snap.to_dict() or {}
+            if (
+                existing.get("archived_at") is not None
+                or workflow_is_terminal(existing)
+            ):
+                return None
+            now = utcnow()
+            snoozed_until = now + timedelta(days=days) if days > 0 else None
+            fingerprint = (
+                workflow_reminder_fingerprint(existing) if days > 0 else None
+            )
+            existing_until = existing.get("reminder_snoozed_until")
+            same_active_snooze = (
+                days > 0
+                and isinstance(existing_until, datetime)
+                and existing_until > now
+                and existing.get("reminder_fingerprint") == fingerprint
+                and existing.get("reminder_snooze_days") == days
+            )
+            already_unsnoozed = (
+                days == 0
+                and existing_until is None
+                and existing.get("reminder_fingerprint") is None
+                and existing.get("reminder_snooze_days") is None
+            )
+            if same_active_snooze or already_unsnoozed:
+                return existing
+            patch = {
+                "reminder_snoozed_until": snoozed_until,
+                "reminder_fingerprint": fingerprint,
+                "reminder_snooze_days": days if days > 0 else None,
+                "reminder_updated_at": now,
+                "event_count": int(existing.get("event_count") or 0) + 1,
+            }
+            transaction.set(ref, patch, merge=True)
+            transaction.set(
+                ref.collection("events").document(event_id),
+                {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": "updated",
+                    "occurred_at": now,
+                    "from_stage": existing.get("stage"),
+                    "to_stage": existing.get("stage"),
+                    "from_outcome": existing.get("outcome"),
+                    "to_outcome": existing.get("outcome"),
+                    "from_decision_reason": existing.get("decision_reason"),
+                    "to_decision_reason": existing.get("decision_reason"),
+                    # The audit trail records the user-facing state change,
+                    # not the internal fingerprint/deduplication fields.
+                    "changed_fields": ["reminder_snoozed_until"],
+                },
+            )
+            return {**existing, **patch}
+
+        def _op() -> dict[str, Any] | None:
             transaction = self.client.transaction()
             return _txn(transaction)
 

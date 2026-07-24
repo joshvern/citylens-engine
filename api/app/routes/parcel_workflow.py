@@ -14,6 +14,8 @@ from ..models.schemas import (
     ParcelWorkflowAnalyticsMethodology,
     ParcelWorkflowEvent,
     ParcelWorkflowItem,
+    ParcelWorkflowReminderSnoozeRequest,
+    ParcelWorkflowReminderSnoozeResponse,
     ParcelWorkflowSnapshot,
     ParcelWorkflowUpdate,
 )
@@ -185,6 +187,43 @@ def upsert_workflow(
     return store.upsert_parcel_workflow(
         app_user_id=auth.app_user_id, bbl=bbl, payload=payload
     )
+
+
+@router.post(
+    "/parcel-intel/workflow/{bbl}/reminder",
+    response_model=ParcelWorkflowReminderSnoozeResponse,
+)
+def snooze_workflow_reminder(
+    bbl: str,
+    body: ParcelWorkflowReminderSnoozeRequest,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    existing = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id, bbl=bbl
+    )
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Workflow record not found")
+    updated = store.set_parcel_workflow_reminder_snooze(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+        days=body.days,
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Only open, active workflow records can be snoozed",
+        )
+    snoozed_until = updated.get("reminder_snoozed_until")
+    return {
+        "bbl": bbl,
+        "reminder_snoozed_until": snoozed_until,
+        "is_snoozed": snoozed_until is not None,
+    }
 
 
 @router.delete("/parcel-intel/workflow/{bbl}", status_code=status.HTTP_204_NO_CONTENT)

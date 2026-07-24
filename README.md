@@ -113,8 +113,15 @@ Current pinned release tag:
   `/v1/parcel-intel/workflow/actions` endpoint turns each open lead's
   structured next action and due date into a server-derived queue: overdue,
   due today, due within seven days, scheduled, or unscheduled. It also reports
-  missing assignees and unknown outcomes after 30 days. Terminal records clear
-  stale reminders and leave the action queue automatically. The authenticated
+  missing assignees, unknown outcomes after 30 days, and adoption coverage for
+  complete plans, assignees, and current outcome reviews. The authenticated
+  `/v1/parcel-intel/workflow/{bbl}/reminder` endpoint can snooze the current
+  reminder identity for a bounded interval or restore it. The server binds a
+  snooze to the lead's current action, due date, assignee, stage, and outcome;
+  editing any of those fields resurfaces the changed commitment immediately.
+  Repeat requests are transactionally deduplicated, and terminal records clear
+  stale reminders and leave the action queue automatically. These are private
+  in-product reminders, not email or webhook delivery. The authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
   snapshots with the current atomic feed and reports owner, newer-sale,
   zoning, opportunity, rank/tier, lien, violation, flood, environmental designation,

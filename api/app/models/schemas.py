@@ -593,6 +593,9 @@ class ParcelWorkflowActionItem(BaseModel):
     days_since_update: int = Field(ge=0)
     needs_assignee: bool
     needs_outcome_update: bool
+    requires_attention: bool
+    reminder_snoozed_until: Optional[datetime] = None
+    is_snoozed: bool
     citywide_rank: Optional[int] = Field(default=None, ge=1)
     priority_tier: Optional[
         Literal["highest", "high", "medium", "watch"]
@@ -623,7 +626,25 @@ class ParcelWorkflowActions(BaseModel):
     unscheduled_count: int = Field(ge=0)
     unassigned_count: int = Field(ge=0)
     outcome_update_due_count: int = Field(ge=0)
+    attention_count: int = Field(ge=0)
+    snoozed_count: int = Field(ge=0)
+    complete_plan_count: int = Field(ge=0)
+    plan_coverage_rate: Optional[float] = Field(default=None, ge=0, le=1)
+    assigned_count: int = Field(ge=0)
+    assignee_coverage_rate: Optional[float] = Field(default=None, ge=0, le=1)
+    outcome_current_count: int = Field(ge=0)
+    outcome_current_rate: Optional[float] = Field(default=None, ge=0, le=1)
     items: list[ParcelWorkflowActionItem] = Field(default_factory=list)
+
+
+class ParcelWorkflowReminderSnoozeRequest(BaseModel):
+    days: Literal[0, 1, 3, 7, 14]
+
+
+class ParcelWorkflowReminderSnoozeResponse(BaseModel):
+    bbl: str
+    reminder_snoozed_until: Optional[datetime] = None
+    is_snoozed: bool
 
 
 class ParcelWorkflowAlert(BaseModel):

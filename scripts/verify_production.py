@@ -191,14 +191,14 @@ def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     _expect(
         data.get("schema_version")
-        == "citylens/parcel-workflow-analytics-methodology@v1",
+        == "citylens/parcel-workflow-analytics-methodology@v2",
         "workflow methodology: unexpected schema version",
         failures,
     )
     _expect(
         data.get("analytics_schema_version")
-        == "citylens/parcel-workflow-analytics@v2",
-        "workflow methodology: maturity-aware analytics v2 is not active",
+        == "citylens/parcel-workflow-analytics@v3",
+        "workflow methodology: uncertainty-aware analytics v3 is not active",
         failures,
     )
     _expect(
@@ -221,6 +221,12 @@ def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
         isinstance(data.get("minimum_rate_denominator"), int)
         and data["minimum_rate_denominator"] >= 10,
         "workflow methodology: minimum rate denominator must be at least 10",
+        failures,
+    )
+    _expect(
+        data.get("confidence_level") == 0.95
+        and "Wilson" in str(data.get("uncertainty_semantics") or ""),
+        "workflow methodology: 95% Wilson interval contract is not active",
         failures,
     )
     return failures

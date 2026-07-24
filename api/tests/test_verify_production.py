@@ -324,11 +324,13 @@ def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:
     methodology = {
         "schema_version": (
-            "citylens/parcel-workflow-analytics-methodology@v1"
+            "citylens/parcel-workflow-analytics-methodology@v2"
         ),
-        "analytics_schema_version": "citylens/parcel-workflow-analytics@v2",
+        "analytics_schema_version": "citylens/parcel-workflow-analytics@v3",
         "model_accuracy_claim": False,
         "minimum_rate_denominator": 10,
+        "confidence_level": 0.95,
+        "uncertainty_semantics": "Two-sided 95% Wilson score intervals.",
         "horizons": [
             {"milestone": milestone, "horizon_days": days}
             for milestone, days in (
@@ -349,7 +351,7 @@ def test_workflow_methodology_validator_requires_maturity_aware_contract() -> No
     bad["model_accuracy_claim"] = True
     bad["horizons"][0]["horizon_days"] = 5
     failures = validate_workflow_methodology(bad)
-    assert any("analytics v2" in failure for failure in failures)
+    assert any("analytics v3" in failure for failure in failures)
     assert any("must not claim model accuracy" in failure for failure in failures)
     assert any("fixed horizons" in failure for failure in failures)
 

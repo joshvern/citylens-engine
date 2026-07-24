@@ -583,10 +583,17 @@ class ParcelWorkflowEvent(BaseModel):
     changed_fields: list[str] = Field(default_factory=list)
 
 
+class ParcelWorkflowConfidenceInterval(BaseModel):
+    confidence_level: Literal[0.95]
+    lower: float = Field(ge=0, le=1)
+    upper: float = Field(ge=0, le=1)
+
+
 class ParcelWorkflowRate(BaseModel):
     numerator: int
     denominator: int
     rate: Optional[float] = None
+    confidence_interval: Optional[ParcelWorkflowConfidenceInterval] = None
     sufficient_denominator: bool
 
 
@@ -607,6 +614,7 @@ class ParcelWorkflowMaturityWindow(BaseModel):
     reached_within_horizon: int = Field(ge=0)
     pending_records: int = Field(ge=0)
     rate: Optional[float] = Field(default=None, ge=0, le=1)
+    confidence_interval: Optional[ParcelWorkflowConfidenceInterval] = None
     sufficient_denominator: bool
 
 
@@ -618,16 +626,18 @@ class ParcelWorkflowHorizonDefinition(BaseModel):
 
 class ParcelWorkflowAnalyticsMethodology(BaseModel):
     schema_version: Literal[
-        "citylens/parcel-workflow-analytics-methodology@v1"
+        "citylens/parcel-workflow-analytics-methodology@v2"
     ]
     analytics_schema_version: Literal[
-        "citylens/parcel-workflow-analytics@v2"
+        "citylens/parcel-workflow-analytics@v3"
     ]
     horizons: list[ParcelWorkflowHorizonDefinition]
     minimum_cohort_size: int = Field(ge=1)
     minimum_rate_denominator: int = Field(ge=1)
+    confidence_level: Literal[0.95]
     selection_scope: str
     timestamp_semantics: str
+    uncertainty_semantics: str
     model_accuracy_claim: Literal[False]
 
 
@@ -663,12 +673,21 @@ class ParcelWorkflowCohort(BaseModel):
     qualified_rate_denominator: int = 0
     close_rate_denominator: int = 0
     contacted_rate: Optional[float] = None
+    contacted_confidence_interval: Optional[
+        ParcelWorkflowConfidenceInterval
+    ] = None
     qualified_rate: Optional[float] = None
+    qualified_confidence_interval: Optional[
+        ParcelWorkflowConfidenceInterval
+    ] = None
     close_rate: Optional[float] = None
+    close_confidence_interval: Optional[
+        ParcelWorkflowConfidenceInterval
+    ] = None
 
 
 class ParcelWorkflowAnalytics(BaseModel):
-    schema_version: Literal["citylens/parcel-workflow-analytics@v2"]
+    schema_version: Literal["citylens/parcel-workflow-analytics@v3"]
     generated_at: datetime
     measurement_status: Literal["collecting", "directional", "usable"]
     measurement_label: str

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from math import sqrt
 from statistics import median
 from typing import Any, Iterable
 
 MINIMUM_COHORT_SIZE = 30
 MINIMUM_RATE_DENOMINATOR = 10
+CONFIDENCE_LEVEL = 0.95
+_WILSON_Z = 1.959963984540054
 
 _PROGRESSION = (
     "owner_contacted",
@@ -40,9 +43,9 @@ def workflow_analytics_methodology() -> dict[str, Any]:
 
     return {
         "schema_version": (
-            "citylens/parcel-workflow-analytics-methodology@v1"
+            "citylens/parcel-workflow-analytics-methodology@v2"
         ),
-        "analytics_schema_version": "citylens/parcel-workflow-analytics@v2",
+        "analytics_schema_version": "citylens/parcel-workflow-analytics@v3",
         "horizons": [
             {
                 "milestone": milestone,
@@ -53,6 +56,7 @@ def workflow_analytics_methodology() -> dict[str, Any]:
         ],
         "minimum_cohort_size": MINIMUM_COHORT_SIZE,
         "minimum_rate_denominator": MINIMUM_RATE_DENOMINATOR,
+        "confidence_level": CONFIDENCE_LEVEL,
         "selection_scope": (
             "User-saved leads only; rates do not estimate all ranked parcels, "
             "seller intent, or transaction probability."
@@ -61,6 +65,11 @@ def workflow_analytics_methodology() -> dict[str, Any]:
             "Eligibility starts at immutable saved_at. Outcomes use the first "
             "recorded milestone timestamp; late backfills are not counted as "
             "within-horizon outcomes."
+        ),
+        "uncertainty_semantics": (
+            "Displayed prospective rates include two-sided 95% Wilson score "
+            "intervals. Point estimates remain hidden in the product until "
+            "the fixed-horizon denominator reaches the minimum rate threshold."
         ),
         "model_accuracy_claim": False,
     }
@@ -112,11 +121,36 @@ def _has_milestone(item: dict[str, Any], name: str) -> bool:
     return outcome == name
 
 
+def _wilson_interval(numerator: int, denominator: int) -> dict[str, float] | None:
+    if denominator <= 0:
+        return None
+    proportion = numerator / denominator
+    z_squared = _WILSON_Z**2
+    denominator_adjustment = 1 + z_squared / denominator
+    center = (
+        proportion + z_squared / (2 * denominator)
+    ) / denominator_adjustment
+    margin = (
+        _WILSON_Z
+        * sqrt(
+            (proportion * (1 - proportion) / denominator)
+            + (z_squared / (4 * denominator**2))
+        )
+        / denominator_adjustment
+    )
+    return {
+        "confidence_level": CONFIDENCE_LEVEL,
+        "lower": round(max(0.0, center - margin), 4),
+        "upper": round(min(1.0, center + margin), 4),
+    }
+
+
 def _rate(numerator: int, denominator: int) -> dict[str, Any]:
     return {
         "numerator": numerator,
         "denominator": denominator,
         "rate": round(numerator / denominator, 4) if denominator else None,
+        "confidence_interval": _wilson_interval(numerator, denominator),
         "sufficient_denominator": denominator >= MINIMUM_RATE_DENOMINATOR,
     }
 
@@ -198,6 +232,7 @@ def _maturity_window(
         "reached_within_horizon": reached,
         "pending_records": len(valid) - len(eligible),
         "rate": round(reached / len(eligible), 4) if eligible else None,
+        "confidence_interval": _wilson_interval(reached, len(eligible)),
         "sufficient_denominator": len(eligible) >= MINIMUM_RATE_DENOMINATOR,
     }
 
@@ -304,15 +339,24 @@ def _cohort_rows(
                         if contacted_eligible
                         else None
                     ),
+                    "contacted_confidence_interval": _wilson_interval(
+                        contacted_in_window, len(contacted_eligible)
+                    ),
                     "qualified_rate": (
                         round(qualified_in_window / len(qualified_eligible), 4)
                         if qualified_eligible
                         else None
                     ),
+                    "qualified_confidence_interval": _wilson_interval(
+                        qualified_in_window, len(qualified_eligible)
+                    ),
                     "close_rate": (
                         round(closed_in_window / len(close_eligible), 4)
                         if close_eligible
                         else None
+                    ),
+                    "close_confidence_interval": _wilson_interval(
+                        closed_in_window, len(close_eligible)
                     ),
                 }
             )
@@ -421,7 +465,7 @@ def build_workflow_analytics(
         )
 
     return {
-        "schema_version": "citylens/parcel-workflow-analytics@v2",
+        "schema_version": "citylens/parcel-workflow-analytics@v3",
         "generated_at": generated_at,
         "measurement_status": status,
         "measurement_label": label,

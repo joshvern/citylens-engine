@@ -249,6 +249,8 @@ def test_workflow_snapshot_and_saved_filters_are_typed(auth_override) -> None:
         "tax_lien_sale_year": None,
         "critical_violation_count": None,
         "floodplain_1pct": None,
+        "environmental_review_required": None,
+        "e_designation_number": None,
         "recent_change": None,
     }
 

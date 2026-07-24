@@ -153,6 +153,11 @@ class ParcelIntelRow(BaseModel):
     pfirm15_floodplain: Optional[bool] = None
     floodplain_1pct: Optional[bool] = None
     floodplain_data_as_of: Optional[str] = None
+    # Current PLUTO E-designation. This is notice of an air, noise, or
+    # hazardous-materials requirement, not proof of contamination.
+    environmental_review_required: Optional[bool] = None
+    e_designation_number: Optional[str] = None
+    e_designation_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -276,6 +281,7 @@ class ParcelIntelMapRow(BaseModel):
     tax_lien_sale_year: Optional[int] = None
     critical_violation_count: Optional[int] = 0
     floodplain_1pct: Optional[bool] = None
+    environmental_review_required: Optional[bool] = None
     owner_name: Optional[str] = None
     owner_entity_type: Optional[str] = None
     owner_portfolio_id: Optional[str] = None
@@ -413,6 +419,8 @@ class ParcelWorkflowSnapshot(BaseModel):
     tax_lien_sale_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     critical_violation_count: Optional[int] = Field(default=None, ge=0)
     floodplain_1pct: Optional[bool] = None
+    environmental_review_required: Optional[bool] = None
+    e_designation_number: Optional[str] = Field(default=None, max_length=32)
     recent_change: Optional[bool] = None
 
 
@@ -511,6 +519,7 @@ class ParcelWorkflowAlert(BaseModel):
         "tax_lien_history_changed",
         "critical_violations_changed",
         "flood_overlay_changed",
+        "environmental_review_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     ]

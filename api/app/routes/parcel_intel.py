@@ -553,6 +553,9 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "pfirm15_floodplain": None,
     "floodplain_1pct": None,
     "floodplain_data_as_of": None,
+    "environmental_review_required": None,
+    "e_designation_number": None,
+    "e_designation_data_as_of": None,
     "assemblage_id": None,
     "assemblage_lot_count": None,
     "assemblage_combined_lot_area_sqft": None,
@@ -578,6 +581,7 @@ def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
             "tax_lien_sale_year": None,
             "critical_violation_count": None,
             "floodplain_1pct": None,
+            "environmental_review_required": None,
         }
     )
 

@@ -159,9 +159,11 @@ def list_workflow_events(
 )
 def get_workflow(
     bbl: str,
+    response: Response,
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
 ) -> dict | None:
+    response.headers["Cache-Control"] = "private, no-store"
     if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
         raise HTTPException(
             status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"

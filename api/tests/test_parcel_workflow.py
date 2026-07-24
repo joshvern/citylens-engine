@@ -200,6 +200,7 @@ def test_workflow_crud(auth_override) -> None:
 
     fetched = client.get("/v1/parcel-intel/workflow/3020960069")
     assert fetched.status_code == 200
+    assert fetched.headers["cache-control"] == "private, no-store"
     assert fetched.json()["bbl"] == "3020960069"
     assert client.get("/v1/parcel-intel/workflow/4020960069").json() is None
 

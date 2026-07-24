@@ -1,70 +1,75 @@
-# Multi-stage build: builder has git + build-essential for installing
-# deps from source/git, runtime is a clean slim image with only the
-# venv and the app source. Cuts ~50 MB of build tooling from the
-# runtime image, so Cloud Run pulls a smaller image on every cold
-# start (~500 ms-1 s saved on phase 1 of cold-start latency).
+# syntax=docker/dockerfile:1
+
+# Pin both build and runtime to the same Python/Alpine manifest. Dependabot
+# updates this digest deliberately instead of allowing rebuilds to drift.
+ARG PYTHON_IMAGE=python:3.11.15-alpine3.23@sha256:f73754c398b259dfbbe482361dca8b464dea57da74efe5214966ca2ee767ee12
 
 # ---- Builder ----------------------------------------------------------
-FROM python:3.11-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
+
+# uv is also version- and digest-pinned. It creates the runtime environment
+# directly from uv.lock without installing pip/setuptools/wheel into that venv.
+COPY --from=ghcr.io/astral-sh/uv:0.10.9@sha256:10902f58a1606787602f303954cea099626a4adb02acbac4c69920fe9d278f82 /uv /uvx /bin/
+
+RUN apk add --no-cache \
+    build-base \
+    ca-certificates \
+    gdal-dev \
+    geos-dev \
+    git \
+    proj-dev
 
 WORKDIR /build
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates build-essential \
-  && rm -rf /var/lib/apt/lists/*
+# uv needs every workspace member manifest to validate the root workspace, but
+# only the API dependency graph is installed below.
+COPY pyproject.toml uv.lock ./
+COPY api/pyproject.toml api/README.md ./api/
+COPY worker/pyproject.toml worker/README.md ./worker/
 
-# Build into a self-contained venv so the runtime stage can copy it
-# whole without worrying about pip's prefix layout. Activating the venv
-# is just prepending /opt/venv/bin to PATH.
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
-RUN pip install --no-cache-dir --upgrade pip wheel
+RUN uv sync \
+    --package citylens-engine-api \
+    --no-dev \
+    --frozen \
+    --no-install-project
 
-# Install the API's runtime deps. Pinned in api/pyproject.toml; we list
-# them inline here so the builder doesn't need to consume the source
-# tree just to resolve the dep graph.
-RUN pip install --no-cache-dir \
-      "fastapi>=0.110" \
-      "uvicorn[standard]>=0.27" \
-      "pydantic>=2.0" \
-      "google-cloud-firestore>=2.11" \
-      "google-cloud-storage>=2.14" \
-      "google-auth>=2.25" \
-      "requests>=2.31" \
-      "httpx>=0.25" \
-      "pyjwt[crypto]>=2.8"
-
-# Pin citylens-core via build arg.
-ARG CITYLENS_CORE_GIT_URL=git+https://github.com/joshvern/citylens-core.git@v0.3.25
-RUN pip install --no-cache-dir "citylens-core @ ${CITYLENS_CORE_GIT_URL}"
+# Fail the image build at the dependency boundary rather than at Cloud Run
+# startup. These imports cover the cloud clients and native geospatial stack.
+RUN /opt/venv/bin/python -c "import fastapi, google.cloud.firestore, google.cloud.storage, pyproj, rasterio, shapely"
 
 # ---- Runtime ----------------------------------------------------------
-FROM python:3.11-slim AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 WORKDIR /app
 
-# Runtime system libs:
-# - ca-certificates: TLS for outbound HTTPS (Firestore, GCS, citylens-core fetches)
-# - libexpat1: required by rasterio (transitive citylens-core dep). The
-#   single-stage Dockerfile got this for free via git's transitive deps;
-#   we install it explicitly now since git is builder-only.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates libexpat1 \
-  && rm -rf /var/lib/apt/lists/*
+# The base Python image ships package-management tooling for developer
+# convenience. Production does not need it; removing it eliminates the
+# vulnerable wheel/setuptools surface and prevents runtime package mutation.
+RUN python -m pip uninstall -y pip setuptools wheel \
+    && apk add --no-cache \
+        ca-certificates \
+        gdal \
+        geos \
+        libstdc++ \
+        proj \
+    && addgroup -S -g 10001 citylens \
+    && adduser -S -D -H -u 10001 -G citylens citylens
 
-# Bring over the prepared venv from the builder.
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+COPY --from=builder --chown=citylens:citylens /opt/venv /opt/venv
+COPY --chown=citylens:citylens api/app /app/app
+COPY --chown=citylens:citylens deploy/demo_runs.json /app/deploy/demo_runs.json
 
-# App source. `app.main:app` resolves because Python's sys.path
-# includes WORKDIR (/app) and `app/` is a package directly under it.
-COPY api/app /app/app
-COPY deploy /app/deploy
-
-ENV PORT=8080 \
+ENV HOME=/tmp \
+    PATH="/opt/venv/bin:$PATH" \
+    PORT=8080 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+
+USER 10001:10001
 EXPOSE 8080
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -18,7 +18,7 @@ fmt:
 	cd worker && $(PYTHON) -m ruff format . && $(PYTHON) -m ruff check . --fix
 
 sync:
-	$(UV) sync --all-packages --all-extras
+	$(UV) sync --all-packages --all-extras --frozen
 	@if [ -d ../citylens-core ]; then \
 		$(UV) pip install --python $(PYTHON) -e ../citylens-core; \
 	else \

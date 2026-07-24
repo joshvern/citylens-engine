@@ -21,9 +21,6 @@ venv/
 # Local env
 .env
 
-# Deploy scripts (contain operational details)
-deploy/*.sh
-
 # Local outputs
 /tmp/
 

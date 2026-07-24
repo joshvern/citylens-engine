@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.parity-work
+**/__pycache__
+**/*.pyc
+**/*.pyo
+*.code-workspace
+.env
+.env.*
+deploy/*.sh
+deploy/*.md
+coverage.xml
+htmlcov
+test-results

@@ -8,8 +8,8 @@ _CORE_IMPORT_HELP = (
     "citylens-core is required but could not be imported.\n\n"
     "Local dev (editable install):\n"
     "  pip install -e ../citylens-core\n\n"
-    'Docker builds: pass --build-arg CITYLENS_CORE_GIT_URL="git+https://..."\n'
-    "(see api/Dockerfile and worker/Dockerfile)."
+    "Production API builds: update the pinned citylens-core dependency in "
+    "api/pyproject.toml and uv.lock."
 )
 
 # `CitylensRequest` is a pure-pydantic model (no heavy deps) — safe to import

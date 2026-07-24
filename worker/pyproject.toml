@@ -22,14 +22,17 @@ dependencies = [
   "pyproj>=3.0",
   "rasterio>=1.3",
   "shapely>=2.0",
+  "torch==2.13.0",
+  "torchvision==0.28.0",
+  "citylens-core[sam2,lidar] @ git+https://github.com/joshvern/citylens-core.git@v0.3.25",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "ruff>=0.3"]
 
-# citylens-core dependency strategy:
-# - Production: install from git in Dockerfile (see worker/Dockerfile)
-# - Local dev: `pip install -e ../citylens-core`
+# The worker's core, SAM2, LiDAR, and CPU Torch graph is locked at the
+# workspace root. Updating any of these is an intentional manifest + lockfile
+# change rather than an unconstrained container rebuild.
 
 [tool.setuptools]
 py-modules = ["worker"]

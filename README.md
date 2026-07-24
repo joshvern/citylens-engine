@@ -32,8 +32,12 @@ Critical constraint: this repo **does not define its own pipeline request schema
 It imports and uses the canonical `CitylensRequest` and pipeline entrypoint from `citylens-core`.
 
 Local development uses the repo-local `.venv` at the engine root. The API service
-and worker job share that same root environment for local checks, while deployed
-images use Python 3.11-slim.
+and worker job share that same root environment for local checks. The API image
+uses a digest-pinned Python 3.11 / Alpine 3.23 multi-stage build. The worker
+uses a digest-pinned Python 3.11 / Debian-slim multi-stage build because CPU
+Torch requires glibc. Both install their exact `uv.lock` production graph,
+exclude Git/compilers/package managers from the runtime, and run as UID/GID
+`10001`.
 
 `Urban3D-DeepRecon` is treated as a read-only reference repo. This repo is the active
 runtime/API layer for the productized system.
@@ -42,17 +46,30 @@ The repo uses a single workspace lockfile at `uv.lock` for the `api/` and `worke
 packages. Regenerate it from the repo root with `uv lock`, then sync the root
 environment with `uv sync --all-packages --all-extras`.
 
-`citylens-core` lives in the sibling repo and is installed separately into the same
-root `.venv`:
-
-- local dev: `uv pip install --python ./.venv/bin/python -e ../citylens-core`
-- CI default: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@v0.3.25"`
-- CI / Docker override: `uv pip install --python ./.venv/bin/python "citylens-core[sam2] @ ${CITYLENS_CORE_GIT_URL}"`
+`citylens-core` lives in the sibling repo. Both API and worker pin the production
+release in their package manifests and the shared `uv.lock`. CI and container
+builds install only that locked graph.
 
 Use `make sync` to perform the workspace sync plus the sibling-core install when the
 neighboring repo is available. Without the sibling checkout, it falls back to the
-public GitHub repo using `CITYLENS_CORE_REF` (default `v0.3.25`) or an explicit
-`CITYLENS_CORE_GIT_URL` override.
+public GitHub repo using `CITYLENS_CORE_REF` (default `v0.3.25`). An explicit
+`CITYLENS_CORE_GIT_URL` is a local-development escape hatch only and never
+changes CI or production images.
+
+## Runtime supply chain
+
+Pull requests must pass independent API and worker supply-chain gates:
+
+- `pip-audit` checks each locked public dependency graph. Git/private packages
+  and CPU Torch wheels that are not discoverable through PyPI are covered by
+  the image scan instead; their locked public dependencies remain included.
+- Trivy scans both built production images. CI rejects every critical
+  vulnerability and every fixable high/critical vulnerability.
+
+CI also uploads CycloneDX dependency SBOMs and high/critical image reports for
+30 days. Dependabot checks uv, Docker, and GitHub Actions weekly.
+See [docs/supply_chain.md](docs/supply_chain.md) for the release policy and
+local verification commands.
 
 Current pinned release tag:
 

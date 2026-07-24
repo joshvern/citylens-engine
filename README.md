@@ -199,6 +199,8 @@ It fails on stale/missing feeds (including every required source SLA),
 quality-gate regressions, missing or failed
 generation-diff evidence, input-feature drift, score-replay mismatch,
 unreviewed drift overrides, model-provenance drift,
+missing/invalid authoritative ZAP source reconciliation or any directly
+matched blocked-BBL leakage,
 borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, a missing/misleading parcel
 decision audit, or a broken Parcel Intelligence page. The verifier also checks

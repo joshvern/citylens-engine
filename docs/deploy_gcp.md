@@ -395,6 +395,31 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
+The versioned report includes aggregate canonical workflow inventory and an
+activation-evidence gate. The gate remains `collecting` until at least 30
+workflow records exist across at least three users. It is a product-activation
+signal only; it does not establish model accuracy, seller intent, transaction
+probability, or lead quality.
+
+The repository's scheduled
+`.github/workflows/adoption-report.yml` runs the same report daily and retains
+the aggregate JSON artifact for 90 days. It authenticates with GitHub OIDC,
+not a service-account key. Configure these repository variables:
+
+```text
+CITYLENS_GCP_PROJECT=<PROJECT_ID>
+GCP_ADOPTION_REPORTER_SERVICE_ACCOUNT=citylens-adoption-reporter@<PROJECT_ID>.iam.gserviceaccount.com
+GCP_ADOPTION_WORKLOAD_IDENTITY_PROVIDER=projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/citylens-engine-provider
+```
+
+The Google service account should have only a custom read role containing
+`datastore.entities.get` and `datastore.entities.list`. Restrict the workload
+identity provider to `joshvern/citylens-engine` on `refs/heads/master`.
+Do not grant this reporting identity deployment, bucket-write, secret-access,
+or service-account-key permissions. The workflow warns rather than fails when
+the activation gate is still collecting; query/authentication failures remain
+real workflow failures.
+
 Example for your project:
 
 ```bash

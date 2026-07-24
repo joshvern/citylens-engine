@@ -16,9 +16,8 @@ API_ROOT = ROOT / "api"
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from google.cloud import firestore  # noqa: E402
-
-from app.services.product_adoption import build_product_adoption_report  # noqa: E402
+from app.services.product_adoption import build_product_adoption_report
+from google.cloud import firestore
 
 
 def _default_project() -> str | None:
@@ -45,6 +44,22 @@ def _read_rows(client: firestore.Client) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_workflow_rows(client: firestore.Client) -> list[dict[str, Any]]:
+    """Read only the fields needed for aggregate workflow inventory."""
+
+    rows: list[dict[str, Any]] = []
+    query = client.collection_group("parcel_workflow").select(["archived_at"])
+    for snapshot in query.stream():
+        user_ref = snapshot.reference.parent.parent
+        rows.append(
+            {
+                "_user_id": user_ref.id if user_ref is not None else "",
+                "archived_at": (snapshot.to_dict() or {}).get("archived_at"),
+            }
+        )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=_default_project())
@@ -54,8 +69,10 @@ def main() -> int:
     if not args.project:
         parser.error("--project or GOOGLE_CLOUD_PROJECT is required")
 
+    client = firestore.Client(project=args.project)
     report = build_product_adoption_report(
-        _read_rows(firestore.Client(project=args.project)),
+        _read_rows(client),
+        workflow_rows=_read_workflow_rows(client),
         days=args.days,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True)

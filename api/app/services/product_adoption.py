@@ -43,6 +43,7 @@ def _positive_counts(value: Any) -> Counter[str]:
 def build_product_adoption_report(
     rows: Iterable[dict[str, Any]],
     *,
+    workflow_rows: Iterable[dict[str, Any]] = (),
     as_of: datetime | None = None,
     days: int = 30,
 ) -> dict[str, Any]:
@@ -82,6 +83,28 @@ def build_product_adoption_report(
         if isinstance(user_id, str) and user_id:
             active_users.add(user_id)
 
+    workflow_users: set[str] = set()
+    active_workflows = 0
+    archived_workflows = 0
+    rejected_workflow_rows = 0
+    for row in workflow_rows:
+        user_id = row.get("_user_id")
+        if not isinstance(user_id, str) or not user_id:
+            rejected_workflow_rows += 1
+            continue
+        workflow_users.add(user_id)
+        if row.get("archived_at") is None:
+            active_workflows += 1
+        else:
+            archived_workflows += 1
+
+    workflow_records = active_workflows + archived_workflows
+    minimum_workflow_records = 30
+    minimum_workflow_users = 3
+    activation_ready = (
+        workflow_records >= minimum_workflow_records
+        and len(workflow_users) >= minimum_workflow_users
+    )
     parcel_opens = events.get("parcel_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
     warnings: list[str] = [
@@ -94,9 +117,15 @@ def build_product_adoption_report(
     ]
     if not events:
         warnings.append("No qualifying product-adoption events were observed.")
+    if not activation_ready:
+        warnings.append(
+            "Activation evidence is still collecting: "
+            f"{workflow_records}/{minimum_workflow_records} canonical workflow "
+            f"records across {len(workflow_users)}/{minimum_workflow_users} users."
+        )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v1",
+        "schema_version": "citylens/product-adoption-report@v2",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -116,5 +145,27 @@ def build_product_adoption_report(
             else None
         ),
         "excluded_or_invalid_rows": rejected_rows,
+        "workflow_inventory": {
+            "records": workflow_records,
+            "active": active_workflows,
+            "archived": archived_workflows,
+            "users": len(workflow_users),
+            "excluded_or_invalid_rows": rejected_workflow_rows,
+        },
+        "activation_evidence_gate": {
+            "status": "ready" if activation_ready else "collecting",
+            "minimum_workflow_records": minimum_workflow_records,
+            "minimum_workflow_users": minimum_workflow_users,
+            "records_remaining": max(
+                0, minimum_workflow_records - workflow_records
+            ),
+            "users_remaining": max(
+                0, minimum_workflow_users - len(workflow_users)
+            ),
+            "claim": (
+                "Directional activation evidence only; this gate does not "
+                "establish lead quality, seller intent, or model accuracy."
+            ),
+        },
         "warnings": warnings,
     }

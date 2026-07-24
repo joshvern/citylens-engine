@@ -60,3 +60,9 @@ CityLens has three different credentials. They protect different things and neve
 - Worker service account needs permission to:
   - read/write Firestore documents
   - write objects to the artifacts bucket
+- The scheduled product-adoption reporter uses a separate service account and
+  keyless GitHub OIDC federation. Its custom role contains only
+  `datastore.entities.get` and `datastore.entities.list`. The workload identity
+  provider is restricted to `joshvern/citylens-engine` on
+  `refs/heads/master`; the identity has no deploy, object-write, secret-read,
+  or service-account-key permissions.

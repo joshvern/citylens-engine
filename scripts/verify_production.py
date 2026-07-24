@@ -97,6 +97,10 @@ EXPECTED_WORKFLOW_HORIZONS = (
     ("under_contract", 270),
     ("closed", 365),
 )
+EXPECTED_PERMISSIONS_POLICY = (
+    "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
+    "payment=()"
+)
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,88 @@ def _json(result: HttpResult, label: str, failures: list[str]) -> dict[str, Any]
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def validate_security_headers(
+    headers: dict[str, str],
+    *,
+    label: str,
+    browser_page: bool,
+) -> list[str]:
+    """Validate the deployed baseline without constraining resource origins."""
+    failures: list[str] = []
+    _expect(
+        headers.get("x-content-type-options", "").lower() == "nosniff",
+        f"{label}: X-Content-Type-Options is not nosniff",
+        failures,
+    )
+    _expect(
+        headers.get("x-frame-options", "").upper() == "DENY",
+        f"{label}: X-Frame-Options is not DENY",
+        failures,
+    )
+    _expect(
+        headers.get("x-xss-protection") == "0",
+        f"{label}: X-XSS-Protection must explicitly disable the legacy filter",
+        failures,
+    )
+    _expect(
+        headers.get("permissions-policy") == EXPECTED_PERMISSIONS_POLICY,
+        f"{label}: Permissions-Policy does not match the production contract",
+        failures,
+    )
+    expected_referrer = (
+        "strict-origin-when-cross-origin" if browser_page else "no-referrer"
+    )
+    _expect(
+        headers.get("referrer-policy") == expected_referrer,
+        f"{label}: Referrer-Policy is not {expected_referrer}",
+        failures,
+    )
+    hsts = headers.get("strict-transport-security", "")
+    try:
+        max_age = int(
+            next(
+                part.split("=", 1)[1]
+                for part in hsts.split(";")
+                if part.strip().lower().startswith("max-age=")
+            )
+        )
+    except (StopIteration, ValueError):
+        max_age = 0
+    _expect(
+        max_age >= 31_536_000,
+        f"{label}: HSTS max-age is below one year",
+        failures,
+    )
+    csp = headers.get("content-security-policy", "")
+    for directive in (
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+    ):
+        _expect(
+            directive in csp,
+            f"{label}: CSP is missing {directive}",
+            failures,
+        )
+    expected_base = "base-uri 'self'" if browser_page else "base-uri 'none'"
+    _expect(
+        expected_base in csp,
+        f"{label}: CSP is missing {expected_base}",
+        failures,
+    )
+    if browser_page:
+        _expect(
+            "form-action 'self'" in csp,
+            f"{label}: CSP is missing form-action 'self'",
+            failures,
+        )
+        _expect(
+            "x-powered-by" not in headers,
+            f"{label}: X-Powered-By exposes framework metadata",
+            failures,
+        )
+    return failures
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -1290,6 +1376,12 @@ def run_checks(
     health = _json(health_result, "health", failures)
     timings["health"] = round(health_result.elapsed_seconds, 3)
     _expect(health.get("ok") is True, "health: ok is not true", failures)
+    api_security_failures = validate_security_headers(
+        health_result.headers,
+        label="API",
+        browser_page=False,
+    )
+    failures.extend(api_security_failures)
 
     ready_result = _request(f"{api_base}/v1/health/ready", timeout=timeout)
     ready = _json(ready_result, "readiness", failures)
@@ -1441,6 +1533,12 @@ def run_checks(
     )
     timings["web_parcel_intel"] = round(web_result.elapsed_seconds, 3)
     _expect(web_result.status == 200, f"web: /parcel-intel returned {web_result.status}", failures)
+    web_security_failures = validate_security_headers(
+        web_result.headers,
+        label="web",
+        browser_page=True,
+    )
+    failures.extend(web_security_failures)
     html = web_result.body.decode("utf-8", errors="replace")
     for expected in (
         "Find the sites worth pursuing this week",
@@ -1456,7 +1554,11 @@ def run_checks(
         "web_base": web_base,
         "feed_generated_at": generated_at,
         "max_age_days": max_age_days,
-        "checks": 15,
+        "checks": 17,
+        "security_headers": {
+            "api": {"passed": not api_security_failures},
+            "web": {"passed": not web_security_failures},
+        },
         "source_sla": source_sla,
         "warnings": source_warnings,
         "timings_seconds": timings,

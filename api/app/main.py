@@ -32,6 +32,20 @@ from .services.run_options import (
 from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
 
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
+_SECURITY_RESPONSE_HEADERS = {
+    "Content-Security-Policy": (
+        "base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
+    ),
+    "Permissions-Policy": (
+        "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
+        "payment=()"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=63072000",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "0",
+}
 
 
 def _prewarm_read_caches(settings: Settings) -> None:
@@ -174,6 +188,19 @@ async def docs_key_middleware(
     if request.url.path == "/redoc":
         return get_redoc_html(openapi_url="/openapi.json", title="citylens-engine docs")
     return get_swagger_ui_html(openapi_url="/openapi.json", title="citylens-engine docs")
+
+
+@app.middleware("http")
+async def security_headers_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    # This middleware is deliberately registered after the CORS/docs
+    # middleware so it remains outermost and covers their early responses.
+    response = await call_next(request)
+    for name, value in _SECURITY_RESPONSE_HEADERS.items():
+        response.headers[name] = value
+    return response
 
 
 _LOCKED_RUN_FIELDS = {

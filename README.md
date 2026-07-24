@@ -228,11 +228,12 @@ missing/invalid authoritative ZAP source reconciliation or any directly
 matched blocked-BBL leakage,
 borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, a missing/misleading parcel
-decision audit, or a broken Parcel Intelligence page. The verifier also checks
+decision audit, missing API/web browser-security headers, framework disclosure,
+or a broken Parcel Intelligence page. The verifier also checks
 that the public audit metrics match the accepted model metadata and that
 anonymous ownership/diligence evidence remains withheld. Public readiness must
 remain a limited preview and cannot reveal protected lien, violation, flood,
-  environmental, MIH, transit, or imagery signals.
+environmental, MIH, transit, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not

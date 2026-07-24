@@ -331,6 +331,12 @@ audit statement that transit is diligence-only. The repository workflow
 the machine-readable report. Investigate scheduled failures before the feed
 crosses the API's 45-day stale threshold.
 
+The same verifier requires API and web HSTS, clickjacking protection, MIME
+sniffing protection, explicit referrer policy, disabled unused browser
+capabilities, and the narrow enforced CSP baseline. It also rejects
+`X-Powered-By` on the web. Verify these on the custom domains rather than only
+the Cloud Run or Vercel preview origins.
+
 Set the active project:
 
 ```bash

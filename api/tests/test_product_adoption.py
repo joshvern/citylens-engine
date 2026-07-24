@@ -57,6 +57,10 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["parcel_open_to_workflow_create_rate"] == 0.25
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
+    assert any(
+        "workflow lifecycle counts are derived transactionally" in warning
+        for warning in report["warnings"]
+    )
     rendered = json.dumps(report)
     assert "private-user" not in rendered
     assert "3020960069" not in rendered

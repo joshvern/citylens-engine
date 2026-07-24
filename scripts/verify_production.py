@@ -74,6 +74,13 @@ REQUIRED_SOURCE_SLAS = (
     "floodplain_screen",
     "environmental_review",
 )
+EXPECTED_WORKFLOW_HORIZONS = (
+    ("owner_contacted", 30),
+    ("qualified", 90),
+    ("offer_submitted", 180),
+    ("under_contract", 270),
+    ("closed", 365),
+)
 
 
 @dataclass(frozen=True)
@@ -162,6 +169,45 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    _expect(
+        data.get("schema_version")
+        == "citylens/parcel-workflow-analytics-methodology@v1",
+        "workflow methodology: unexpected schema version",
+        failures,
+    )
+    _expect(
+        data.get("analytics_schema_version")
+        == "citylens/parcel-workflow-analytics@v2",
+        "workflow methodology: maturity-aware analytics v2 is not active",
+        failures,
+    )
+    _expect(
+        data.get("model_accuracy_claim") is False,
+        "workflow methodology: outcomes must not claim model accuracy",
+        failures,
+    )
+    horizons = data.get("horizons")
+    observed = []
+    if isinstance(horizons, list):
+        for row in horizons:
+            if isinstance(row, dict):
+                observed.append((row.get("milestone"), row.get("horizon_days")))
+    _expect(
+        tuple(observed) == EXPECTED_WORKFLOW_HORIZONS,
+        "workflow methodology: fixed horizons do not match the production contract",
+        failures,
+    )
+    _expect(
+        isinstance(data.get("minimum_rate_denominator"), int)
+        and data["minimum_rate_denominator"] >= 10,
+        "workflow methodology: minimum rate denominator must be at least 10",
+        failures,
+    )
+    return failures
 
 
 def evaluate_source_slas(
@@ -729,6 +775,18 @@ def run_checks(
         timings[label.replace(" ", "_")] = round(result.elapsed_seconds, 3)
         _expect(result.status == 401, f"{label}: anonymous request returned {result.status}", failures)
 
+    methodology_result = _request(
+        f"{api_base}/v1/parcel-intel/workflow/analytics/methodology",
+        timeout=timeout,
+    )
+    timings["workflow_methodology"] = round(
+        methodology_result.elapsed_seconds, 3
+    )
+    methodology = _json(
+        methodology_result, "workflow methodology", failures
+    )
+    failures.extend(validate_workflow_methodology(methodology))
+
     web_result = _request(
         f"{web_base}/parcel-intel",
         timeout=timeout,
@@ -750,7 +808,7 @@ def run_checks(
         "web_base": web_base,
         "feed_generated_at": generated_at,
         "max_age_days": max_age_days,
-        "checks": 13,
+        "checks": 14,
         "source_sla": source_sla,
         "warnings": source_warnings,
         "timings_seconds": timings,

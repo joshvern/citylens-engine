@@ -366,7 +366,11 @@ class ParcelWorkflowUpdate(BaseModel):
     decision_reason: Optional[str] = Field(default=None, max_length=80)
     outcome: Optional[ParcelWorkflowOutcome] = "unknown"
     snapshot: "ParcelWorkflowSnapshot" = Field(
-        default_factory=lambda: ParcelWorkflowSnapshot()
+        default_factory=lambda: ParcelWorkflowSnapshot(),
+        description=(
+            "Deprecated client hint. The API captures the canonical current "
+            "feed snapshot on first save and preserves it immutably."
+        ),
     )
 
 
@@ -460,6 +464,47 @@ class ParcelWorkflowRate(BaseModel):
     sufficient_denominator: bool
 
 
+ParcelWorkflowMilestone = Literal[
+    "owner_contacted",
+    "qualified",
+    "offer_submitted",
+    "under_contract",
+    "closed",
+]
+
+
+class ParcelWorkflowMaturityWindow(BaseModel):
+    milestone: ParcelWorkflowMilestone
+    label: str
+    horizon_days: int = Field(ge=1)
+    eligible_records: int = Field(ge=0)
+    reached_within_horizon: int = Field(ge=0)
+    pending_records: int = Field(ge=0)
+    rate: Optional[float] = Field(default=None, ge=0, le=1)
+    sufficient_denominator: bool
+
+
+class ParcelWorkflowHorizonDefinition(BaseModel):
+    milestone: ParcelWorkflowMilestone
+    label: str
+    horizon_days: int = Field(ge=1)
+
+
+class ParcelWorkflowAnalyticsMethodology(BaseModel):
+    schema_version: Literal[
+        "citylens/parcel-workflow-analytics-methodology@v1"
+    ]
+    analytics_schema_version: Literal[
+        "citylens/parcel-workflow-analytics@v2"
+    ]
+    horizons: list[ParcelWorkflowHorizonDefinition]
+    minimum_cohort_size: int = Field(ge=1)
+    minimum_rate_denominator: int = Field(ge=1)
+    selection_scope: str
+    timestamp_semantics: str
+    model_accuracy_claim: Literal[False]
+
+
 class ParcelWorkflowFunnel(BaseModel):
     saved: int
     contacted: int
@@ -488,13 +533,16 @@ class ParcelWorkflowCohort(BaseModel):
     closed: int
     rejected: int
     lost: int
+    contacted_rate_denominator: int = 0
+    qualified_rate_denominator: int = 0
+    close_rate_denominator: int = 0
     contacted_rate: Optional[float] = None
     qualified_rate: Optional[float] = None
     close_rate: Optional[float] = None
 
 
 class ParcelWorkflowAnalytics(BaseModel):
-    schema_version: Literal["citylens/parcel-workflow-analytics@v1"]
+    schema_version: Literal["citylens/parcel-workflow-analytics@v2"]
     generated_at: datetime
     measurement_status: Literal["collecting", "directional", "usable"]
     measurement_label: str
@@ -503,12 +551,18 @@ class ParcelWorkflowAnalytics(BaseModel):
     archived_records: int
     event_history_records: int
     rank_snapshot_records: int
+    valid_saved_at_records: int
+    oldest_followup_days: Optional[int] = None
+    median_followup_days: Optional[float] = None
     minimum_cohort_size: int
     minimum_rate_denominator: int
     stage_counts: dict[str, int]
     outcome_counts: dict[str, int]
     decision_reason_counts: dict[str, int]
     funnel: ParcelWorkflowFunnel
+    maturity_windows: list[ParcelWorkflowMaturityWindow] = Field(
+        default_factory=list
+    )
     cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

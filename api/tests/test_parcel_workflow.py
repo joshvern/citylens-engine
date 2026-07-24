@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import parcel_workflow
+from app.services.firestore_store import _workflow_effective_payload
 
 
 class FakeWorkflowStore:
@@ -22,13 +24,22 @@ class FakeWorkflowStore:
             row for row in rows if row.get("archived_at") is None
         ]
 
+    def get_parcel_workflow(
+        self, *, app_user_id: str, bbl: str
+    ) -> dict | None:
+        return self.items.get(bbl)
+
     def upsert_parcel_workflow(self, *, app_user_id: str, bbl: str, payload: dict) -> dict:
         now = datetime.now(timezone.utc)
+        existing = self.items.get(bbl, {})
+        effective_payload = dict(payload)
+        if isinstance(existing.get("snapshot"), dict):
+            effective_payload["snapshot"] = existing["snapshot"]
         doc = {
-            **self.items.get(bbl, {}),
-            **payload,
+            **existing,
+            **effective_payload,
             "bbl": bbl,
-            "saved_at": self.items.get(bbl, {}).get("saved_at", now),
+            "saved_at": existing.get("saved_at", now),
             "updated_at": now,
         }
         self.items[bbl] = doc
@@ -85,6 +96,54 @@ class FakeWorkflowStore:
         return self.searches.pop(search_id, None) is not None
 
 
+class _FakeParcel:
+    def model_dump(self) -> dict:
+        return {
+            "property_facts_as_of": "2026-07-24",
+            "citywide_rank": 82,
+            "acquisition_rank": 21,
+            "priority_tier": "highest",
+            "opportunity_category": "ground_up_candidate",
+            "score_calibrated": 0.42,
+            "zoning_district_1": "R5",
+            "land_use": "01",
+            "year_built": 1930,
+            "allowed_far": 2.0,
+            "unused_floor_area_sqft": 5_000,
+            "owner_name": "CANONICAL OWNER LLC",
+            "owner_entity_type": "llc",
+            "owner_portfolio_lot_count": 2,
+            "last_sale_year": 2025,
+            "latest_nb_filing_year": None,
+            "latest_nb_status": None,
+            "redev_status": "still_vacant",
+            "observed_imagery_year": 2024,
+            "tax_lien_sale_year": None,
+            "critical_violation_count": 0,
+            "floodplain_1pct": False,
+            "environmental_review_required": False,
+            "environmental_designation_number": None,
+            "environmental_designation_kind": None,
+            "recent_change": False,
+        }
+
+
+class _FakeWorkflowRegistry:
+    def parcel(self, _gcs: object, _bbl: str) -> tuple[_FakeParcel, dict]:
+        return _FakeParcel(), {"generated_at": "2026-07-24T02:43:29Z"}
+
+
+@pytest.fixture(autouse=True)
+def _workflow_feed_override():
+    app.dependency_overrides[parcel_workflow.get_gcs] = lambda: object()
+    app.dependency_overrides[parcel_workflow.get_registry] = (
+        lambda: _FakeWorkflowRegistry()
+    )
+    yield
+    app.dependency_overrides.pop(parcel_workflow.get_gcs, None)
+    app.dependency_overrides.pop(parcel_workflow.get_registry, None)
+
+
 def test_workflow_crud(auth_override) -> None:
     auth_override(app_user_id="workflow-user")
     store = FakeWorkflowStore()
@@ -119,6 +178,20 @@ def test_workflow_crud(auth_override) -> None:
     assert client.get("/v1/parcel-intel/workflow").json() == []
 
 
+def test_store_payload_preserves_existing_exposure_snapshot() -> None:
+    original = {"citywide_rank": 82, "score_calibrated": 0.42}
+    effective = _workflow_effective_payload(
+        existing={"snapshot": original, "stage": "new"},
+        incoming={
+            "snapshot": {"citywide_rank": 999_999, "score_calibrated": 1.0},
+            "stage": "reviewing",
+        },
+        record_exists=True,
+    )
+    assert effective == {"snapshot": original, "stage": "reviewing"}
+    assert effective["snapshot"] is original
+
+
 def test_workflow_events_and_prospective_analytics(auth_override) -> None:
     auth_override(app_user_id="workflow-user")
     store = FakeWorkflowStore()
@@ -146,9 +219,11 @@ def test_workflow_events_and_prospective_analytics(auth_override) -> None:
     analytics = client.get("/v1/parcel-intel/workflow/analytics")
     assert analytics.status_code == 200, analytics.text
     payload = analytics.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-analytics@v1"
+    assert payload["schema_version"] == "citylens/parcel-workflow-analytics@v2"
     assert payload["measurement_status"] == "collecting"
     assert payload["total_records"] == 1
+    assert payload["valid_saved_at_records"] == 1
+    assert payload["maturity_windows"][0]["eligible_records"] == 0
     assert payload["funnel"]["contacted"] == 1
     assert payload["funnel"]["qualified"] == 1
     assert payload["funnel"]["contacted_per_saved"]["denominator"] == 1
@@ -159,6 +234,30 @@ def test_workflow_events_and_prospective_analytics(auth_override) -> None:
         and cohort["total"] == 1
         for cohort in payload["cohorts"]
     )
+
+
+def test_workflow_analytics_methodology_is_public_and_data_free() -> None:
+    client = TestClient(app)
+    response = client.get("/v1/parcel-intel/workflow/analytics/methodology")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema_version"] == (
+        "citylens/parcel-workflow-analytics-methodology@v1"
+    )
+    assert payload["analytics_schema_version"] == (
+        "citylens/parcel-workflow-analytics@v2"
+    )
+    assert payload["model_accuracy_claim"] is False
+    assert [
+        (window["milestone"], window["horizon_days"])
+        for window in payload["horizons"]
+    ] == [
+        ("owner_contacted", 30),
+        ("qualified", 90),
+        ("offer_submitted", 180),
+        ("under_contract", 270),
+        ("closed", 365),
+    ]
 
 
 def test_saved_search_crud(auth_override) -> None:
@@ -207,7 +306,9 @@ def test_workflow_rejects_bad_bbl(auth_override) -> None:
     assert bad_prefix.status_code == 422
 
 
-def test_workflow_snapshot_and_saved_filters_are_typed(auth_override) -> None:
+def test_workflow_snapshot_is_server_owned_immutable_and_typed(
+    auth_override,
+) -> None:
     auth_override(app_user_id="typed-workflow-user")
     store = FakeWorkflowStore()
     app.dependency_overrides[parcel_workflow.get_store] = lambda: store
@@ -225,35 +326,26 @@ def test_workflow_snapshot_and_saved_filters_are_typed(auth_override) -> None:
         },
     )
     assert workflow.status_code == 200, workflow.text
-    assert workflow.json()["snapshot"] == {
-        "feed_generated_at": None,
-        "property_facts_as_of": None,
-        "citywide_rank": None,
-        "acquisition_rank": None,
-        "priority_tier": None,
-        "opportunity_category": None,
-        "score_calibrated": None,
-        "zoning_district_1": "R7A",
-        "land_use": None,
-        "year_built": None,
-        "allowed_far": 4.0,
-        "unused_floor_area_sqft": None,
-        "owner_name": None,
-        "owner_entity_type": None,
-        "owner_portfolio_lot_count": None,
-        "last_sale_year": None,
-        "latest_nb_filing_year": None,
-        "latest_nb_status": None,
-        "redev_status": None,
-        "observed_imagery_year": None,
-        "tax_lien_sale_year": None,
-        "critical_violation_count": None,
-        "floodplain_1pct": None,
-        "environmental_review_required": None,
-        "environmental_designation_number": None,
-        "environmental_designation_kind": None,
-        "recent_change": None,
-    }
+    snapshot = workflow.json()["snapshot"]
+    assert snapshot["feed_generated_at"] == "2026-07-24T02:43:29Z"
+    assert snapshot["citywide_rank"] == 82
+    assert snapshot["zoning_district_1"] == "R5"
+    assert snapshot["allowed_far"] == 2.0
+    assert "unbounded_payload" not in snapshot
+
+    updated = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={
+            "borough": "brooklyn",
+            "stage": "contacted",
+            "snapshot": {
+                "citywide_rank": 999_999,
+                "zoning_district_1": "M1-5",
+            },
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["snapshot"] == snapshot
 
     bad_search = client.put(
         "/v1/parcel-intel/saved-searches/bad-filter",

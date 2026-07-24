@@ -5,12 +5,15 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..models.schemas import (
+    ParcelIntelRow,
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
     ParcelWorkflowAlerts,
     ParcelWorkflowAnalytics,
+    ParcelWorkflowAnalyticsMethodology,
     ParcelWorkflowEvent,
     ParcelWorkflowItem,
+    ParcelWorkflowSnapshot,
     ParcelWorkflowUpdate,
 )
 from ..services.auth import require_auth
@@ -18,7 +21,10 @@ from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_workflow_alerts import build_workflow_alerts
-from ..services.parcel_workflow_analytics import build_workflow_analytics
+from ..services.parcel_workflow_analytics import (
+    build_workflow_analytics,
+    workflow_analytics_methodology,
+)
 from ..services.settings import Settings, get_settings
 from .parcel_intel import (
     ParcelIntelRegistry,
@@ -70,6 +76,27 @@ def workflow_analytics(
 
 
 @router.get(
+    "/parcel-intel/workflow/analytics/methodology",
+    response_model=ParcelWorkflowAnalyticsMethodology,
+)
+def workflow_analytics_methodology_contract() -> dict:
+    return workflow_analytics_methodology()
+
+
+def _canonical_workflow_snapshot(
+    *,
+    row: ParcelIntelRow,
+    manifest: dict | None,
+) -> dict:
+    row_values = row.model_dump()
+    generated_at = (manifest or {}).get("generated_at")
+    row_values["feed_generated_at"] = (
+        generated_at if isinstance(generated_at, str) else None
+    )
+    return ParcelWorkflowSnapshot(**row_values).model_dump()
+
+
+@router.get(
     "/parcel-intel/workflow/alerts", response_model=ParcelWorkflowAlerts
 )
 def workflow_alerts(
@@ -114,6 +141,8 @@ def upsert_workflow(
     body: ParcelWorkflowUpdate,
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
 ) -> dict:
     if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
         raise HTTPException(
@@ -123,6 +152,16 @@ def upsert_workflow(
         raise HTTPException(status_code=422, detail="BBL does not match borough")
     payload = body.model_dump()
     payload["tags"] = sorted({tag.strip()[:40] for tag in body.tags if tag.strip()})
+    existing = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id, bbl=bbl
+    )
+    if existing is not None and isinstance(existing.get("snapshot"), dict):
+        payload["snapshot"] = existing["snapshot"]
+    else:
+        row, manifest = registry.parcel(gcs, bbl)
+        payload["snapshot"] = _canonical_workflow_snapshot(
+            row=row, manifest=manifest
+        )
     return store.upsert_parcel_workflow(
         app_user_id=auth.app_user_id, bbl=bbl, payload=payload
     )

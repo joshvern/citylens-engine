@@ -8,9 +8,67 @@ from scripts.verify_production import (
     validate_index,
     validate_map,
     validate_public_decision_audit,
+    validate_security_headers,
     validate_sweep,
     validate_workflow_methodology,
 )
+
+
+def _security_headers(*, browser_page: bool) -> dict[str, str]:
+    headers = {
+        "content-security-policy": (
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+            "form-action 'self'"
+            if browser_page
+            else "base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
+        ),
+        "permissions-policy": (
+            "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
+            "payment=()"
+        ),
+        "referrer-policy": (
+            "strict-origin-when-cross-origin"
+            if browser_page
+            else "no-referrer"
+        ),
+        "strict-transport-security": "max-age=63072000",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-xss-protection": "0",
+    }
+    return headers
+
+
+def test_security_header_validator_covers_api_and_browser_contracts() -> None:
+    assert (
+        validate_security_headers(
+            _security_headers(browser_page=False),
+            label="API",
+            browser_page=False,
+        )
+        == []
+    )
+    assert (
+        validate_security_headers(
+            _security_headers(browser_page=True),
+            label="web",
+            browser_page=True,
+        )
+        == []
+    )
+
+    bad = _security_headers(browser_page=True)
+    bad["x-powered-by"] = "Next.js"
+    bad["strict-transport-security"] = "max-age=60"
+    bad["content-security-policy"] = "object-src 'none'"
+    failures = validate_security_headers(
+        bad,
+        label="web",
+        browser_page=True,
+    )
+    assert any("HSTS" in failure for failure in failures)
+    assert any("frame-ancestors" in failure for failure in failures)
+    assert any("X-Powered-By" in failure for failure in failures)
 
 
 def _quality_row() -> dict:

@@ -78,6 +78,12 @@ jobs:
               f"`{source_sla.get('warning_count', 0)} warning(s)`, "
               f"`{source_sla.get('breach_count', 0)} breach(es)`"
           )
+          security = report.get("security_headers") or {}
+          print(
+              f"- Security headers: "
+              f"`API {'passed' if (security.get('api') or {}).get('passed') else 'failed'}` · "
+              f"`web {'passed' if (security.get('web') or {}).get('passed') else 'failed'}`"
+          )
           warnings = report.get("warnings") or []
           if warnings:
               print()

@@ -20,6 +20,7 @@ dependencies = [
   "requests>=2.31",
   "httpx>=0.25",
   "pyjwt[crypto]>=2.8",
+  "citylens-core @ git+https://github.com/joshvern/citylens-core.git@v0.3.25",
 ]
 
 [project.optional-dependencies]
@@ -29,9 +30,9 @@ dev = [
   "ruff>=0.3",
 ]
 
-# citylens-core dependency strategy:
-# - Local dev: `pip install -e ../citylens-core`
-# - Production: install from git in Dockerfile (see api/Dockerfile)
+# The production core release is part of the uv lock. Updating core is an
+# intentional manifest + lockfile change, so rebuilding the same engine commit
+# cannot silently resolve a different geospatial dependency graph.
 
 [tool.setuptools]
 package-dir = {"" = "app"}

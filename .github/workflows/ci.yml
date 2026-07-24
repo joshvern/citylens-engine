@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,28 +21,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-      - name: Resolve citylens-core ref
-        id: core-ref
-        shell: bash
-        env:
-          OVERRIDE_REF: ${{ vars.CITYLENS_CORE_REF }}
-        run: |
-          set -euo pipefail
-
-          ref="v0.3.25"
-          if [ -n "${OVERRIDE_REF}" ]; then
-            ref="${OVERRIDE_REF}"
-          fi
-
-          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
-
       - name: Sync environment
         run: uv sync --all-packages --all-extras --frozen
-
-      - name: Install citylens-core
-        env:
-          CITYLENS_CORE_REF: ${{ steps.core-ref.outputs.ref }}
-        run: uv pip install --python ./.venv/bin/python --no-cache-dir "citylens-core[sam2] @ git+https://github.com/joshvern/citylens-core.git@${CITYLENS_CORE_REF}"
 
       - name: Lint API
         run: ./.venv/bin/python -m ruff check api/app api/tests
@@ -47,8 +30,200 @@ jobs:
       - name: Lint worker
         run: ./.venv/bin/python -m ruff check worker/services worker/worker.py worker/test_*.py
 
+      - name: Check deploy scripts
+        run: bash -n deploy/deploy_api.sh deploy/deploy_worker.sh deploy/deploy_all.sh
+
       - name: Test API
         run: ./.venv/bin/python -m pytest api/tests
 
       - name: Test worker
         run: ./.venv/bin/python -m pytest worker
+
+  api-supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Audit locked API dependencies
+        run: |
+          uv export \
+            --package citylens-engine-api \
+            --no-dev \
+            --no-emit-project \
+            --no-emit-package citylens-core \
+            --frozen \
+            --format requirements.txt \
+            --output-file api-runtime-audit.txt \
+            >/dev/null
+          uvx --from pip-audit==2.10.1 pip-audit \
+            --strict \
+            --progress-spinner off \
+            --disable-pip \
+            --requirement api-runtime-audit.txt
+
+      - name: Generate API dependency SBOM
+        run: |
+          uv export \
+            --preview-features sbom-export \
+            --package citylens-engine-api \
+            --no-dev \
+            --frozen \
+            --format cyclonedx1.5 \
+            --output-file api-runtime.cdx.json \
+            >/dev/null
+
+      - name: Build production API image
+        run: docker build --tag citylens-api:ci --file api/Dockerfile .
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Record image vulnerability report
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output api-image-vulnerabilities.json \
+            citylens-api:ci
+
+      - name: Reject critical image vulnerabilities
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --no-progress \
+            citylens-api:ci
+
+      - name: Reject fixable high or critical image vulnerabilities
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --no-progress \
+            citylens-api:ci
+
+      - name: Upload supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: api-supply-chain-evidence
+          path: |
+            api-runtime.cdx.json
+            api-image-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  worker-supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Audit locked worker dependencies
+        run: |
+          uv export \
+            --package citylens-engine-worker \
+            --no-dev \
+            --no-emit-project \
+            --no-emit-package citylens-core \
+            --no-emit-package sam-2 \
+            --no-emit-package torch \
+            --no-emit-package torchvision \
+            --frozen \
+            --format requirements.txt \
+            --output-file worker-runtime-audit.txt \
+            >/dev/null
+          uvx --from pip-audit==2.10.1 pip-audit \
+            --strict \
+            --progress-spinner off \
+            --disable-pip \
+            --requirement worker-runtime-audit.txt
+
+      - name: Generate worker dependency SBOM
+        run: |
+          uv export \
+            --preview-features sbom-export \
+            --package citylens-engine-worker \
+            --no-dev \
+            --frozen \
+            --format cyclonedx1.5 \
+            --output-file worker-runtime.cdx.json \
+            >/dev/null
+
+      - name: Build production worker image
+        run: docker build --tag citylens-worker:ci --file worker/Dockerfile .
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Record image vulnerability report
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output worker-image-vulnerabilities.json \
+            citylens-worker:ci
+
+      - name: Reject critical image vulnerabilities
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --no-progress \
+            citylens-worker:ci
+
+      - name: Reject fixable high or critical image vulnerabilities
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --no-progress \
+            citylens-worker:ci
+
+      - name: Upload supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker-supply-chain-evidence
+          path: |
+            worker-runtime.cdx.json
+            worker-image-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -159,28 +159,24 @@ gcloud storage buckets add-iam-policy-binding gs://<BUCKET_NAME> \
 
 ### 7) Build & deploy API to Cloud Run
 
-The API and worker Dockerfiles default to the pinned core release tag:
+The API pins the core release in `api/pyproject.toml` and `uv.lock`:
 
 - `git+https://github.com/joshvern/citylens-core.git@v0.3.25`
 
-You can override that build input with `CITYLENS_CORE_GIT_URL` when you need a different core revision.
-Use the Cloud Build config in `api/cloudbuild.yaml` to build with the default tag or an explicit override, then deploy from the built image.
-
-Set the core git URL only if you want to override the default tag. Example:
-
-`CITYLENS_CORE_GIT_URL="git+https://github.com/<ORG>/citylens-core.git@<REF>"`
+Update the API manifest and lockfile together when releasing a new core
+version. The worker pins the same release through `worker/pyproject.toml` and
+the shared lockfile.
 
 Build the API image:
 
 ```bash
-CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.25}"
 API_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-api:latest"
 
 gcloud builds submit . \
   --region <REGION> \
   --project <PROJECT_ID> \
-  --config cloudbuild.yaml \
-  --substitutions _CITYLENS_CORE_GIT_URL=${CITYLENS_CORE_GIT_URL},_IMAGE=${API_IMAGE}
+  --config api/cloudbuild.yaml \
+  --substitutions _IMAGE=${API_IMAGE}
 ```
 
 Deploy the API service from the built image:
@@ -209,16 +205,15 @@ independent Cloud Run resources.
 Build the worker image:
 
 ```bash
-cd ../worker
+cd ..
 
-CITYLENS_CORE_GIT_URL="${CITYLENS_CORE_GIT_URL:-git+https://github.com/joshvern/citylens-core.git@v0.3.25}"
 WORKER_IMAGE="<REGION>-docker.pkg.dev/<PROJECT_ID>/cloud-run-source-deploy/citylens-worker:latest"
 
 gcloud builds submit . \
   --region <REGION> \
   --project <PROJECT_ID> \
-  --config cloudbuild.yaml \
-  --substitutions _CITYLENS_CORE_GIT_URL=${CITYLENS_CORE_GIT_URL},_IMAGE=${WORKER_IMAGE}
+  --config worker/cloudbuild.yaml \
+  --substitutions _IMAGE=${WORKER_IMAGE}
 ```
 
 Create/update the Cloud Run Job from the built image. The worker runs SAM2 on CPU,

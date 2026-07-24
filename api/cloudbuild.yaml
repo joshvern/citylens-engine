@@ -4,13 +4,10 @@ steps:
       - build
       - -f
       - api/Dockerfile
-      - --build-arg
-      - CITYLENS_CORE_GIT_URL=${_CITYLENS_CORE_GIT_URL}
       - -t
       - ${_IMAGE}
       - .
 images:
   - ${_IMAGE}
 substitutions:
-  _CITYLENS_CORE_GIT_URL: "git+https://github.com/joshvern/citylens-core.git@v0.3.25"
   _IMAGE: ""

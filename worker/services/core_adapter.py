@@ -8,8 +8,8 @@ except ImportError as e:  # pragma: no cover
         "citylens-core is required but could not be imported.\n\n"
         "Local dev (editable install):\n"
         "  pip install -e ../citylens-core\n\n"
-        'Docker builds: pass --build-arg CITYLENS_CORE_GIT_URL="git+https://..."\n'
-        "(see worker/Dockerfile)."
+        "Production builds: update the pinned citylens-core dependency in "
+        "worker/pyproject.toml and uv.lock."
     ) from e
 
 __all__ = ["CitylensRequest", "run_citylens"]

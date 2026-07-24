@@ -29,6 +29,7 @@ BBL_PREFIX = {
     "staten_island": "5",
 }
 PRIVATE_NULL_FIELDS = (
+    "score_raw",
     "score_calibrated_p10",
     "score_calibrated_p90",
     "owner_name",
@@ -637,6 +638,67 @@ def validate_index(
         "index: land-use reconciliation has failures",
         failures,
     )
+    ranking_tie_audit = quality.get("ranking_tie_audit")
+    _expect(
+        isinstance(ranking_tie_audit, dict),
+        "index: ranking tie audit is missing",
+        failures,
+    )
+    ranking_tie_audit = (
+        ranking_tie_audit if isinstance(ranking_tie_audit, dict) else {}
+    )
+    _expect(
+        ranking_tie_audit.get("schema")
+        == "citylens-parcel-intel/ranking-tie-audit@v1",
+        "index: ranking tie audit schema is invalid",
+        failures,
+    )
+    _expect(
+        ranking_tie_audit.get("primary_field") == "score_calibrated"
+        and ranking_tie_audit.get("tiebreaker_field") == "score_raw"
+        and ranking_tie_audit.get("tiebreaker_scope")
+        == "equal_calibrated_probability_only"
+        and ranking_tie_audit.get("tiebreaker_is_public") is False
+        and ranking_tie_audit.get("deterministic_fallback")
+        == ["model_rank", "bbl"],
+        "index: ranking tie policy is invalid",
+        failures,
+    )
+    _expect(
+        ranking_tie_audit.get("passed") is True
+        and ranking_tie_audit.get("failures") == [],
+        "index: ranking tie audit did not pass",
+        failures,
+    )
+    ranking_tie_boroughs = ranking_tie_audit.get("boroughs")
+    ranking_tie_boroughs = (
+        ranking_tie_boroughs
+        if isinstance(ranking_tie_boroughs, dict)
+        else {}
+    )
+    for slug in BOROUGHS:
+        tie_stats = ranking_tie_boroughs.get(slug)
+        tie_stats = tie_stats if isinstance(tie_stats, dict) else {}
+        _expect(
+            tie_stats.get("row_count") == 1000
+            and tie_stats.get("tiebreaker_count") == 1000
+            and tie_stats.get("tiebreaker_coverage") == 1.0,
+            f"index: {slug} ranking tie-break coverage is incomplete",
+            failures,
+        )
+    citywide_tie_stats = ranking_tie_audit.get("citywide")
+    citywide_tie_stats = (
+        citywide_tie_stats
+        if isinstance(citywide_tie_stats, dict)
+        else {}
+    )
+    _expect(
+        citywide_tie_stats.get("row_count") == 5000
+        and citywide_tie_stats.get("tiebreaker_count") == 5000
+        and citywide_tie_stats.get("tiebreaker_coverage") == 1.0,
+        "index: citywide ranking tie-break coverage is incomplete",
+        failures,
+    )
     quality_boroughs = quality.get("boroughs")
     quality_boroughs = quality_boroughs if isinstance(quality_boroughs, dict) else {}
     for slug in BOROUGHS:
@@ -820,6 +882,18 @@ def validate_index(
     _expect(
         model.get("prospective_2026_validated") is False,
         "index: prospective 2026 validation flag must remain false until matured",
+        failures,
+    )
+    _expect(
+        model.get("ranking_policy")
+        == {
+            "primary_field": "score_calibrated",
+            "tiebreaker_field": "score_raw",
+            "tiebreaker_scope": "equal_calibrated_probability_only",
+            "tiebreaker_is_public": False,
+            "deterministic_fallback": ["model_rank", "bbl"],
+        },
+        "index: model ranking policy is invalid",
         failures,
     )
     return failures

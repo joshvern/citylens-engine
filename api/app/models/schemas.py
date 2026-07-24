@@ -153,11 +153,14 @@ class ParcelIntelRow(BaseModel):
     pfirm15_floodplain: Optional[bool] = None
     floodplain_1pct: Optional[bool] = None
     floodplain_data_as_of: Optional[str] = None
-    # Current PLUTO E-designation. This is notice of an air, noise, or
-    # hazardous-materials requirement, not proof of contamination.
+    # PLUTO EDesigNum includes E-designations and R-prefixed restrictive
+    # declarations. These are diligence requirements, not contamination proof.
     environmental_review_required: Optional[bool] = None
-    e_designation_number: Optional[str] = None
-    e_designation_data_as_of: Optional[str] = None
+    environmental_designation_number: Optional[str] = None
+    environmental_designation_kind: Optional[
+        Literal["e_designation", "restrictive_declaration", "other"]
+    ] = None
+    environmental_designation_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -420,7 +423,12 @@ class ParcelWorkflowSnapshot(BaseModel):
     critical_violation_count: Optional[int] = Field(default=None, ge=0)
     floodplain_1pct: Optional[bool] = None
     environmental_review_required: Optional[bool] = None
-    e_designation_number: Optional[str] = Field(default=None, max_length=32)
+    environmental_designation_number: Optional[str] = Field(
+        default=None, max_length=32
+    )
+    environmental_designation_kind: Optional[
+        Literal["e_designation", "restrictive_declaration", "other"]
+    ] = None
     recent_change: Optional[bool] = None
 
 

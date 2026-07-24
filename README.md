@@ -77,7 +77,7 @@ Current pinned release tag:
   context; historical NYC DOF final lien-sale diligence; current DOB
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
   PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; current PLUTO
-  E-designation diligence; exact-name,
+  E-designation/restrictive-declaration diligence; exact-name,
   current-PLUTO legal-entity portfolio summaries; and a publisher quality-gate
   summary plus a generation-to-generation drift report exposed by the
   index/sweep endpoints. The drift report covers inventory turnover, top-rank
@@ -86,11 +86,12 @@ Current pinned release tag:
   The index also exposes aggregate score-replay evidence proving all 5,000
   published scores came from the profiled matrix. Failed thresholds require a
   recorded reviewed override before publication. Owner, lien-sale, violation,
-  portfolio, floodplain, and E-designation fields are stripped from anonymous
+  portfolio, floodplain, and environmental-designation fields are stripped from anonymous
   map, sweep, and detail responses. The authenticated compact map carries portfolio counts,
   `critical_violation_count`, `floodplain_1pct`, and the boolean
-  `environmental_review_required`; detailed agency/map fields, E-designation
-  number, and dates load on parcel selection. The designation is an
+  `environmental_review_required`; detailed agency/map fields, designation
+  type/number, and dates load on parcel selection. An E-designation or
+  restrictive declaration is an
   air/noise/hazardous-materials diligence requirement, not a contamination
   finding or ranking input. Portfolio matching preserves legal form,
   never groups natural-person names, and does not infer beneficial ownership or
@@ -104,7 +105,7 @@ Current pinned release tag:
   `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
   snapshots with the current atomic feed and reports owner, newer-sale,
-  zoning, opportunity, rank/tier, lien, violation, flood, E-designation,
+  zoning, opportunity, rank/tier, lien, violation, flood, environmental designation,
   imagery, exact-name portfolio, and feed-removal changes. A removed lead is
   deliberately labeled for current-record verification rather than being
   called sold, built, or completed without authoritative evidence.

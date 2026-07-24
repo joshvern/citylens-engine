@@ -277,8 +277,8 @@ def _row_alerts(
 
     before_environmental = snapshot.get("environmental_review_required")
     after_environmental = current.get("environmental_review_required")
-    before_designation = snapshot.get("e_designation_number")
-    after_designation = current.get("e_designation_number")
+    before_designation = snapshot.get("environmental_designation_number")
+    after_designation = current.get("environmental_designation_number")
     if (
         isinstance(before_environmental, bool)
         and isinstance(after_environmental, bool)
@@ -296,13 +296,14 @@ def _row_alerts(
                 borough=borough,
                 code="environmental_review_changed",
                 severity="high" if after_environmental else "low",
-                title="Environmental review designation changed",
+                title="Environmental designation changed",
                 detail=(
-                    "The current PLUTO E-designation differs from the saved "
-                    "baseline. Verify the air, noise, or hazardous-materials "
-                    "requirements and required OER notices for the proposed work."
+                    "The current PLUTO E-designation or restrictive declaration "
+                    "differs from the saved baseline. Verify the instrument's "
+                    "air, noise, or hazardous-materials requirements and OER "
+                    "notices for the proposed work."
                 ),
-                field="e_designation_number",
+                field="environmental_designation_number",
                 before=before_designation,
                 after=after_designation,
             )

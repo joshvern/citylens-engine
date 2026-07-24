@@ -58,8 +58,9 @@ PRIVATE_NULL_FIELDS = (
     "floodplain_1pct",
     "floodplain_data_as_of",
     "environmental_review_required",
-    "e_designation_number",
-    "e_designation_data_as_of",
+    "environmental_designation_number",
+    "environmental_designation_kind",
+    "environmental_designation_data_as_of",
 )
 REQUIRED_SOURCE_SLAS = (
     "property_facts",

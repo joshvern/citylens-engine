@@ -31,8 +31,10 @@ owns the browser UI.
     new generation's cache.
   - New manifests carry `generation_diff` evidence from the publisher:
     inventory turnover, top-rank retention, rank movement, score PSI, source
-    vintages, model identity, cohorts, required-field coverage, and any
-    explicitly reviewed override. The index/sweep contracts expose this
+    vintages, model identity, cohorts, required-field coverage, full 142-column
+    inference drift, and any explicitly reviewed override. Aggregate
+    `inference_replay` evidence proves all 5,000 stored scores match the
+    reconstructed matrix. The index/sweep contracts expose this
     operational provenance, and the scheduled verifier fails when the report
     is absent, failed, or overridden without a recorded reason.
   - Health: `/v1/health` is the dependency-free keep-warm ping;

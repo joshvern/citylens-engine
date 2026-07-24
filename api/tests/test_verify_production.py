@@ -61,6 +61,22 @@ def _index() -> dict:
             "schema": "citylens-parcel-intel/generation-diff@v1",
             "status": "compared",
             "candidate": {"row_count": 5000},
+            "inference_feature_drift": {
+                "schema": (
+                    "citylens-parcel-intel/inference-feature-drift@v1"
+                ),
+                "status": "compared",
+                "candidate": {
+                    "row_count": 5000,
+                    "column_count": 142,
+                    "feature_spec_sha256": "a" * 64,
+                },
+                "gate": {
+                    "passed": True,
+                    "failures": [],
+                    "warnings": [],
+                },
+            },
             "gate": {
                 "passed": True,
                 "thresholds_passed": True,
@@ -68,6 +84,14 @@ def _index() -> dict:
                 "override_reason": None,
                 "failures": [],
             },
+        },
+        "inference_replay": {
+            "schema": "citylens-parcel-intel/inference-replay@v1",
+            "row_count": 5000,
+            "passed": True,
+            "status": "matched",
+            "mismatch_count": 0,
+            "maximum_absolute_error": 0.0,
         },
     }
 
@@ -123,6 +147,34 @@ def test_index_validator_requires_reviewed_generation_diff_override() -> None:
         }
     )
     assert validate_index(bad, max_age_days=35, now=now) == []
+
+
+def test_index_validator_requires_full_feature_drift_and_score_replay() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    bad["generation_diff"]["inference_feature_drift"]["candidate"][
+        "column_count"
+    ] = 141
+    bad["inference_replay"].update(
+        {
+            "passed": False,
+            "status": "mismatched",
+            "mismatch_count": 1,
+            "maximum_absolute_error": 0.01,
+        }
+    )
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert "index: inference feature column count is not 142" in failures
+    assert (
+        "index: inference score replay did not match all 5,000 rows"
+        in failures
+    )
+    assert (
+        "index: inference score replay has non-zero maximum error"
+        in failures
+    )
 
 
 def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:

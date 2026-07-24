@@ -318,8 +318,10 @@ detail and requires the v1 decision audit, exact accepted-model validation
 metrics, unambiguous rank/eligibility/diligence roles, and redacted
 ownership/diligence evidence. It also requires the publisher's hashed
 authoritative ZAP BBL reconciliation to show a non-empty source universe,
-blocked candidates actually exercised, consistent source counts, and zero
-published leakage. It also requires the official MTA station source SLA,
+100% current private project-to-BBL coverage, valid hashed current-PLUTO and
+reviewed official-filed-document evidence, blocked candidates actually
+exercised, consistent source counts, and zero published leakage. It also
+requires the official MTA station source SLA,
 complete per-borough transit enrichment, anonymous transit redaction, and an
 audit statement that transit is diligence-only. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours and stores

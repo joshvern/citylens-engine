@@ -242,7 +242,8 @@ quality-gate regressions, missing or failed
 generation-diff evidence, input-feature drift, score-replay mismatch,
 unreviewed drift overrides, model-provenance drift,
 missing/invalid authoritative ZAP source reconciliation or any directly
-matched blocked-BBL leakage,
+matched blocked-BBL leakage, incomplete project-to-BBL coverage, invalid
+current-PLUTO or reviewed official-filed-document evidence,
 borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, a missing/misleading parcel
 decision audit, missing API/web browser-security headers, framework disclosure,

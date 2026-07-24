@@ -647,8 +647,8 @@ def validate_index(
     _expect(
         isinstance(minimum_project_bbl_crosswalk_coverage, (int, float))
         and not isinstance(minimum_project_bbl_crosswalk_coverage, bool)
-        and minimum_project_bbl_crosswalk_coverage == 0.99,
-        "index: land-use reconciliation coverage floor is not 0.99",
+        and minimum_project_bbl_crosswalk_coverage == 1.0,
+        "index: land-use reconciliation coverage floor is not 1.0",
         failures,
     )
     project_bbl_crosswalk_coverage = land_use_reconciliation.get(
@@ -657,8 +657,8 @@ def validate_index(
     _expect(
         isinstance(project_bbl_crosswalk_coverage, (int, float))
         and not isinstance(project_bbl_crosswalk_coverage, bool)
-        and 0.99 <= project_bbl_crosswalk_coverage <= 1.0,
-        "index: land-use project-to-BBL coverage is below 99%",
+        and project_bbl_crosswalk_coverage == 1.0,
+        "index: land-use project-to-BBL coverage is below 100%",
         failures,
     )
     _expect(
@@ -714,6 +714,114 @@ def validate_index(
         land_use_reconciliation.get("project_detail_fetch_failure_ids")
         == [],
         "index: land-use project-detail failure IDs are not empty",
+        failures,
+    )
+    official_document_schema = land_use_reconciliation.get(
+        "official_document_supplement_schema"
+    )
+    _expect(
+        official_document_schema
+        == (
+            "citylens-parcel-intel/"
+            "zap-official-document-bbl-supplements@v1"
+        ),
+        "index: official ZAP document supplement schema is invalid",
+        failures,
+    )
+    official_document_reviewed_at = _parse_timestamp(
+        land_use_reconciliation.get(
+            "official_document_supplement_reviewed_at"
+        )
+    )
+    _expect(
+        official_document_reviewed_at is not None,
+        "index: official ZAP document review timestamp is invalid",
+        failures,
+    )
+    if official_document_reviewed_at is not None:
+        official_document_review_age_days = (
+            now - official_document_reviewed_at
+        ).total_seconds() / 86400
+        _expect(
+            -1 <= official_document_review_age_days <= 365,
+            (
+                "index: official ZAP document review age is "
+                f"{official_document_review_age_days:.1f} days"
+            ),
+            failures,
+        )
+    official_document_sha256 = land_use_reconciliation.get(
+        "official_document_supplement_sha256"
+    )
+    _expect(
+        isinstance(official_document_sha256, str)
+        and len(official_document_sha256) == 64
+        and all(
+            character in "0123456789abcdef"
+            for character in official_document_sha256
+        ),
+        "index: official ZAP document supplement digest is invalid",
+        failures,
+    )
+    official_document_source_count = land_use_reconciliation.get(
+        "official_document_source_count"
+    )
+    official_document_relation_count = land_use_reconciliation.get(
+        "official_document_supplemental_relation_count"
+    )
+    official_document_project_count = land_use_reconciliation.get(
+        "official_document_supplemental_project_count"
+    )
+    official_document_project_ids = land_use_reconciliation.get(
+        "official_document_supplemental_project_ids"
+    )
+    _expect(
+        isinstance(official_document_source_count, int)
+        and not isinstance(official_document_source_count, bool)
+        and official_document_source_count >= 0,
+        "index: official ZAP document source count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(official_document_relation_count, int)
+        and not isinstance(official_document_relation_count, bool)
+        and official_document_relation_count >= 0,
+        "index: official ZAP document relation count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(official_document_project_count, int)
+        and not isinstance(official_document_project_count, bool)
+        and official_document_project_count >= 0,
+        "index: official ZAP document project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(official_document_project_ids, list)
+        and all(
+            isinstance(project_id, str) and bool(project_id.strip())
+            for project_id in official_document_project_ids
+        )
+        and len(set(official_document_project_ids))
+        == len(official_document_project_ids)
+        and len(official_document_project_ids)
+        == official_document_project_count,
+        "index: official ZAP document project IDs are invalid",
+        failures,
+    )
+    _expect(
+        isinstance(official_document_source_count, int)
+        and isinstance(official_document_project_count, int)
+        and official_document_source_count >= official_document_project_count,
+        "index: official ZAP document sources are below project count",
+        failures,
+    )
+    _expect(
+        isinstance(official_document_relation_count, int)
+        and isinstance(official_document_project_count, int)
+        and official_document_relation_count
+        >= official_document_project_count,
+        "index: official ZAP document relations are below project count",
         failures,
     )
     current_tax_lot_candidate_count = land_use_reconciliation.get(
@@ -1671,7 +1779,7 @@ def main() -> int:
             max_age_days=args.max_age_days,
             timeout=args.timeout,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - verifier must emit crash JSON
         failures = [f"verifier crashed: {type(exc).__name__}: {exc}"]
         summary = {
             "schema_version": "citylens/production-verification@v1",

@@ -163,6 +163,26 @@ def _index() -> dict:
                 "project_detail_supplemental_relation_count": 1,
                 "project_detail_fetch_failure_count": 0,
                 "project_detail_fetch_failure_ids": [],
+                "current_tax_lot_reconciliation_candidate_count": 27,
+                "current_tax_lot_reconciled_relation_count": 15,
+                "current_tax_lot_reconciled_project_count": 12,
+                "current_tax_lot_reconciled_project_ids": [
+                    "P1",
+                    "P2",
+                    "P3",
+                    "P4",
+                    "P5",
+                    "P6",
+                    "P7",
+                    "P8",
+                    "P9",
+                    "P10",
+                    "P11",
+                    "P12",
+                ],
+                "current_tax_lot_unmatched_user_input_count": 10,
+                "current_tax_lot_universe_count": 858_602,
+                "current_tax_lot_index_sha256": "b" * 64,
                 "candidate_blocked_bbl_count": 442,
                 "published_leakage_count": 0,
                 "passed": True,
@@ -357,6 +377,32 @@ def test_index_validator_rejects_land_use_scope_or_detail_failures() -> None:
         "index: land-use project-detail failure IDs are not empty"
         in failures
     )
+
+
+def test_index_validator_rejects_weak_current_tax_lot_reconciliation() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    reconciliation = bad["quality_gate"]["land_use_reconciliation"]
+    reconciliation["current_tax_lot_reconciled_relation_count"] = 28
+    reconciliation["current_tax_lot_reconciled_project_count"] = 13
+    reconciliation["current_tax_lot_reconciled_project_ids"] = ["P1"]
+    reconciliation["current_tax_lot_unmatched_user_input_count"] = -1
+    reconciliation["current_tax_lot_universe_count"] = 799_999
+    reconciliation["current_tax_lot_index_sha256"] = "not-a-digest"
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert (
+        "index: current-tax-lot reconciled relation count is invalid"
+        in failures
+    )
+    assert (
+        "index: current-tax-lot reconciled project IDs are invalid"
+        in failures
+    )
+    assert "index: current-tax-lot unmatched input count is invalid" in failures
+    assert "index: current PLUTO tax-lot universe is invalid" in failures
+    assert "index: current PLUTO tax-lot digest is invalid" in failures
 
 
 def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:

@@ -439,6 +439,81 @@ def validate_index(
         "index: land-use reconciliation blocked counts disagree",
         failures,
     )
+    blocking_project_count = land_use_reconciliation.get(
+        "blocking_project_count"
+    )
+    joined_blocking_project_count = land_use_reconciliation.get(
+        "joined_blocking_project_count"
+    )
+    unjoined_blocking_project_count = land_use_reconciliation.get(
+        "unjoined_blocking_project_count"
+    )
+    _expect(
+        isinstance(blocking_project_count, int)
+        and not isinstance(blocking_project_count, bool)
+        and blocking_project_count > 0,
+        "index: land-use reconciliation has no blocking projects",
+        failures,
+    )
+    _expect(
+        isinstance(joined_blocking_project_count, int)
+        and not isinstance(joined_blocking_project_count, bool)
+        and joined_blocking_project_count >= 0,
+        "index: land-use reconciliation joined project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(unjoined_blocking_project_count, int)
+        and not isinstance(unjoined_blocking_project_count, bool)
+        and unjoined_blocking_project_count >= 0,
+        "index: land-use reconciliation unjoined project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(blocking_project_count, int)
+        and isinstance(joined_blocking_project_count, int)
+        and isinstance(unjoined_blocking_project_count, int)
+        and joined_blocking_project_count + unjoined_blocking_project_count
+        == blocking_project_count,
+        "index: land-use reconciliation project counts disagree",
+        failures,
+    )
+    unjoined_blocking_project_ids = land_use_reconciliation.get(
+        "unjoined_blocking_project_ids"
+    )
+    _expect(
+        isinstance(unjoined_blocking_project_ids, list)
+        and all(
+            isinstance(project_id, str) and bool(project_id.strip())
+            for project_id in unjoined_blocking_project_ids
+        )
+        and len(set(unjoined_blocking_project_ids))
+        == len(unjoined_blocking_project_ids)
+        and len(unjoined_blocking_project_ids)
+        == unjoined_blocking_project_count,
+        "index: land-use reconciliation unresolved project IDs are invalid",
+        failures,
+    )
+    minimum_project_bbl_crosswalk_coverage = land_use_reconciliation.get(
+        "minimum_project_bbl_crosswalk_coverage"
+    )
+    _expect(
+        isinstance(minimum_project_bbl_crosswalk_coverage, (int, float))
+        and not isinstance(minimum_project_bbl_crosswalk_coverage, bool)
+        and minimum_project_bbl_crosswalk_coverage == 0.99,
+        "index: land-use reconciliation coverage floor is not 0.99",
+        failures,
+    )
+    project_bbl_crosswalk_coverage = land_use_reconciliation.get(
+        "project_bbl_crosswalk_coverage"
+    )
+    _expect(
+        isinstance(project_bbl_crosswalk_coverage, (int, float))
+        and not isinstance(project_bbl_crosswalk_coverage, bool)
+        and 0.99 <= project_bbl_crosswalk_coverage <= 1.0,
+        "index: land-use project-to-BBL coverage is below 99%",
+        failures,
+    )
     _expect(
         isinstance(
             land_use_reconciliation.get("candidate_blocked_bbl_count"), int

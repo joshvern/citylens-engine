@@ -410,6 +410,10 @@ class ParcelWorkflowSnapshot(BaseModel):
         Literal["still_vacant", "active", "already_built"]
     ] = None
     observed_imagery_year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    tax_lien_sale_year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    critical_violation_count: Optional[int] = Field(default=None, ge=0)
+    floodplain_1pct: Optional[bool] = None
+    recent_change: Optional[bool] = None
 
 
 class ParcelWorkflowItem(ParcelWorkflowUpdate):
@@ -490,6 +494,44 @@ class ParcelWorkflowAnalytics(BaseModel):
     decision_reason_counts: dict[str, int]
     funnel: ParcelWorkflowFunnel
     cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ParcelWorkflowAlert(BaseModel):
+    bbl: str
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+    code: Literal[
+        "removed_from_current_feed",
+        "owner_changed",
+        "newer_sale_record",
+        "zoning_changed",
+        "opportunity_changed",
+        "priority_tier_changed",
+        "material_rank_move",
+        "tax_lien_history_changed",
+        "critical_violations_changed",
+        "flood_overlay_changed",
+        "imagery_change_signal_changed",
+        "owner_portfolio_size_changed",
+    ]
+    severity: Literal["urgent", "high", "medium", "low"]
+    title: str
+    detail: str
+    field: str
+    before: Optional[Any] = None
+    after: Optional[Any] = None
+
+
+class ParcelWorkflowAlerts(BaseModel):
+    schema_version: Literal["citylens/parcel-workflow-alerts@v1"]
+    generated_at: datetime
+    feed_generated_at: Optional[datetime] = None
+    watched_count: int
+    changed_lead_count: int
+    alert_count: int
+    removed_from_feed_count: int
+    severity_counts: dict[str, int]
+    alerts: list[ParcelWorkflowAlert] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 

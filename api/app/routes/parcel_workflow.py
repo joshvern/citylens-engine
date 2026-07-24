@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from ..models.schemas import (
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
+    ParcelWorkflowAlerts,
     ParcelWorkflowAnalytics,
     ParcelWorkflowEvent,
     ParcelWorkflowItem,
@@ -15,8 +16,15 @@ from ..models.schemas import (
 from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
+from ..services.gcs_artifacts import GcsArtifacts
+from ..services.parcel_workflow_alerts import build_workflow_alerts
 from ..services.parcel_workflow_analytics import build_workflow_analytics
 from ..services.settings import Settings, get_settings
+from .parcel_intel import (
+    ParcelIntelRegistry,
+    get_gcs,
+    get_registry,
+)
 
 router = APIRouter(tags=["parcel-workflow"])
 
@@ -59,6 +67,27 @@ def workflow_analytics(
         app_user_id=auth.app_user_id, include_archived=True
     )
     return build_workflow_analytics(items)
+
+
+@router.get(
+    "/parcel-intel/workflow/alerts", response_model=ParcelWorkflowAlerts
+)
+def workflow_alerts(
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> dict:
+    items = store.list_parcel_workflow(app_user_id=auth.app_user_id)
+    rows, manifest = registry.citywide_map(gcs)
+    generated_at = (manifest or {}).get("generated_at")
+    return build_workflow_alerts(
+        items,
+        [row.model_dump() for row in rows],
+        feed_generated_at=(
+            generated_at if isinstance(generated_at, str) else None
+        ),
+    )
 
 
 @router.get(

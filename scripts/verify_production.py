@@ -217,6 +217,54 @@ def validate_index(
         for field in ("owner_coverage", "geometry_coverage", "floodplain_coverage"):
             _expect(row.get(field) == 1.0, f"index: {slug} {field} is not complete", failures)
 
+    generation_diff = index.get("generation_diff")
+    _expect(
+        isinstance(generation_diff, dict),
+        "index: generation_diff is missing",
+        failures,
+    )
+    generation_diff = (
+        generation_diff if isinstance(generation_diff, dict) else {}
+    )
+    _expect(
+        generation_diff.get("schema")
+        == "citylens-parcel-intel/generation-diff@v1",
+        "index: generation_diff schema is invalid",
+        failures,
+    )
+    _expect(
+        generation_diff.get("status") in {"initial_generation", "compared"},
+        "index: generation_diff status is invalid",
+        failures,
+    )
+    diff_gate = generation_diff.get("gate")
+    _expect(
+        isinstance(diff_gate, dict),
+        "index: generation_diff gate is missing",
+        failures,
+    )
+    diff_gate = diff_gate if isinstance(diff_gate, dict) else {}
+    _expect(
+        diff_gate.get("passed") is True,
+        "index: generation_diff gate did not pass",
+        failures,
+    )
+    if diff_gate.get("thresholds_passed") is not True:
+        _expect(
+            diff_gate.get("override_applied") is True
+            and isinstance(diff_gate.get("override_reason"), str)
+            and bool(diff_gate["override_reason"].strip()),
+            "index: failed drift thresholds lack a reviewed override reason",
+            failures,
+        )
+    diff_candidate = generation_diff.get("candidate")
+    diff_candidate = diff_candidate if isinstance(diff_candidate, dict) else {}
+    _expect(
+        diff_candidate.get("row_count") == 5000,
+        "index: generation_diff candidate row count is not 5,000",
+        failures,
+    )
+
     model = index.get("model_metadata")
     model = model if isinstance(model, dict) else {}
     _expect(

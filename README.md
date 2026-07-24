@@ -78,8 +78,11 @@ Current pinned release tag:
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
   PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; exact-name,
   current-PLUTO legal-entity portfolio summaries; and a publisher quality-gate
-  summary
-  exposed by the index/sweep endpoints. Owner, lien-sale, and violation fields
+  summary plus a generation-to-generation drift report exposed by the
+  index/sweep endpoints. The drift report covers inventory turnover, top-rank
+  retention, retained-lead rank movement, score PSI, source vintages, model
+  identity, and required-field coverage; failed thresholds require a recorded
+  reviewed override before publication. Owner, lien-sale, and violation fields
   plus portfolio and floodplain fields are stripped from anonymous map, sweep,
   and detail responses. The authenticated compact map carries portfolio counts,
   `critical_violation_count`, and `floodplain_1pct`; detailed agency/map fields
@@ -140,8 +143,9 @@ generation objects, and the web route:
   --output production-verification.json
 ```
 
-It fails on stale/missing feeds, quality-gate regressions, model-provenance
-drift, borough or rank gaps, anonymous premium-field exposure, missing gzip,
+It fails on stale/missing feeds, quality-gate regressions, missing or failed
+generation-diff evidence, unreviewed drift overrides, model-provenance drift,
+borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, or a broken Parcel Intelligence
 page. [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and

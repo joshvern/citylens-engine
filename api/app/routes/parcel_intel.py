@@ -298,6 +298,7 @@ class ParcelIntelRegistry:
             model_metadata=manifest.get("model_metadata") or {},
             data_sources=manifest.get("data_sources") or {},
             quality_gate=manifest.get("quality_gate") or {},
+            generation_diff=manifest.get("generation_diff") or {},
             age_days=age_days,
             stale=stale,
         )
@@ -688,4 +689,5 @@ def parcel_intel_sweep(
         model_metadata=(manifest or {}).get("model_metadata") or {},
         data_sources=(manifest or {}).get("data_sources") or {},
         quality_gate=(manifest or {}).get("quality_gate") or {},
+        generation_diff=(manifest or {}).get("generation_diff") or {},
     )

@@ -68,6 +68,15 @@ owns the browser UI.
     due date, assignee, stage, and outcome, so changed commitments cannot stay
     hidden behind stale snoozes. Browser clients do not own these
     classifications or reminder identity.
+  - Aggregate product-adoption evidence is stored as one value-minimized
+    `product_usage_days` counter document per user/day. Workflow lifecycle
+    counters are updated in the same transaction as canonical workflow
+    mutations; parcel opens remain directional client counters. A daily
+    keyless GitHub workflow combines the retained counters with aggregate
+    `parcel_workflow` inventory and labels the activation gate `collecting`
+    until at least 30 workflow records exist across at least three users. No
+    user or parcel identifiers are emitted, and the gate is not a model or
+    lead-quality metric.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).
@@ -88,6 +97,11 @@ Firestore:
 - `usage_months/{app_user_id}_{YYYY-MM}`: monthly run-quota counter (transactional)
 - `runs/{run_id}`: run status/progress/request
 - `runs/{run_id}/artifacts/{artifact_id}`: artifact metadata + GCS URI
+- `users/{app_user_id}/product_usage_days/{day}`: expiring aggregate adoption
+  counters, with no row-level event or parcel payload
+- `users/{app_user_id}/parcel_workflow/{bbl}`: canonical user-owned acquisition
+  workflow state; reporting reads only aggregate record/user counts and archive
+  state
 
 GCS:
 - `gs://<CITYLENS_BUCKET>/runs/<run_id>/<artifact_filename>`

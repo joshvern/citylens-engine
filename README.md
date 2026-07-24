@@ -198,10 +198,13 @@ Current pinned release tag:
   rate-limited at the API, and aggregate documents expire after 90 days
   through the `expires_at` TTL field. Run
   `scripts/report_product_adoption.py` for an aggregate-only 30-day operator
-  report. Its open-to-save ratio combines directional client opens with
-  authoritative workflow creates; it is still not model accuracy,
-  unique-parcel conversion, seller intent, or a substitute for canonical
-  workflow records.
+  report. The report also counts active and archived canonical workflow
+  records and publishes an explicit `collecting`/`ready` activation-evidence
+  gate. That gate requires at least 30 workflow records across at least three
+  users. Its open-to-save ratio combines directional client opens with
+  authoritative workflow creates; neither the ratio nor the gate is model
+  accuracy, unique-parcel conversion, lead quality, seller intent, or a
+  substitute for canonical workflow records.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
   plus one stable manifest pointer. The API validates the pointer path,
@@ -282,11 +285,17 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
 ```
 
 The report contains only window totals, event/source counts, active-user and
-active-user-day counts, and a directional parcel-open to workflow-create ratio.
-Parcel opens are client-side directional counters. Workflow lifecycle counts
-are transactionally derived from the canonical server mutation and therefore
-do not depend on a follow-up browser telemetry request. Do not publish raw
-`product_usage_days` documents or use this report as a model accuracy claim.
+active-user-day counts, aggregate canonical workflow inventory, a directional
+parcel-open to workflow-create ratio, and the activation-evidence gate. Parcel
+opens are client-side directional counters. Workflow lifecycle counts are
+transactionally derived from the canonical server mutation and therefore do
+not depend on a follow-up browser telemetry request. The workflow
+[adoption-report.yml](.github/workflows/adoption-report.yml) runs this report
+daily through a repository- and branch-restricted keyless Google identity,
+publishes a warning while evidence is collecting, and retains the
+aggregate-only artifact for 90 days. Do not publish raw `product_usage_days`
+or `parcel_workflow` documents, and do not use this report as a model accuracy
+or lead-quality claim.
 
 ### VS Code folder expectations
 

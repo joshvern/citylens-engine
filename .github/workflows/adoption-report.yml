@@ -1,0 +1,126 @@
+name: adoption-report
+
+on:
+  schedule:
+    # Daily, offset from other CityLens jobs and shared-runner peaks.
+    - cron: "47 13 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Product-event lookback window (1-90 days)
+        required: false
+        default: "30"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: adoption-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out report tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+      - name: Authenticate to Google Cloud without a service-account key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_ADOPTION_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_ADOPTION_REPORTER_SERVICE_ACCOUNT }}
+
+      - name: Sync report environment
+        run: uv sync --package citylens-engine-api --no-dev --frozen
+
+      - name: Generate aggregate adoption evidence
+        env:
+          DAYS: ${{ inputs.days || '30' }}
+          PROJECT_ID: ${{ vars.CITYLENS_GCP_PROJECT }}
+        run: |
+          ./.venv/bin/python scripts/report_product_adoption.py \
+            --project "${PROJECT_ID}" \
+            --days "${DAYS}" \
+            --output product-adoption-report.json
+
+      - name: Publish adoption summary
+        if: always()
+        run: |
+          if [[ ! -s product-adoption-report.json ]]; then
+            echo "## ❌ CityLens adoption evidence" >> "${GITHUB_STEP_SUMMARY}"
+            echo "No report was produced." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          ./.venv/bin/python - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
+          import json
+
+          report = json.load(
+              open("product-adoption-report.json", encoding="utf-8")
+          )
+          gate = report["activation_evidence_gate"]
+          inventory = report["workflow_inventory"]
+          icon = "✅" if gate["status"] == "ready" else "🟡"
+          print(f"## {icon} CityLens adoption evidence")
+          print()
+          print(f"- Status: `{gate['status']}`")
+          print(f"- Active users: `{report['active_users']}`")
+          print(f"- Active user-days: `{report['active_user_days']}`")
+          print(f"- Parcel opens: `{report['events'].get('parcel_opened', 0)}`")
+          print(
+              f"- Canonical workflow records: `{inventory['records']}` "
+              f"(`{inventory['active']}` active, "
+              f"`{inventory['archived']}` archived)"
+          )
+          print(f"- Workflow users: `{inventory['users']}`")
+          print()
+          print(gate["claim"])
+          if gate["status"] != "ready":
+              print()
+              print(
+                  f"> Collecting: {gate['records_remaining']} more workflow "
+                  f"record(s) and {gate['users_remaining']} more user(s) "
+                  "are required for the directional activation gate."
+              )
+          PY
+
+      - name: Flag a collecting activation gate
+        if: success()
+        run: |
+          ./.venv/bin/python - <<'PY'
+          import json
+
+          report = json.load(
+              open("product-adoption-report.json", encoding="utf-8")
+          )
+          gate = report["activation_evidence_gate"]
+          if gate["status"] != "ready":
+              print(
+                  "::warning title=Activation evidence is collecting::"
+                  f"{gate['records_remaining']} workflow record(s) and "
+                  f"{gate['users_remaining']} user(s) remain."
+              )
+          PY
+
+      - name: Upload aggregate adoption report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: product-adoption-report
+          path: product-adoption-report.json
+          if-no-files-found: warn
+          retention-days: 90

@@ -768,34 +768,92 @@ class FirestoreStore:
         search_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        def _op() -> dict[str, Any]:
-            ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
-            snap = ref.get()
-            existing = snap.to_dict() if snap.exists else {}
+        ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any]:
             now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
+            existing = (snap.to_dict() or {}) if snap.exists else {}
+            changed = not snap.exists or any(
+                existing.get(key) != value for key, value in payload.items()
+            )
+            if not changed:
+                return existing
             doc = {
-                **(existing or {}),
+                **existing,
                 **payload,
                 "search_id": search_id,
                 "user_id": app_user_id,
-                "created_at": (existing or {}).get("created_at") or now,
+                "created_at": existing.get("created_at") or now,
                 "updated_at": now,
             }
-            ref.set(doc)
+            transaction.set(ref, doc)
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
+            usage_payload = _product_usage_day_payload(
+                existing=existing_usage,
+                event=(
+                    "saved_view_updated"
+                    if snap.exists
+                    else "saved_view_created"
+                ),
+                source="saved_views",
+                occurred_at=now,
+            )
+            if usage_payload is not None:
+                transaction.set(usage_ref, usage_payload)
             return doc
+
+        def _op() -> dict[str, Any]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
 
         return retry_transient(_op)
 
     def delete_parcel_saved_search(
         self, *, app_user_id: str, search_id: str
     ) -> bool:
-        def _op() -> bool:
-            ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
-            snap = ref.get()
+        ref = self._parcel_saved_searches_col(app_user_id).document(search_id)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> bool:
+            now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
             if not snap.exists:
                 return False
-            ref.delete()
+            transaction.delete(ref)
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
+            usage_payload = _product_usage_day_payload(
+                existing=existing_usage,
+                event="saved_view_deleted",
+                source="saved_views",
+                occurred_at=now,
+            )
+            if usage_payload is not None:
+                transaction.set(usage_ref, usage_payload)
             return True
+
+        def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
 
         return retry_transient(_op)
 

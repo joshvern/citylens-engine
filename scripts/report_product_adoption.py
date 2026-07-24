@@ -60,6 +60,26 @@ def _read_workflow_rows(client: firestore.Client) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_saved_view_rows(client: firestore.Client) -> list[dict[str, Any]]:
+    """Read only the version marker needed for aggregate saved-view inventory."""
+
+    rows: list[dict[str, Any]] = []
+    query = client.collection_group("parcel_saved_searches").select(
+        ["schema_version"]
+    )
+    for snapshot in query.stream():
+        user_ref = snapshot.reference.parent.parent
+        rows.append(
+            {
+                "_user_id": user_ref.id if user_ref is not None else "",
+                "schema_version": (snapshot.to_dict() or {}).get(
+                    "schema_version"
+                ),
+            }
+        )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=_default_project())
@@ -73,6 +93,7 @@ def main() -> int:
     report = build_product_adoption_report(
         _read_rows(client),
         workflow_rows=_read_workflow_rows(client),
+        saved_view_rows=_read_saved_view_rows(client),
         days=args.days,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True)

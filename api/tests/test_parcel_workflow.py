@@ -258,12 +258,27 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
             "source": "ranking",
         }
     ]
+    applied = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "saved_view_applied",
+            "source": "saved_views",
+        },
+    )
+    assert applied.status_code == 204
+    assert applied.headers["cache-control"] == "private, no-store"
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "saved_view_applied",
+        "source": "saved_views",
+    }
     mismatched = client.post(
         "/v1/parcel-intel/product-events",
         json={
             "schema_version": "citylens/parcel-product-event@v1",
-            "event": "workflow_created",
-            "source": "workflow",
+            "event": "saved_view_applied",
+            "source": "map",
         },
     )
     assert mismatched.status_code == 422

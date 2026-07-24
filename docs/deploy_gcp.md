@@ -382,11 +382,12 @@ gcloud firestore fields ttls list \
 ```
 
 The API writes only aggregate daily event/source counts to this collection.
-Parcel opens are value-minimized client counters; workflow lifecycle counters
-are written transactionally with the canonical workflow mutation, so dropped
-browser telemetry cannot erase a real save and idempotent retries cannot
-inflate it. Do not add BBLs, addresses, owners, URLs, workflow text, or
-event-level rows.
+Parcel opens and saved-view applies are value-minimized client counters.
+Workflow lifecycle and saved-view create/update/delete counters are written
+transactionally with their canonical mutations, so dropped browser telemetry
+cannot erase a real save and unchanged retries cannot inflate it. Do not add
+BBLs, addresses, owners, URLs, workflow text, saved-view names/search/filter
+state, or event-level rows.
 Generate the aggregate operator report with:
 
 ```bash
@@ -395,11 +396,15 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The versioned report includes aggregate canonical workflow inventory and an
-activation-evidence gate. The gate remains `collecting` until at least 30
-workflow records exist across at least three users. It is a product-activation
-signal only; it does not establish model accuracy, seller intent, transaction
-probability, or lead quality.
+The v3 report includes aggregate canonical workflow and saved-view inventory,
+an activation-evidence gate, and a saved-view-reuse evidence gate. Activation
+remains `collecting` until at least 30 workflow records exist across at least
+three users. Saved-view reuse remains `collecting` until at least 10
+best-effort apply events exist across at least three users. The saved-view
+inventory query selects only the schema marker and never reads names, search
+text, filters, or owners. These are product-use signals only; they do not
+establish model accuracy, seller intent, transaction probability, unique
+parcels, or lead quality.
 
 The repository's scheduled
 `.github/workflows/adoption-report.yml` runs the same report daily and retains

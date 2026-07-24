@@ -59,6 +59,9 @@ class _Transaction:
         else:
             self.client.documents[reference.path] = deepcopy(value)
 
+    def delete(self, reference: _Document) -> None:
+        self.client.documents.pop(reference.path, None)
+
 
 class _Client:
     def __init__(self) -> None:
@@ -144,3 +147,92 @@ def test_workflow_lifecycle_usage_is_transactional_and_idempotent(
         bbl="3020960069",
     )
     assert client.documents[usage_path]["events"]["workflow_archived"] == 1
+
+
+def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    payload = {
+        "schema_version": "citylens/parcel-saved-view@v2",
+        "name": "Private acquisitions",
+        "borough": "all",
+        "query": "confidential owner",
+        "filters": {
+            "priority": "highest",
+            "opportunity": "ground_up_candidate",
+            "owner_portfolio": "multi_lot",
+            "overlay": "priority",
+        },
+        "alert_frequency": "off",
+    }
+
+    created = store.upsert_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="private-search-id",
+        payload=payload,
+    )
+    usage_path = (
+        "users",
+        "private-user",
+        "product_usage_days",
+        "2026-07-24",
+    )
+    usage = client.documents[usage_path]
+    assert created["name"] == "Private acquisitions"
+    assert usage["events"] == {"saved_view_created": 1}
+    assert usage["sources"] == {"saved_view_created:saved_views": 1}
+    assert not {
+        "search_id",
+        "name",
+        "query",
+        "filters",
+        "owner",
+        "owner_id",
+    }.intersection(usage)
+
+    created_at = created["created_at"]
+    updated_at = created["updated_at"]
+    retried = store.upsert_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="private-search-id",
+        payload=payload,
+    )
+    assert retried["created_at"] == created_at
+    assert retried["updated_at"] == updated_at
+    assert client.documents[usage_path]["events"] == {"saved_view_created": 1}
+
+    updated = store.upsert_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="private-search-id",
+        payload={**payload, "name": "Updated private acquisitions"},
+    )
+    assert updated["name"] == "Updated private acquisitions"
+    assert client.documents[usage_path]["events"] == {
+        "saved_view_created": 1,
+        "saved_view_updated": 1,
+    }
+
+    assert store.delete_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="private-search-id",
+    )
+    assert client.documents[usage_path]["events"] == {
+        "saved_view_created": 1,
+        "saved_view_deleted": 1,
+        "saved_view_updated": 1,
+    }
+
+    assert not store.delete_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="private-search-id",
+    )
+    assert client.documents[usage_path]["events"]["saved_view_deleted"] == 1

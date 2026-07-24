@@ -62,3 +62,19 @@ The public, data-free
 `GET /v1/parcel-intel/workflow/analytics/methodology` endpoint exposes the
 schema version, horizons, thresholds, and non-accuracy disclaimer. The
 production verifier fails if that deployed contract changes unexpectedly.
+
+## Follow-up completeness
+
+Prospective measurement depends on timely workflow use, so open records may
+store a structured `next_action` and `next_action_due_date`. The authenticated
+`GET /v1/parcel-intel/workflow/actions` endpoint derives a private action queue
+on the server:
+
+- overdue, due today, due within seven days, scheduled, or unscheduled;
+- missing assignee;
+- outcome update due after 30 days with no recorded outcome.
+
+A due date without a concrete action is rejected. Closing, rejecting, losing,
+or passing on a lead clears its stale reminder and removes it from the open
+queue. These operational completeness states do not change ranks, fabricate
+outcomes, or relax the fixed-horizon measurement rules.

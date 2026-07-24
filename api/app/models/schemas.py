@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -365,6 +365,8 @@ class ParcelWorkflowUpdate(BaseModel):
     watching: bool = True
     decision_reason: Optional[str] = Field(default=None, max_length=80)
     outcome: Optional[ParcelWorkflowOutcome] = "unknown"
+    next_action: Optional[str] = Field(default=None, max_length=240)
+    next_action_due_date: Optional[date] = None
     snapshot: "ParcelWorkflowSnapshot" = Field(
         default_factory=lambda: ParcelWorkflowSnapshot(),
         description=(
@@ -377,6 +379,7 @@ class ParcelWorkflowUpdate(BaseModel):
 class ParcelWorkflowSnapshot(BaseModel):
     """Small, typed baseline used to detect decision-relevant parcel changes."""
 
+    address: Optional[str] = Field(default=None, max_length=256)
     feed_generated_at: Optional[str] = Field(default=None, max_length=40)
     property_facts_as_of: Optional[str] = Field(default=None, max_length=32)
     citywide_rank: Optional[int] = Field(default=None, ge=1, le=1_000_000)
@@ -565,6 +568,62 @@ class ParcelWorkflowAnalytics(BaseModel):
     )
     cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+ParcelWorkflowActionState = Literal[
+    "overdue",
+    "due_today",
+    "due_soon",
+    "scheduled",
+    "unscheduled",
+]
+
+
+class ParcelWorkflowActionItem(BaseModel):
+    bbl: str
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+    address: Optional[str] = None
+    stage: ParcelWorkflowStage
+    outcome: ParcelWorkflowOutcome
+    assignee: Optional[str] = None
+    next_action: Optional[str] = None
+    next_action_due_date: Optional[date] = None
+    action_state: ParcelWorkflowActionState
+    days_overdue: int = Field(default=0, ge=0)
+    days_since_update: int = Field(ge=0)
+    needs_assignee: bool
+    needs_outcome_update: bool
+    citywide_rank: Optional[int] = Field(default=None, ge=1)
+    priority_tier: Optional[
+        Literal["highest", "high", "medium", "watch"]
+    ] = None
+    opportunity_category: Optional[
+        Literal[
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+            "completed_project",
+        ]
+    ] = None
+    saved_at: datetime
+    updated_at: datetime
+
+
+class ParcelWorkflowActions(BaseModel):
+    schema_version: Literal["citylens/parcel-workflow-actions@v1"]
+    generated_at: datetime
+    total_records: int = Field(ge=0)
+    open_records: int = Field(ge=0)
+    completed_records: int = Field(ge=0)
+    overdue_count: int = Field(ge=0)
+    due_today_count: int = Field(ge=0)
+    due_soon_count: int = Field(ge=0)
+    scheduled_count: int = Field(ge=0)
+    unscheduled_count: int = Field(ge=0)
+    unassigned_count: int = Field(ge=0)
+    outcome_update_due_count: int = Field(ge=0)
+    items: list[ParcelWorkflowActionItem] = Field(default_factory=list)
 
 
 class ParcelWorkflowAlert(BaseModel):

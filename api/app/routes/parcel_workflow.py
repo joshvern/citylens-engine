@@ -8,6 +8,7 @@ from ..models.schemas import (
     ParcelIntelRow,
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
+    ParcelWorkflowActions,
     ParcelWorkflowAlerts,
     ParcelWorkflowAnalytics,
     ParcelWorkflowAnalyticsMethodology,
@@ -20,6 +21,10 @@ from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
+from ..services.parcel_workflow_actions import (
+    build_workflow_actions,
+    normalize_workflow_action_payload,
+)
 from ..services.parcel_workflow_alerts import build_workflow_alerts
 from ..services.parcel_workflow_analytics import (
     build_workflow_analytics,
@@ -81,6 +86,17 @@ def workflow_analytics(
 )
 def workflow_analytics_methodology_contract() -> dict:
     return workflow_analytics_methodology()
+
+
+@router.get(
+    "/parcel-intel/workflow/actions", response_model=ParcelWorkflowActions
+)
+def workflow_actions(
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    items = store.list_parcel_workflow(app_user_id=auth.app_user_id)
+    return build_workflow_actions(items)
 
 
 def _canonical_workflow_snapshot(
@@ -152,6 +168,10 @@ def upsert_workflow(
         raise HTTPException(status_code=422, detail="BBL does not match borough")
     payload = body.model_dump()
     payload["tags"] = sorted({tag.strip()[:40] for tag in body.tags if tag.strip()})
+    try:
+        payload = normalize_workflow_action_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     existing = store.get_parcel_workflow(
         app_user_id=auth.app_user_id, bbl=bbl
     )

@@ -364,10 +364,11 @@ gcloud firestore fields ttls update expires_at \
 Verify the policy:
 
 ```bash
-gcloud firestore fields ttls describe expires_at \
+gcloud firestore fields ttls list \
   --collection-group=product_usage_days \
   --database='(default)' \
-  --project="<PROJECT_ID>"
+  --project="<PROJECT_ID>" \
+  --format='table(name,ttlConfig.state)'
 ```
 
 The API writes only aggregate daily event/source counts to this collection.

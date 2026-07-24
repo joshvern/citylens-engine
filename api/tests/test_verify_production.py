@@ -137,22 +137,17 @@ def _index() -> dict:
                 "source_schema": "citylens-parcel-intel/zap-activity@v1",
                 "source_generated_at": "2026-07-23T00:00:00Z",
                 "source_sha256": "a" * 64,
-                "declared_blocked_bbl_count": 3108,
-                "source_blocked_bbl_count": 3108,
+                "declared_blocked_bbl_count": 3128,
+                "source_blocked_bbl_count": 3128,
                 "private_current_project_count": 801,
                 "non_parcel_applicable_project_count": 1,
                 "non_parcel_applicable_project_ids": ["2022Y0395"],
                 "blocking_project_count": 800,
-                "joined_blocking_project_count": 796,
-                "unjoined_blocking_project_count": 4,
-                "unjoined_blocking_project_ids": [
-                    "2021K0396",
-                    "2022R0129",
-                    "2026R0327",
-                    "P2013X0306",
-                ],
-                "minimum_project_bbl_crosswalk_coverage": 0.99,
-                "project_bbl_crosswalk_coverage": 0.995,
+                "joined_blocking_project_count": 800,
+                "unjoined_blocking_project_count": 0,
+                "unjoined_blocking_project_ids": [],
+                "minimum_project_bbl_crosswalk_coverage": 1.0,
+                "project_bbl_crosswalk_coverage": 1.0,
                 "project_detail_source": (
                     "https://zap-api-production.herokuapp.com/projects/"
                     "{project_id}"
@@ -163,6 +158,19 @@ def _index() -> dict:
                 "project_detail_supplemental_relation_count": 1,
                 "project_detail_fetch_failure_count": 0,
                 "project_detail_fetch_failure_ids": [],
+                "official_document_supplement_schema": (
+                    "citylens-parcel-intel/"
+                    "zap-official-document-bbl-supplements@v1"
+                ),
+                "official_document_supplement_reviewed_at": "2026-07-24",
+                "official_document_supplement_sha256": "c" * 64,
+                "official_document_source_count": 3,
+                "official_document_supplemental_relation_count": 11,
+                "official_document_supplemental_project_count": 2,
+                "official_document_supplemental_project_ids": [
+                    "2021K0396",
+                    "P2013X0306",
+                ],
                 "current_tax_lot_reconciliation_candidate_count": 27,
                 "current_tax_lot_reconciled_relation_count": 15,
                 "current_tax_lot_reconciled_project_count": 12,
@@ -183,7 +191,7 @@ def _index() -> dict:
                 "current_tax_lot_unmatched_user_input_count": 10,
                 "current_tax_lot_universe_count": 858_602,
                 "current_tax_lot_index_sha256": "b" * 64,
-                "candidate_blocked_bbl_count": 442,
+                "candidate_blocked_bbl_count": 454,
                 "published_leakage_count": 0,
                 "passed": True,
                 "failures": [],
@@ -351,7 +359,7 @@ def test_index_validator_rejects_incomplete_land_use_project_crosswalk() -> None
         "index: land-use reconciliation unresolved project IDs are invalid"
         in failures
     )
-    assert "index: land-use project-to-BBL coverage is below 99%" in failures
+    assert "index: land-use project-to-BBL coverage is below 100%" in failures
 
 
 def test_index_validator_rejects_land_use_scope_or_detail_failures() -> None:
@@ -403,6 +411,37 @@ def test_index_validator_rejects_weak_current_tax_lot_reconciliation() -> None:
     assert "index: current-tax-lot unmatched input count is invalid" in failures
     assert "index: current PLUTO tax-lot universe is invalid" in failures
     assert "index: current PLUTO tax-lot digest is invalid" in failures
+
+
+def test_index_validator_rejects_weak_official_document_evidence() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    reconciliation = bad["quality_gate"]["land_use_reconciliation"]
+    reconciliation["official_document_supplement_reviewed_at"] = "2024-01-01"
+    reconciliation["official_document_supplement_sha256"] = "bad"
+    reconciliation["official_document_source_count"] = 1
+    reconciliation["official_document_supplemental_relation_count"] = 1
+    reconciliation["official_document_supplemental_project_count"] = 2
+    reconciliation["official_document_supplemental_project_ids"] = [
+        "2021K0396"
+    ]
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert any(
+        "official ZAP document review age" in failure
+        for failure in failures
+    )
+    assert "index: official ZAP document supplement digest is invalid" in failures
+    assert "index: official ZAP document project IDs are invalid" in failures
+    assert (
+        "index: official ZAP document sources are below project count"
+        in failures
+    )
+    assert (
+        "index: official ZAP document relations are below project count"
+        in failures
+    )
 
 
 def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:

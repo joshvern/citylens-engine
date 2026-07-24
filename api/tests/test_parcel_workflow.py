@@ -258,7 +258,6 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
             "source": "ranking",
         }
     ]
-
     mismatched = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -279,6 +278,65 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
     )
     assert identifying.status_code == 422
 
+
+def test_workflow_outcome_export_is_private_maturity_safe_and_downloadable(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="workflow-export-user")
+    store = FakeWorkflowStore()
+    saved_at = datetime.now(timezone.utc) - timedelta(days=400)
+    store.items["3020960069"] = {
+        "bbl": "3020960069",
+        "borough": "brooklyn",
+        "stage": "pursue",
+        "notes": "Private negotiation notes",
+        "tags": ["private"],
+        "assignee": "Named teammate",
+        "watching": True,
+        "decision_reason": "pursuing",
+        "outcome": "offer_submitted",
+        "next_action": "Call owner",
+        "next_action_due_date": None,
+        "snapshot": {
+            "address": "Private address",
+            "owner_name": "PRIVATE OWNER LLC",
+            "feed_generated_at": "2026-01-01T00:00:00Z",
+            "property_facts_as_of": "2026-01-01",
+            "citywide_rank": 99,
+            "acquisition_rank": 20,
+            "priority_tier": "highest",
+            "opportunity_category": "ground_up_candidate",
+            "score_calibrated": 0.22,
+        },
+        "saved_at": saved_at,
+        "updated_at": datetime.now(timezone.utc),
+        "archived_at": None,
+        "event_count": 3,
+        "first_contacted_at": saved_at + timedelta(days=4),
+        "first_qualified_at": saved_at + timedelta(days=60),
+        "first_offer_submitted_at": saved_at + timedelta(days=120),
+    }
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.get("/v1/parcel-intel/workflow/outcomes/export")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="citylens-outcome-evidence.json"'
+    )
+    payload = response.json()
+    assert payload["schema_version"] == (
+        "citylens/parcel-workflow-outcome-export@v1"
+    )
+    assert payload["exported_record_count"] == 1
+    assert payload["rows"][0]["labels"][0]["value"] is True
+    serialized = response.text
+    assert "Private negotiation notes" not in serialized
+    assert "Named teammate" not in serialized
+    assert "Private address" not in serialized
+    assert "PRIVATE OWNER LLC" not in serialized
 
 def test_product_usage_day_is_aggregate_only_and_bounded() -> None:
     now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)

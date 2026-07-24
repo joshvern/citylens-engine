@@ -757,6 +757,78 @@ class ParcelWorkflowAnalytics(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+ParcelWorkflowOutcomeLabelState = Literal[
+    "pending",
+    "positive",
+    "negative",
+    "unavailable_history",
+]
+
+
+class ParcelWorkflowOutcomeLabel(BaseModel):
+    milestone: ParcelWorkflowMilestone
+    horizon_days: int = Field(ge=1)
+    state: ParcelWorkflowOutcomeLabelState
+    eligible: bool
+    value: Optional[bool] = None
+    reached_at: Optional[datetime] = None
+    days_to_milestone: Optional[int] = Field(default=None, ge=0)
+
+
+class ParcelWorkflowOutcomeExportRow(BaseModel):
+    """Value-minimized, maturity-safe prospective label row."""
+
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    saved_at: datetime
+    archived_at: Optional[datetime] = None
+    followup_days: int = Field(ge=0)
+    stage: ParcelWorkflowStage
+    outcome: ParcelWorkflowOutcome
+    decision_reason_category: Optional[str] = None
+    event_history_observed: bool
+    event_count: int = Field(ge=0)
+    feed_generated_at: Optional[str] = None
+    property_facts_as_of: Optional[str] = None
+    citywide_rank: Optional[int] = Field(default=None, ge=1)
+    acquisition_rank: Optional[int] = Field(default=None, ge=1)
+    priority_tier: Optional[
+        Literal["highest", "high", "medium", "watch"]
+    ] = None
+    opportunity_category: Optional[
+        Literal[
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+            "completed_project",
+        ]
+    ] = None
+    saved_model_score: Optional[float] = Field(default=None, ge=0, le=1)
+    labels: list[ParcelWorkflowOutcomeLabel]
+
+
+class ParcelWorkflowOutcomeExport(BaseModel):
+    schema_version: Literal["citylens/parcel-workflow-outcome-export@v1"]
+    methodology_schema_version: Literal[
+        "citylens/parcel-workflow-analytics-methodology@v2"
+    ]
+    generated_at: datetime
+    input_record_count: int = Field(ge=0)
+    exported_record_count: int = Field(ge=0)
+    excluded_invalid_saved_at_count: int = Field(ge=0)
+    event_history_observed_count: int = Field(ge=0)
+    rank_snapshot_count: int = Field(ge=0)
+    rows_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    label_semantics: str
+    score_semantics: str
+    privacy_contract: str
+    excluded_private_fields: list[str]
+    rows: list[ParcelWorkflowOutcomeExportRow]
+
+
 ParcelWorkflowActionState = Literal[
     "overdue",
     "due_today",

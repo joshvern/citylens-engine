@@ -334,6 +334,13 @@ capabilities, and the narrow enforced CSP baseline. It also rejects
 `X-Powered-By` on the web. Verify these on the custom domains rather than only
 the Cloud Run or Vercel preview origins.
 
+Authenticated outcome evidence is available from
+`GET /v1/parcel-intel/workflow/outcomes/export`. It is user-scoped,
+`private, no-store`, rate-limited, and returned with a download disposition.
+The artifact is deliberately value-minimized and integrity-hashed; never
+replace it with a Firestore collection dump or add workflow free text to the
+export. Deployment tests must keep pending and uninstrumented labels null.
+
 Set the active project:
 
 ```bash

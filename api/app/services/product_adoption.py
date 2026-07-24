@@ -44,6 +44,7 @@ def build_product_adoption_report(
     rows: Iterable[dict[str, Any]],
     *,
     workflow_rows: Iterable[dict[str, Any]] = (),
+    saved_view_rows: Iterable[dict[str, Any]] = (),
     as_of: datetime | None = None,
     days: int = 30,
 ) -> dict[str, Any]:
@@ -65,6 +66,8 @@ def build_product_adoption_report(
     active_users: set[str] = set()
     active_user_days = 0
     rejected_rows = 0
+    saved_view_event_users: set[str] = set()
+    saved_view_apply_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -82,6 +85,18 @@ def build_product_adoption_report(
         user_id = row.get("_user_id")
         if isinstance(user_id, str) and user_id:
             active_users.add(user_id)
+            if any(
+                row_events.get(event, 0) > 0
+                for event in (
+                    "saved_view_created",
+                    "saved_view_updated",
+                    "saved_view_deleted",
+                    "saved_view_applied",
+                )
+            ):
+                saved_view_event_users.add(user_id)
+            if row_events.get("saved_view_applied", 0) > 0:
+                saved_view_apply_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -99,6 +114,21 @@ def build_product_adoption_report(
             archived_workflows += 1
 
     workflow_records = active_workflows + archived_workflows
+    saved_view_users: set[str] = set()
+    saved_view_records = 0
+    rejected_saved_view_rows = 0
+    for row in saved_view_rows:
+        user_id = row.get("_user_id")
+        if (
+            not isinstance(user_id, str)
+            or not user_id
+            or row.get("schema_version") != "citylens/parcel-saved-view@v2"
+        ):
+            rejected_saved_view_rows += 1
+            continue
+        saved_view_users.add(user_id)
+        saved_view_records += 1
+
     minimum_workflow_records = 30
     minimum_workflow_users = 3
     activation_ready = (
@@ -107,12 +137,20 @@ def build_product_adoption_report(
     )
     parcel_opens = events.get("parcel_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
+    saved_view_applies = events.get("saved_view_applied", 0)
+    minimum_saved_view_applies = 10
+    minimum_saved_view_apply_users = 3
+    saved_view_reuse_ready = (
+        saved_view_applies >= minimum_saved_view_applies
+        and len(saved_view_apply_users) >= minimum_saved_view_apply_users
+    )
     warnings: list[str] = [
         (
             "Parcel opens are directional client-side counters; workflow "
-            "lifecycle counts are derived transactionally from canonical "
-            "workflow mutations. Neither is model accuracy or a "
-            "unique-parcel count."
+            "lifecycle and saved-view mutation counts are derived "
+            "transactionally from canonical mutations. Saved-view applies "
+            "are directional client-side counters. None is model accuracy "
+            "or a unique-parcel count."
         )
     ]
     if not events:
@@ -123,9 +161,15 @@ def build_product_adoption_report(
             f"{workflow_records}/{minimum_workflow_records} canonical workflow "
             f"records across {len(workflow_users)}/{minimum_workflow_users} users."
         )
+    if not saved_view_reuse_ready:
+        warnings.append(
+            "Saved-view reuse evidence is still collecting: "
+            f"{saved_view_applies}/{minimum_saved_view_applies} applies across "
+            f"{len(saved_view_apply_users)}/{minimum_saved_view_apply_users} users."
+        )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v2",
+        "schema_version": "citylens/product-adoption-report@v3",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -151,6 +195,37 @@ def build_product_adoption_report(
             "archived": archived_workflows,
             "users": len(workflow_users),
             "excluded_or_invalid_rows": rejected_workflow_rows,
+        },
+        "saved_view_inventory": {
+            "records": saved_view_records,
+            "users": len(saved_view_users),
+            "excluded_or_invalid_rows": rejected_saved_view_rows,
+        },
+        "saved_view_reuse": {
+            "created": events.get("saved_view_created", 0),
+            "updated": events.get("saved_view_updated", 0),
+            "deleted": events.get("saved_view_deleted", 0),
+            "applied": saved_view_applies,
+            "event_users": len(saved_view_event_users),
+            "apply_users": len(saved_view_apply_users),
+            "evidence_gate": {
+                "status": "ready" if saved_view_reuse_ready else "collecting",
+                "minimum_applies": minimum_saved_view_applies,
+                "minimum_apply_users": minimum_saved_view_apply_users,
+                "applies_remaining": max(
+                    0, minimum_saved_view_applies - saved_view_applies
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_saved_view_apply_users
+                    - len(saved_view_apply_users),
+                ),
+                "claim": (
+                    "Directional repeat-use evidence only; applies are "
+                    "best-effort client counters, not unique views, leads, "
+                    "users, or model outcomes."
+                ),
+            },
         },
         "activation_evidence_gate": {
             "status": "ready" if activation_ready else "collecting",

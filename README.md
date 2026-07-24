@@ -290,18 +290,22 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The report contains only window totals, event/source counts, active-user and
-active-user-day counts, aggregate canonical workflow inventory, a directional
-parcel-open to workflow-create ratio, and the activation-evidence gate. Parcel
-opens are client-side directional counters. Workflow lifecycle counts are
-transactionally derived from the canonical server mutation and therefore do
-not depend on a follow-up browser telemetry request. The workflow
+The v3 report contains only window totals, event/source counts, active-user and
+active-user-day counts, aggregate canonical workflow and saved-view inventory,
+a directional parcel-open to workflow-create ratio, and separate activation
+and saved-view-reuse evidence gates. Parcel opens and saved-view applies are
+best-effort client-side directional counters. Workflow lifecycle and saved-view
+create/update/delete counts are transactionally derived from their canonical
+server mutations, so a dropped follow-up browser request cannot erase a real
+save and an unchanged retry cannot inflate the counters. The workflow
 [adoption-report.yml](.github/workflows/adoption-report.yml) runs this report
 daily through a repository- and branch-restricted keyless Google identity,
-publishes a warning while evidence is collecting, and retains the
-aggregate-only artifact for 90 days. Do not publish raw `product_usage_days`
-or `parcel_workflow` documents, and do not use this report as a model accuracy
-or lead-quality claim.
+publishes warnings while evidence is collecting, and retains the aggregate-only
+artifact for 90 days. The inventory query projects only saved-view schema
+version and derives user counts from the document parent; it never reads view
+names, search text, filters, or owners. Do not publish raw
+`product_usage_days`, `parcel_workflow`, or `parcel_saved_searches` documents,
+and do not use this report as a model-accuracy or lead-quality claim.
 
 ### VS Code folder expectations
 

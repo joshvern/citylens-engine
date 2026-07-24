@@ -74,6 +74,8 @@ jobs:
           )
           gate = report["activation_evidence_gate"]
           inventory = report["workflow_inventory"]
+          saved_views = report["saved_view_inventory"]
+          reuse = report["saved_view_reuse"]
           icon = "✅" if gate["status"] == "ready" else "🟡"
           print(f"## {icon} CityLens adoption evidence")
           print()
@@ -87,6 +89,15 @@ jobs:
               f"`{inventory['archived']}` archived)"
           )
           print(f"- Workflow users: `{inventory['users']}`")
+          print(
+              f"- Saved views: `{saved_views['records']}` across "
+              f"`{saved_views['users']}` user(s)"
+          )
+          print(
+              f"- Saved-view applies: `{reuse['applied']}` across "
+              f"`{reuse['apply_users']}` user(s) "
+              f"(`{reuse['evidence_gate']['status']}`)"
+          )
           print()
           print(gate["claim"])
           if gate["status"] != "ready":
@@ -108,11 +119,18 @@ jobs:
               open("product-adoption-report.json", encoding="utf-8")
           )
           gate = report["activation_evidence_gate"]
+          reuse_gate = report["saved_view_reuse"]["evidence_gate"]
           if gate["status"] != "ready":
               print(
                   "::warning title=Activation evidence is collecting::"
                   f"{gate['records_remaining']} workflow record(s) and "
                   f"{gate['users_remaining']} user(s) remain."
+              )
+          if reuse_gate["status"] != "ready":
+              print(
+                  "::warning title=Saved-view reuse evidence is collecting::"
+                  f"{reuse_gate['applies_remaining']} apply event(s) and "
+                  f"{reuse_gate['users_remaining']} user(s) remain."
               )
           PY
 

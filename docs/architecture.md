@@ -70,13 +70,16 @@ owns the browser UI.
     classifications or reminder identity.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
-    counters are updated in the same transaction as canonical workflow
-    mutations; parcel opens remain directional client counters. A daily
-    keyless GitHub workflow combines the retained counters with aggregate
-    `parcel_workflow` inventory and labels the activation gate `collecting`
-    until at least 30 workflow records exist across at least three users. No
-    user or parcel identifiers are emitted, and the gate is not a model or
-    lead-quality metric.
+    and saved-view mutation counters are updated in the same transaction as
+    their canonical mutations; parcel opens and saved-view applies remain
+    directional client counters. A daily keyless GitHub workflow combines the
+    retained counters with field-projected aggregate `parcel_workflow` and
+    `parcel_saved_searches` inventory. It labels the activation gate
+    `collecting` until at least 30 workflow records exist across at least three
+    users, and the saved-view-reuse gate `collecting` until at least 10 applies
+    exist across at least three users. No user, parcel, saved-view name, search
+    text, filter, or owner identifier is emitted, and neither gate is a model
+    or lead-quality metric.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).
@@ -106,6 +109,8 @@ Firestore:
   `citylens/parcel-saved-view@v2` explorer state. It restores the citywide
   borough/filter/search/overlay context and is never shared-cacheable. Saved
   views are persistence only; no scheduled-alert delivery is claimed.
+  Reporting selects only the schema marker to count current inventory and does
+  not read the saved state.
 
 GCS:
 - `gs://<CITYLENS_BUCKET>/runs/<run_id>/<artifact_filename>`

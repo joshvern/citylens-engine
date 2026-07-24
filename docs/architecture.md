@@ -24,6 +24,14 @@ owns the browser UI.
     Safety/OATH/HPD violation fields are premium diligence context and never
     exposed anonymously. These overlays are post-score and do not modify
     acquisition ranks.
+  - Selected parcel detail adds a read-time
+    `citylens/parcel-decision-audit@v1` object. The API, rather than the
+    browser, assigns each explanation to historical model signal,
+    deterministic eligibility, current diligence, or source provenance and
+    declares whether it can affect model rank or acquisition eligibility.
+    Public responses retain methodology and current-gate explanations but
+    replace owner and diligence evidence with sign-in gates. User workflow
+    evidence remains a separate authenticated contract.
   - Parcel feed generations are immutable. A stable GCS manifest pointer names
     the active generation and records each object's SHA-256, byte size, and row
     count; readers validate all of these and retain a legacy-flat fallback.

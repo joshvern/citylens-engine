@@ -543,6 +543,14 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert public.json()["environmental_designation_data_as_of"] is None
     assert public.json()["top_features"] == []
     assert public.json()["parcel_geometry"] == geometry
+    public_audit = public.json()["decision_audit"]
+    assert public_audit["schema_version"] == "citylens/parcel-decision-audit@v1"
+    public_checks = {
+        check["key"]: check for check in public_audit["checks"]
+    }
+    assert public_checks["ownership"]["status"] == "unavailable"
+    assert public_checks["current_diligence"]["status"] == "unavailable"
+    assert "tax-lien" not in public_checks["current_diligence"]["summary"]
     assert "s-maxage=600" in public.headers["cache-control"]
 
     hidden = client.get("/v1/parcel-intel/parcel/3020000026")
@@ -587,6 +595,16 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
         == "2026-07-23"
     )
     assert len(private.json()["top_features"]) == 1
+    private_audit = private.json()["decision_audit"]
+    private_checks = {
+        check["key"]: check for check in private_audit["checks"]
+    }
+    assert private_audit["overall_status"] == "incomplete"
+    assert private_checks["ownership"]["status"] == "verified"
+    assert private_checks["current_diligence"]["status"] == "review"
+    assert "historical final tax-lien sale" in private_checks[
+        "current_diligence"
+    ]["summary"]
     assert private.headers["cache-control"] == "private, no-store"
 
 

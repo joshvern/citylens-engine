@@ -96,6 +96,16 @@ Current pinned release tag:
   finding or ranking input. Portfolio matching preserves legal form,
   never groups natural-person names, and does not infer beneficial ownership or
   related LLCs.
+- Selected parcel detail includes a server-built
+  `citylens/parcel-decision-audit@v1` explanation. It keeps four evidence
+  concepts separate: historical model signal, deterministic acquisition
+  eligibility, current post-score diligence, and source provenance. The
+  historical validation block reports the accepted next-year DOB
+  new-building-filing target and its forward-test precision; it explicitly is
+  not seller intent, transaction probability, or acquisition conversion.
+  Anonymous audit responses explain the policy while withholding owner,
+  diligence, and workflow evidence. Authenticated clients may show those
+  private facts without changing the stored score or rank.
 - The authenticated acquisition workflow preserves an immutable,
   value-minimized event history and soft-archives removed leads. The
   user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports
@@ -180,8 +190,11 @@ quality-gate regressions, missing or failed
 generation-diff evidence, input-feature drift, score-replay mismatch,
 unreviewed drift overrides, model-provenance drift,
 borough or rank gaps, anonymous premium-field exposure, missing gzip,
-unavailable Firestore, public workflow access, or a broken Parcel Intelligence
-page. [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
+unavailable Firestore, public workflow access, a missing/misleading parcel
+decision audit, or a broken Parcel Intelligence page. The verifier also checks
+that the public audit metrics match the accepted model metadata and that
+anonymous ownership/diligence evidence remains withheld.
+[production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not
 weaken a contract assertion merely to make the scheduled check green.

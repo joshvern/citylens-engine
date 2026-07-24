@@ -44,12 +44,14 @@ from ..models.schemas import (
     ParcelIntelIndex,
     ParcelIntelMapResponse,
     ParcelIntelMapRow,
+    ParcelIntelParcelResponse,
     ParcelIntelRow,
     ParcelIntelSweepResponse,
 )
 from ..services.auth import maybe_auth
 from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
+from ..services.parcel_decision_audit import build_parcel_decision_audit
 from ..services.rate_limit import demo_rate_limit
 from ..services.settings import Settings, get_settings
 
@@ -639,7 +641,10 @@ def parcel_intel_map(
     )
 
 
-@router.get("/parcel-intel/parcel/{bbl}", response_model=ParcelIntelRow)
+@router.get(
+    "/parcel-intel/parcel/{bbl}",
+    response_model=ParcelIntelParcelResponse,
+)
 def parcel_intel_parcel(
     bbl: str,
     response: Response,
@@ -647,16 +652,25 @@ def parcel_intel_parcel(
     _rate_limit: None = Depends(demo_rate_limit),
     gcs: GcsArtifacts = Depends(get_gcs),
     registry: ParcelIntelRegistry = Depends(get_registry),
-) -> ParcelIntelRow:
-    row, _manifest = registry.parcel(gcs, bbl)
+) -> ParcelIntelParcelResponse:
+    row, manifest = registry.parcel(gcs, bbl)
     if auth is None:
         rank = row.acquisition_rank
         if not isinstance(rank, int) or rank > _ANON_TOP_CAP:
             raise HTTPException(status_code=404, detail="Parcel not found")
         response.headers["Cache-Control"] = _SWEEP_CACHE
-        return _strip_premium_fields(row)
-    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
-    return row
+        served_row = _strip_premium_fields(row)
+    else:
+        response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+        served_row = row
+    return ParcelIntelParcelResponse(
+        **served_row.model_dump(),
+        decision_audit=build_parcel_decision_audit(
+            served_row,
+            manifest,
+            premium_access=auth is not None,
+        ),
+    )
 
 
 @router.get("/parcel-intel/sweep", response_model=ParcelIntelSweepResponse)

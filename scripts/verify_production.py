@@ -588,6 +588,173 @@ def _validate_public_row(row: dict[str, Any], label: str) -> list[str]:
     return failures
 
 
+def validate_public_decision_audit(
+    payload: dict[str, Any],
+    *,
+    model_metadata: dict[str, Any],
+) -> list[str]:
+    """Validate the public property-level decision explanation and redaction.
+
+    The audit is deliberately narrower than the authenticated parcel record:
+    it may explain the published historical model and deterministic eligibility
+    policy, but it must not expose owner or diligence evidence.
+    """
+
+    failures: list[str] = []
+    audit = payload.get("decision_audit")
+    _expect(
+        isinstance(audit, dict),
+        "parcel detail: decision_audit is missing",
+        failures,
+    )
+    audit = audit if isinstance(audit, dict) else {}
+    _expect(
+        audit.get("schema_version") == "citylens/parcel-decision-audit@v1",
+        "parcel detail: decision audit schema is invalid",
+        failures,
+    )
+    _expect(
+        audit.get("overall_status")
+        in {"screened", "screened_with_flags", "excluded", "incomplete"},
+        "parcel detail: decision audit status is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(audit.get("overall_label"), str)
+        and bool(audit["overall_label"].strip()),
+        "parcel detail: decision audit label is missing",
+        failures,
+    )
+
+    validation = audit.get("validation")
+    _expect(
+        isinstance(validation, dict),
+        "parcel detail: historical validation block is missing",
+        failures,
+    )
+    validation = validation if isinstance(validation, dict) else {}
+    _expect(
+        validation.get("target") == "dob_nb_job_filing",
+        "parcel detail: historical validation target is incorrect",
+        failures,
+    )
+    _expect(
+        validation.get("prospective_validated") is False,
+        "parcel detail: prospective validation must remain false",
+        failures,
+    )
+    disclaimer = str(validation.get("disclaimer") or "").lower()
+    for phrase in ("seller intent", "transaction probability"):
+        _expect(
+            phrase in disclaimer,
+            f"parcel detail: audit disclaimer omits {phrase}",
+            failures,
+        )
+    for audit_key, model_key in (
+        ("precision_at_100", "precision_at_100"),
+        ("precision_at_1000", "precision_at_1000"),
+        ("base_rate", "spatial_cv_base_rate"),
+    ):
+        observed = validation.get(audit_key)
+        expected = model_metadata.get(model_key)
+        _expect(
+            isinstance(observed, (int, float))
+            and not isinstance(observed, bool)
+            and isinstance(expected, (int, float))
+            and not isinstance(expected, bool)
+            and abs(float(observed) - float(expected)) <= 1e-12,
+            f"parcel detail: {audit_key} does not match accepted model metadata",
+            failures,
+        )
+
+    checks = audit.get("checks")
+    _expect(
+        isinstance(checks, list),
+        "parcel detail: decision audit checks are missing",
+        failures,
+    )
+    check_rows = checks if isinstance(checks, list) else []
+    by_key = {
+        row.get("key"): row
+        for row in check_rows
+        if isinstance(row, dict) and isinstance(row.get("key"), str)
+    }
+    required_keys = {
+        "historical_model",
+        "acquisition_eligibility",
+        "current_project_clearance",
+        "property_facts",
+        "ownership",
+        "current_diligence",
+    }
+    _expect(
+        required_keys.issubset(by_key),
+        "parcel detail: decision audit is missing required evidence layers",
+        failures,
+    )
+    for key in required_keys:
+        check = by_key.get(key, {})
+        _expect(
+            isinstance(check.get("summary"), str)
+            and bool(check["summary"].strip()),
+            f"parcel detail: audit check {key} has no summary",
+            failures,
+        )
+        _expect(
+            isinstance(check.get("source"), str)
+            and bool(check["source"].strip()),
+            f"parcel detail: audit check {key} has no source",
+            failures,
+        )
+
+    historical = by_key.get("historical_model", {})
+    eligibility = by_key.get("acquisition_eligibility", {})
+    diligence = by_key.get("current_diligence", {})
+    ownership = by_key.get("ownership", {})
+    _expect(
+        historical.get("layer") == "model_signal"
+        and historical.get("affects_model_rank") is True
+        and historical.get("affects_acquisition_eligibility") is False,
+        "parcel detail: historical model role is ambiguous",
+        failures,
+    )
+    _expect(
+        eligibility.get("layer") == "eligibility_gate"
+        and eligibility.get("affects_model_rank") is False
+        and eligibility.get("affects_acquisition_eligibility") is True,
+        "parcel detail: acquisition gate role is ambiguous",
+        failures,
+    )
+    _expect(
+        diligence.get("layer") == "current_diligence"
+        and diligence.get("affects_model_rank") is False
+        and diligence.get("affects_acquisition_eligibility") is False,
+        "parcel detail: diligence-only role is ambiguous",
+        failures,
+    )
+    for key, check in (("ownership", ownership), ("current_diligence", diligence)):
+        _expect(
+            check.get("status") == "unavailable"
+            and "sign in" in str(check.get("summary") or "").lower()
+            and check.get("as_of") is None,
+            f"parcel detail: anonymous {key} evidence was not safely withheld",
+            failures,
+        )
+
+    limitations = audit.get("limitations")
+    _expect(
+        isinstance(limitations, list)
+        and len(limitations) >= 2
+        and any(
+            "willingness to sell" in str(limitation).lower()
+            for limitation in limitations
+        ),
+        "parcel detail: decision limitations are incomplete",
+        failures,
+    )
+    return failures
+
+
 def validate_map(
     payload: dict[str, Any],
     *,
@@ -747,6 +914,41 @@ def run_checks(
             expected_generated_at=generated_at if isinstance(generated_at, str) else None,
         )
     )
+    map_rows = map_payload.get("rows")
+    public_bbl = (
+        map_rows[0].get("bbl")
+        if isinstance(map_rows, list)
+        and map_rows
+        and isinstance(map_rows[0], dict)
+        else None
+    )
+    _expect(
+        isinstance(public_bbl, str),
+        "parcel detail: no public map BBL was available for verification",
+        failures,
+    )
+    if isinstance(public_bbl, str):
+        detail_result = _request(
+            f"{api_base}/v1/parcel-intel/parcel/{public_bbl}",
+            timeout=timeout,
+        )
+        timings["parcel_detail"] = round(detail_result.elapsed_seconds, 3)
+        _expect(
+            "public" in detail_result.headers.get("cache-control", "").lower(),
+            "parcel detail: anonymous response is not publicly cacheable",
+            failures,
+        )
+        detail = _json(detail_result, "parcel detail", failures)
+        failures.extend(_validate_public_row(detail, "parcel detail"))
+        model_metadata = index.get("model_metadata")
+        failures.extend(
+            validate_public_decision_audit(
+                detail,
+                model_metadata=(
+                    model_metadata if isinstance(model_metadata, dict) else {}
+                ),
+            )
+        )
 
     for slug in BOROUGHS:
         result = _request(
@@ -809,7 +1011,7 @@ def run_checks(
         "web_base": web_base,
         "feed_generated_at": generated_at,
         "max_age_days": max_age_days,
-        "checks": 14,
+        "checks": 15,
         "source_sla": source_sla,
         "warnings": source_warnings,
         "timings_seconds": timings,

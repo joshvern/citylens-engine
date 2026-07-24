@@ -7,6 +7,7 @@ from scripts.verify_production import (
     evaluate_source_slas,
     validate_index,
     validate_map,
+    validate_public_decision_audit,
     validate_sweep,
     validate_workflow_methodology,
 )
@@ -82,6 +83,9 @@ def _index() -> dict:
             "training_origins": [2018, 2020, 2022],
             "calibration_origin": 2024,
             "inference_feature_snapshot": "current",
+            "precision_at_100": 0.34,
+            "precision_at_1000": 0.104,
+            "spatial_cv_base_rate": 0.0012439591,
             "prospective_2026_validated": False,
         },
         "generation_diff": {
@@ -312,6 +316,119 @@ def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:
     assert any("owner_name was exposed" in failure for failure in failures)
     assert any("recent_change was exposed" in failure for failure in failures)
     assert any("duplicate citywide rank" in failure for failure in failures)
+
+
+def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() -> None:
+    payload = _public_row(
+        bbl="3020960069",
+        borough="brooklyn",
+        rank=1,
+        citywide_rank=1,
+    )
+    payload["decision_audit"] = {
+        "schema_version": "citylens/parcel-decision-audit@v1",
+        "overall_status": "screened",
+        "overall_label": "Eligible lead after current gates",
+        "validation": {
+            "target": "dob_nb_job_filing",
+            "evaluation_scope": "2024 PLUTO to 2025 DOB NB filings",
+            "precision_at_100": 0.34,
+            "precision_at_1000": 0.104,
+            "base_rate": 0.0012439591,
+            "prospective_validated": False,
+            "disclaimer": (
+                "Historical performance is not seller intent or transaction "
+                "probability."
+            ),
+        },
+        "checks": [
+            {
+                "key": "historical_model",
+                "layer": "model_signal",
+                "status": "informational",
+                "summary": "Historical screening order.",
+                "source": "Accepted model bundle",
+                "as_of": "2025",
+                "affects_model_rank": True,
+                "affects_acquisition_eligibility": False,
+            },
+            {
+                "key": "acquisition_eligibility",
+                "layer": "eligibility_gate",
+                "status": "verified",
+                "summary": "Passed current gates.",
+                "source": "CityLens policy",
+                "as_of": "2026-07-24",
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": True,
+            },
+            {
+                "key": "current_project_clearance",
+                "layer": "eligibility_gate",
+                "status": "verified",
+                "summary": "No current project exclusion matched.",
+                "source": "NYC DOB and ZAP",
+                "as_of": "2026-07-24",
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": True,
+            },
+            {
+                "key": "property_facts",
+                "layer": "source_freshness",
+                "status": "verified",
+                "summary": "Current property facts matched.",
+                "source": "NYC PLUTO",
+                "as_of": "2026-07-24",
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": True,
+            },
+            {
+                "key": "ownership",
+                "layer": "source_freshness",
+                "status": "unavailable",
+                "summary": "Sign in to review ownership.",
+                "source": "NYC ACRIS / NYC PLUTO",
+                "as_of": None,
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": True,
+            },
+            {
+                "key": "current_diligence",
+                "layer": "current_diligence",
+                "status": "unavailable",
+                "summary": "Sign in to review current diligence overlays.",
+                "source": "Current official sources",
+                "as_of": None,
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": False,
+            },
+        ],
+        "limitations": [
+            "The target is not owner willingness to sell.",
+            "Current sources can lag official updates.",
+        ],
+    }
+    model_metadata = _index()["model_metadata"]
+
+    assert (
+        validate_public_decision_audit(
+            payload,
+            model_metadata=model_metadata,
+        )
+        == []
+    )
+
+    bad = deepcopy(payload)
+    bad["decision_audit"]["validation"]["precision_at_100"] = 0.99
+    bad["decision_audit"]["checks"][4]["summary"] = "PRIVATE OWNER LLC"
+    bad["decision_audit"]["checks"][5]["affects_model_rank"] = True
+    failures = validate_public_decision_audit(
+        bad,
+        model_metadata=model_metadata,
+    )
+    assert any("precision_at_100 does not match" in failure for failure in failures)
+    assert any("anonymous ownership evidence" in failure for failure in failures)
+    assert any("diligence-only role is ambiguous" in failure for failure in failures)
 
 
 def test_sweep_validator_rejects_wrong_borough_and_private_provenance() -> None:

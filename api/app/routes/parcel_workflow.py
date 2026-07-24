@@ -15,6 +15,7 @@ from ..models.schemas import (
     ParcelWorkflowAnalyticsMethodology,
     ParcelWorkflowEvent,
     ParcelWorkflowItem,
+    ParcelWorkflowOutcomeExport,
     ParcelWorkflowReminderSnoozeRequest,
     ParcelWorkflowReminderSnoozeResponse,
     ParcelWorkflowSnapshot,
@@ -33,6 +34,7 @@ from ..services.parcel_workflow_analytics import (
     build_workflow_analytics,
     workflow_analytics_methodology,
 )
+from ..services.parcel_workflow_export import build_workflow_outcome_export
 from ..services.rate_limit import enforce_token_bucket
 from ..services.settings import Settings, get_settings
 from .parcel_intel import (
@@ -90,6 +92,30 @@ def workflow_analytics(
 )
 def workflow_analytics_methodology_contract() -> dict:
     return workflow_analytics_methodology()
+
+
+@router.get(
+    "/parcel-intel/workflow/outcomes/export",
+    response_model=ParcelWorkflowOutcomeExport,
+)
+def workflow_outcomes_export(
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    enforce_token_bucket(
+        key=f"parcel-workflow-outcome-export:{auth.app_user_id}",
+        capacity=10,
+        refill_per_second=1 / 60,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Content-Disposition"] = (
+        'attachment; filename="citylens-outcome-evidence.json"'
+    )
+    items = store.list_parcel_workflow(
+        app_user_id=auth.app_user_id, include_archived=True
+    )
+    return build_workflow_outcome_export(items)
 
 
 @router.get(

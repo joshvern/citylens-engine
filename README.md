@@ -149,7 +149,14 @@ Current pinned release tag:
   `/v1/parcel-intel/workflow/analytics/methodology` endpoint publishes this
   contract for deployment verification. These are selected, user-saved
   workflow outcomes—not model accuracy, seller intent, or transaction
-  probability. See
+  probability. The authenticated
+  `/v1/parcel-intel/workflow/outcomes/export` endpoint provides a versioned,
+  integrity-hashed JSON evidence artifact for user-controlled offline
+  validation. It exports only immutable saved-model context and
+  maturity-qualified fixed-horizon labels. Pending observations remain null,
+  legacy rows without observed event history cannot become negatives, and
+  notes, tags, assignees, contacts, addresses, owner names, reminders, and
+  raw custom disposition text are excluded. See
   [`docs/prospective_outcomes.md`](docs/prospective_outcomes.md). Per-lead
   audit events are available from
   `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated

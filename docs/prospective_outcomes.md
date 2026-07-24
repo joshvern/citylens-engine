@@ -74,6 +74,30 @@ The public, data-free
 schema version, horizons, thresholds, and non-accuracy disclaimer. The
 production verifier fails if that deployed contract changes unexpectedly.
 
+## Governed outcome evidence export
+
+Authenticated users can download
+`GET /v1/parcel-intel/workflow/outcomes/export`. The response is a
+`citylens/parcel-workflow-outcome-export@v1` JSON artifact containing:
+
+- the immutable feed date, rank, opportunity category, and historical model
+  score captured when the lead was saved;
+- the controlled workflow stage, outcome, and normalized disposition category;
+- one explicit label state for each 30/90/180/270/365-day window; and
+- a canonical SHA-256 over the sorted rows.
+
+This is not a raw workflow backup. It excludes addresses, owner names, notes,
+tags, assignees, next actions, reminders, contacts, and raw custom disposition
+text. A label is boolean only after its full observation window and only when
+immutable event history was observed from the workflow record. Pending labels
+and legacy uninstrumented labels remain `null`; neither can silently become a
+negative training example. Archived leads remain present.
+
+The export makes future acquisition-model evaluation reproducible and
+user-controlled, but it does not automatically train or modify the production
+ranker. Promotion still requires a separate point-in-time evaluation,
+documented lift, calibration checks, and reviewed model release.
+
 ## Follow-up completeness
 
 Prospective measurement depends on timely workflow use, so open records may

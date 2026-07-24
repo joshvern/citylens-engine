@@ -198,6 +198,11 @@ def test_workflow_crud(auth_override) -> None:
     assert created.json()["decision_reason"] == "pursuing"
     assert created.json()["outcome"] == "owner_contacted"
 
+    fetched = client.get("/v1/parcel-intel/workflow/3020960069")
+    assert fetched.status_code == 200
+    assert fetched.json()["bbl"] == "3020960069"
+    assert client.get("/v1/parcel-intel/workflow/4020960069").json() is None
+
     listed = client.get("/v1/parcel-intel/workflow")
     assert listed.status_code == 200
     assert [item["bbl"] for item in listed.json()] == ["3020960069"]
@@ -205,6 +210,7 @@ def test_workflow_crud(auth_override) -> None:
     removed = client.delete("/v1/parcel-intel/workflow/3020960069")
     assert removed.status_code == 204
     assert client.get("/v1/parcel-intel/workflow").json() == []
+    assert client.get("/v1/parcel-intel/workflow/3020960069").json() is None
 
 
 def test_store_payload_preserves_existing_exposure_snapshot() -> None:

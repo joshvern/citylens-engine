@@ -125,7 +125,8 @@ Current pinned release tag:
   value-minimized event history and soft-archives removed leads. The
   user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports
   maturity-qualified 30-day contact, 90-day qualification, 180-day offer,
-  270-day contract, and 365-day close rates. A lead enters a denominator only
+  270-day contract, and 365-day close rates with 95% Wilson intervals. A lead
+  enters a denominator only
   after its full observation window; late-recorded milestones do not count as
   on-time outcomes. The public, data-free
   `/v1/parcel-intel/workflow/analytics/methodology` endpoint publishes this
@@ -135,6 +136,10 @@ Current pinned release tag:
   [`docs/prospective_outcomes.md`](docs/prospective_outcomes.md). Per-lead
   audit events are available from
   `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated
+  `GET /v1/parcel-intel/workflow/{bbl}` endpoint loads one active workflow
+  record (or `null`) without scanning the user's full pipeline; archived rows
+  remain hidden from this operational lookup while staying in analytics
+  denominators. The authenticated
   `/v1/parcel-intel/workflow/actions` endpoint turns each open lead's
   structured next action and due date into a server-derived queue: overdue,
   due today, due within seven days, scheduled, or unscheduled. It also reports

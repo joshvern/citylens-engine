@@ -306,6 +306,7 @@ class ParcelIntelIndex(BaseModel):
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     data_sources: dict[str, Any] = Field(default_factory=dict)
     quality_gate: dict[str, Any] = Field(default_factory=dict)
+    generation_diff: dict[str, Any] = Field(default_factory=dict)
     # Freshness telemetry, derived from `generated_at` at request time.
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None
@@ -324,6 +325,7 @@ class ParcelIntelSweepResponse(BaseModel):
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     data_sources: dict[str, Any] = Field(default_factory=dict)
     quality_gate: dict[str, Any] = Field(default_factory=dict)
+    generation_diff: dict[str, Any] = Field(default_factory=dict)
 
 
 ParcelWorkflowStage = Literal[

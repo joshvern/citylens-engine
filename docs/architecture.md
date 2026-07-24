@@ -29,6 +29,12 @@ owns the browser UI.
     count; readers validate all of these and retain a legacy-flat fallback.
     Generation-keyed caches prevent an in-flight old reader from repopulating a
     new generation's cache.
+  - New manifests carry `generation_diff` evidence from the publisher:
+    inventory turnover, top-rank retention, rank movement, score PSI, source
+    vintages, model identity, cohorts, required-field coverage, and any
+    explicitly reviewed override. The index/sweep contracts expose this
+    operational provenance, and the scheduled verifier fails when the report
+    is absent, failed, or overridden without a recorded reason.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
     reports parcel-intel presence/freshness flags.

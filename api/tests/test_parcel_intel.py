@@ -178,6 +178,17 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
             "property_facts": {"source": "NYC PLUTO", "as_of": "2026-07-01"}
         },
         "quality_gate": {"passed": True, "failures": []},
+        "generation_diff": {
+            "schema": "citylens-parcel-intel/generation-diff@v1",
+            "status": "compared",
+            "gate": {
+                "passed": True,
+                "thresholds_passed": True,
+                "override_applied": False,
+                "override_reason": None,
+                "failures": [],
+            },
+        },
     }
 
 
@@ -279,6 +290,7 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     assert body["model_metadata"] == {"feature_year": 2018}
     assert body["data_sources"]["property_facts"]["source"] == "NYC PLUTO"
     assert body["quality_gate"]["passed"] is True
+    assert body["generation_diff"]["gate"]["passed"] is True
     # Cache header is the gating metric for whether Vercel/CDN edge-caches.
     assert "cache-control" in r.headers
     assert "s-maxage=600" in r.headers["cache-control"]

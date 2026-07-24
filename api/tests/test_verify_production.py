@@ -57,6 +57,18 @@ def _index() -> dict:
             "inference_feature_snapshot": "current",
             "prospective_2026_validated": False,
         },
+        "generation_diff": {
+            "schema": "citylens-parcel-intel/generation-diff@v1",
+            "status": "compared",
+            "candidate": {"row_count": 5000},
+            "gate": {
+                "passed": True,
+                "thresholds_passed": True,
+                "override_applied": False,
+                "override_reason": None,
+                "failures": [],
+            },
+        },
     }
 
 
@@ -84,6 +96,33 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("days old" in failure for failure in failures)
     assert "index: queens project_leakage_count is not zero" in failures
     assert any("prospective 2026 validation flag" in failure for failure in failures)
+
+
+def test_index_validator_requires_reviewed_generation_diff_override() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    bad["generation_diff"]["gate"].update(
+        {
+            "thresholds_passed": False,
+            "override_applied": False,
+            "override_reason": None,
+            "failures": ["score_psi_exceeded"],
+        }
+    )
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+    assert (
+        "index: failed drift thresholds lack a reviewed override reason"
+        in failures
+    )
+
+    bad["generation_diff"]["gate"].update(
+        {
+            "override_applied": True,
+            "override_reason": "Reviewed annual model cutover PI-42.",
+        }
+    )
+    assert validate_index(bad, max_age_days=35, now=now) == []
 
 
 def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:

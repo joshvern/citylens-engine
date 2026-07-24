@@ -81,6 +81,19 @@ def _index() -> dict:
                 "source_sha256": "a" * 64,
                 "declared_blocked_bbl_count": 3108,
                 "source_blocked_bbl_count": 3108,
+                "blocking_project_count": 801,
+                "joined_blocking_project_count": 795,
+                "unjoined_blocking_project_count": 6,
+                "unjoined_blocking_project_ids": [
+                    "2021K0396",
+                    "2022R0129",
+                    "2022Y0395",
+                    "2025M0464",
+                    "2026R0327",
+                    "P2013X0306",
+                ],
+                "minimum_project_bbl_crosswalk_coverage": 0.99,
+                "project_bbl_crosswalk_coverage": 0.9925093632958801,
                 "candidate_blocked_bbl_count": 442,
                 "published_leakage_count": 0,
                 "passed": True,
@@ -197,6 +210,23 @@ def test_index_validator_rejects_land_use_source_reconciliation_leakage() -> Non
         "index: brooklyn authoritative_zap_bbl_leakage_count is not zero"
         in failures
     )
+
+
+def test_index_validator_rejects_incomplete_land_use_project_crosswalk() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    reconciliation = bad["quality_gate"]["land_use_reconciliation"]
+    reconciliation["joined_blocking_project_count"] = 792
+    reconciliation["unjoined_blocking_project_count"] = 9
+    reconciliation["project_bbl_crosswalk_coverage"] = 0.9887640449438202
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert (
+        "index: land-use reconciliation unresolved project IDs are invalid"
+        in failures
+    )
+    assert "index: land-use project-to-BBL coverage is below 99%" in failures
 
 
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:

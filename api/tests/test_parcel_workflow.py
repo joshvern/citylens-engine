@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.routes import parcel_workflow
 from app.services.firestore_store import _workflow_effective_payload
+from app.services.parcel_workflow_actions import workflow_reminder_fingerprint
 
 
 class FakeWorkflowStore:
@@ -69,6 +70,28 @@ class FakeWorkflowStore:
             return False
         self.items[bbl]["archived_at"] = datetime.now(timezone.utc)
         return True
+
+    def set_parcel_workflow_reminder_snooze(
+        self, *, app_user_id: str, bbl: str, days: int
+    ) -> dict | None:
+        item = self.items.get(bbl)
+        if (
+            item is None
+            or item.get("archived_at") is not None
+            or item.get("stage") == "pass"
+            or item.get("outcome") in {"closed", "rejected", "lost"}
+        ):
+            return None
+        until = (
+            datetime.now(timezone.utc) + timedelta(days=days)
+            if days > 0
+            else None
+        )
+        item["reminder_snoozed_until"] = until
+        item["reminder_fingerprint"] = (
+            workflow_reminder_fingerprint(item) if days > 0 else None
+        )
+        return item
 
     def list_parcel_workflow_events(
         self, *, app_user_id: str, bbl: str
@@ -278,6 +301,24 @@ def test_workflow_action_queue_and_input_invariants(auth_override) -> None:
     assert payload["items"][0]["bbl"] == "3020960069"
     assert payload["items"][0]["action_state"] == "overdue"
 
+    snoozed = client.post(
+        "/v1/parcel-intel/workflow/3020960069/reminder",
+        json={"days": 1},
+    )
+    assert snoozed.status_code == 200, snoozed.text
+    assert snoozed.json()["is_snoozed"] is True
+    snoozed_actions = client.get("/v1/parcel-intel/workflow/actions").json()
+    assert snoozed_actions["attention_count"] == 0
+    assert snoozed_actions["snoozed_count"] == 1
+    assert snoozed_actions["items"][0]["is_snoozed"] is True
+
+    resumed = client.post(
+        "/v1/parcel-intel/workflow/3020960069/reminder",
+        json={"days": 0},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["is_snoozed"] is False
+
     closed = client.put(
         "/v1/parcel-intel/workflow/3020960069",
         json={
@@ -292,6 +333,11 @@ def test_workflow_action_queue_and_input_invariants(auth_override) -> None:
     assert closed.json()["next_action"] is None
     assert closed.json()["next_action_due_date"] is None
     assert client.get("/v1/parcel-intel/workflow/actions").json()["open_records"] == 0
+    terminal_snooze = client.post(
+        "/v1/parcel-intel/workflow/3020960069/reminder",
+        json={"days": 1},
+    )
+    assert terminal_snooze.status_code == 409
 
 
 def test_workflow_analytics_methodology_is_public_and_data_free() -> None:

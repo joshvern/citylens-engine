@@ -48,8 +48,12 @@ owns the browser UI.
   - Authenticated parcel workflow actions are also computed on request from
     user-owned records. The server classifies next-action due dates as overdue,
     due today, due soon, scheduled, or unscheduled; flags missing assignees and
-    30-day-old records without an outcome; and excludes terminal records.
-    Browser clients do not own these classifications.
+    30-day-old records without an outcome; reports workflow-plan, assignee, and
+    outcome-review coverage; and excludes terminal records. Reminder snoozes
+    are transactional, user scoped, and fingerprinted to the current action,
+    due date, assignee, stage, and outcome, so changed commitments cannot stay
+    hidden behind stale snoozes. Browser clients do not own these
+    classifications or reminder identity.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).

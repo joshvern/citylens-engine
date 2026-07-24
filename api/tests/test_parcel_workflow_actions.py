@@ -7,6 +7,7 @@ import pytest
 from app.services.parcel_workflow_actions import (
     build_workflow_actions,
     normalize_workflow_action_payload,
+    workflow_reminder_fingerprint,
 )
 
 
@@ -79,6 +80,14 @@ def test_action_queue_classifies_and_orders_open_work() -> None:
     assert result["unscheduled_count"] == 1
     assert result["unassigned_count"] == 3
     assert result["outcome_update_due_count"] == 2
+    assert result["attention_count"] == 4
+    assert result["snoozed_count"] == 0
+    assert result["complete_plan_count"] == 3
+    assert result["plan_coverage_rate"] == 0.75
+    assert result["assigned_count"] == 1
+    assert result["assignee_coverage_rate"] == 0.25
+    assert result["outcome_current_count"] == 2
+    assert result["outcome_current_rate"] == 0.5
     assert [item["action_state"] for item in result["items"]] == [
         "overdue",
         "due_today",
@@ -88,6 +97,47 @@ def test_action_queue_classifies_and_orders_open_work() -> None:
     assert result["items"][0]["days_overdue"] == 2
     assert result["items"][0]["address"] == "100 E 21 STREET"
     assert result["items"][0]["citywide_rank"] == 82
+
+
+def test_reminder_snooze_is_deduplicated_by_current_workflow_fingerprint() -> None:
+    as_of = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    row = _item(
+        as_of,
+        next_action="Call owner",
+        next_action_due_date="2026-07-22",
+    )
+    row["reminder_fingerprint"] = workflow_reminder_fingerprint(row)
+    row["reminder_snoozed_until"] = as_of + timedelta(days=1)
+
+    snoozed = build_workflow_actions([row], as_of=as_of)
+    assert snoozed["attention_count"] == 0
+    assert snoozed["snoozed_count"] == 1
+    assert snoozed["items"][0]["is_snoozed"] is True
+
+    # Editing the action invalidates the old fingerprint immediately, even
+    # though the stored snooze timestamp has not been cleaned up yet.
+    row["next_action"] = "Prepare offer range"
+    resurfaced = build_workflow_actions([row], as_of=as_of)
+    assert resurfaced["attention_count"] == 1
+    assert resurfaced["snoozed_count"] == 0
+    assert resurfaced["items"][0]["is_snoozed"] is False
+    assert resurfaced["items"][0]["reminder_snoozed_until"] is None
+
+    row["next_action"] = "Call owner"
+    row["reminder_snoozed_until"] = as_of - timedelta(seconds=1)
+    expired = build_workflow_actions([row], as_of=as_of)
+    assert expired["attention_count"] == 1
+    assert expired["snoozed_count"] == 0
+    assert expired["items"][0]["reminder_snoozed_until"] is None
+
+
+def test_empty_action_queue_does_not_invent_adoption_percentages() -> None:
+    result = build_workflow_actions(
+        [], as_of=datetime(2026, 7, 24, tzinfo=timezone.utc)
+    )
+    assert result["plan_coverage_rate"] is None
+    assert result["assignee_coverage_rate"] is None
+    assert result["outcome_current_rate"] is None
 
 
 def test_action_payload_requires_a_task_for_a_date_and_clears_terminal_tasks() -> None:

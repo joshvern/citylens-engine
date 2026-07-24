@@ -63,6 +63,11 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert checks["current_diligence"].affects_acquisition_eligibility is False
     assert checks["current_diligence"].status == "review"
     assert "historical final tax-lien sale" in checks["current_diligence"].summary
+    assert audit.readiness.status == "review_required"
+    assert any(
+        "floodplain exposure" in item for item in audit.readiness.review_items
+    )
+    assert "purchase recommendation" in audit.readiness.disclaimer
 
 
 def test_public_decision_audit_does_not_summarize_private_signals() -> None:
@@ -85,6 +90,11 @@ def test_public_decision_audit_does_not_summarize_private_signals() -> None:
     assert "Sign in" in checks["current_diligence"].summary
     assert "tax-lien" not in checks["current_diligence"].summary
     assert audit.overall_status == "screened"
+    assert audit.readiness.status == "limited_preview"
+    assert audit.readiness.review_items == [
+        "Protected ownership and diligence evidence is withheld in this preview."
+    ]
+    assert "tax-lien" not in " ".join(audit.readiness.review_items)
 
 
 def test_current_project_exclusion_dominates_overall_audit_status() -> None:
@@ -105,3 +115,22 @@ def test_current_project_exclusion_dominates_overall_audit_status() -> None:
     assert checks["acquisition_eligibility"].status == "excluded"
     assert checks["current_project_clearance"].status == "excluded"
     assert "approved land use project" in checks["acquisition_eligibility"].summary
+    assert audit.readiness.status == "blocked"
+    assert audit.readiness.blockers == ["approved land use project"]
+    assert "Keep this parcel out of acquisition outreach" in (
+        audit.readiness.recommended_action
+    )
+
+
+def test_clean_private_audit_proposes_initial_review_without_predictive_claim() -> None:
+    audit = build_parcel_decision_audit(
+        _row(max_floor_area_sqft=8_000),
+        _manifest(),
+        premium_access=True,
+    )
+
+    assert audit.readiness.status == "initial_review_ready"
+    assert audit.readiness.blockers == []
+    assert audit.readiness.review_items == []
+    assert "owner/title review" in audit.readiness.recommended_action
+    assert "seller-intent score" in audit.readiness.disclaimer

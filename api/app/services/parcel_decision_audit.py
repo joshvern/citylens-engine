@@ -285,12 +285,130 @@ def build_parcel_decision_audit(
         overall_status = "screened"
         overall_label = "Eligible lead after current gates"
 
+    blockers: list[str] = []
+    review_items: list[str] = []
+    cleared_items: list[str] = []
+
+    if row.acquisition_eligible is not True:
+        blockers = exclusion_reasons or [
+            "The parcel does not pass the current acquisition eligibility policy."
+        ]
+    else:
+        cleared_items.append(
+            "Current project and acquisition eligibility gates passed."
+        )
+    if row.property_facts_current:
+        cleared_items.append("Current PLUTO property facts matched this tax lot.")
+    elif premium_access:
+        review_items.append(
+            "Resolve the missing current PLUTO tax-lot match before using capacity facts."
+        )
+    if premium_access and _as_text(row.owner_name):
+        cleared_items.append(
+            "Current legal-owner provenance is available for review."
+        )
+    elif premium_access:
+        review_items.append(
+            "Establish current legal-owner provenance before outreach."
+        )
+    if premium_access and (row.max_floor_area_sqft or 0) > 0:
+        cleared_items.append(
+            "Published zoning-capacity fields are available for an initial screen."
+        )
+    elif premium_access:
+        review_items.append(
+            "Verify zoning capacity before relying on an underwriting screen."
+        )
+
+    if premium_access:
+        diligence_review_labels = {
+            "historical final tax-lien sale": (
+                "Review the cited historical final tax-lien sale record."
+            ),
+            "immediate-hazard violation": (
+                "Resolve current immediate-hazard violation evidence."
+            ),
+            "1% floodplain overlap": (
+                "Review floodplain exposure and site-specific mitigation requirements."
+            ),
+            "environmental review instrument": (
+                "Confirm environmental review instrument requirements."
+            ),
+            "recent aerial change": (
+                "Reconcile recent aerial change with official filings and site conditions."
+            ),
+        }
+        review_items.extend(
+            diligence_review_labels[signal] for signal in diligence_signals
+        )
+
+    if row.acquisition_eligible is not True:
+        readiness_status = "blocked"
+        readiness_label = "Blocked by current acquisition policy"
+        recommended_action = (
+            "Confirm the cited official project or constraint record. Keep this "
+            "parcel out of acquisition outreach unless the source record is corrected."
+        )
+    elif not row.property_facts_current or warnings:
+        readiness_status = "incomplete"
+        readiness_label = "Resolve evidence gaps before acting"
+        recommended_action = (
+            "Resolve missing or stale source evidence before owner outreach or "
+            "underwriting."
+        )
+        if premium_access:
+            review_items.extend(
+                f"Resolve data warning: {warning}." for warning in warnings
+            )
+        elif warnings:
+            review_items.append(
+                "Sign in to review the current source-quality warnings."
+            )
+    elif not premium_access:
+        readiness_status = "limited_preview"
+        readiness_label = "Sign in to complete the decision screen"
+        recommended_action = (
+            "Review ownership provenance and current diligence overlays before acting."
+        )
+        review_items.append(
+            "Protected ownership and diligence evidence is withheld in this preview."
+        )
+    elif review_items:
+        readiness_status = "review_required"
+        readiness_label = "Diligence review required before advancing"
+        recommended_action = (
+            "Resolve the listed diligence items in the cited source records before "
+            "advancing to owner outreach or detailed underwriting."
+        )
+    else:
+        readiness_status = "initial_review_ready"
+        readiness_label = "Ready for an initial acquisition review"
+        recommended_action = (
+            "Verify the linked official records, then assign an owner/title review "
+            "as the first workflow action."
+        )
+
+    readiness = {
+        "status": readiness_status,
+        "label": readiness_label,
+        "recommended_action": recommended_action,
+        "blockers": blockers,
+        "review_items": list(dict.fromkeys(review_items)),
+        "cleared_items": list(dict.fromkeys(cleared_items)),
+        "disclaimer": (
+            "Decision readiness organizes cited evidence only. It is not a purchase "
+            "recommendation, appraisal, title opinion, seller-intent score, or "
+            "substitute for professional diligence."
+        ),
+    }
+
     return ParcelDecisionAudit.model_validate(
         {
             "schema_version": AUDIT_SCHEMA,
             "overall_status": overall_status,
             "overall_label": overall_label,
             "validation": validation,
+            "readiness": readiness,
             "checks": checks,
             "limitations": [
                 (

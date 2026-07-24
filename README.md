@@ -105,7 +105,12 @@ Current pinned release tag:
   not seller intent, transaction probability, or acquisition conversion.
   Anonymous audit responses explain the policy while withholding owner,
   diligence, and workflow evidence. Authenticated clients may show those
-  private facts without changing the stored score or rank.
+  private facts without changing the stored score or rank. The same response
+  includes a server-derived `readiness` block that classifies the next
+  diligence state as blocked, incomplete, review-required, initial-review
+  ready, or limited preview. It lists evidence blockers/review items and one
+  conservative workflow action; it is explicitly not a purchase
+  recommendation, appraisal, title opinion, or seller-intent score.
 - The authenticated acquisition workflow preserves an immutable,
   value-minimized event history and soft-archives removed leads. The
   user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports
@@ -193,7 +198,9 @@ borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, a missing/misleading parcel
 decision audit, or a broken Parcel Intelligence page. The verifier also checks
 that the public audit metrics match the accepted model metadata and that
-anonymous ownership/diligence evidence remains withheld.
+anonymous ownership/diligence evidence remains withheld. Public readiness must
+remain a limited preview and cannot reveal protected lien, violation, flood,
+environmental, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not

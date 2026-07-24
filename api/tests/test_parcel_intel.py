@@ -128,6 +128,10 @@ def _row(bbl: str, **overrides) -> dict:
         "environmental_designation_number": "R-14",
         "environmental_designation_kind": "restrictive_declaration",
         "environmental_designation_data_as_of": "2026-07-23",
+        "mandatory_inclusionary_housing": True,
+        "mih_options": ["Option 1"],
+        "mih_area_count": 1,
+        "mih_data_as_of": "2026-07-24",
         "is_landmark": False,
         "is_historic_district": False,
         "block_id": bbl[:6],
@@ -426,6 +430,10 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
     assert all(
         row["environmental_review_required"] is None for row in body["rows"]
     )
+    assert all(
+        row["mandatory_inclusionary_housing"] is None
+        for row in body["rows"]
+    )
     assert "s-maxage=600" in response.headers["cache-control"]
     assert response.headers["content-encoding"] == "gzip"
     # Compact rows do not serialize expensive detail-only fields.
@@ -472,6 +480,9 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert response.json()["rows"][0]["floodplain_1pct"] is True
     assert (
         response.json()["rows"][0]["environmental_review_required"] is True
+    )
+    assert (
+        response.json()["rows"][0]["mandatory_inclusionary_housing"] is True
     )
     assert response.headers["cache-control"] == "private, no-store"
 
@@ -541,6 +552,10 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert public.json()["environmental_designation_number"] is None
     assert public.json()["environmental_designation_kind"] is None
     assert public.json()["environmental_designation_data_as_of"] is None
+    assert public.json()["mandatory_inclusionary_housing"] is None
+    assert public.json()["mih_options"] is None
+    assert public.json()["mih_area_count"] is None
+    assert public.json()["mih_data_as_of"] is None
     assert public.json()["top_features"] == []
     assert public.json()["parcel_geometry"] == geometry
     public_audit = public.json()["decision_audit"]
@@ -594,6 +609,10 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
         private.json()["environmental_designation_data_as_of"]
         == "2026-07-23"
     )
+    assert private.json()["mandatory_inclusionary_housing"] is True
+    assert private.json()["mih_options"] == ["Option 1"]
+    assert private.json()["mih_area_count"] == 1
+    assert private.json()["mih_data_as_of"] == "2026-07-24"
     assert len(private.json()["top_features"]) == 1
     private_audit = private.json()["decision_audit"]
     private_checks = {

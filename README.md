@@ -77,7 +77,8 @@ Current pinned release tag:
   context; historical NYC DOF final lien-sale diligence; current DOB
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
   PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; current PLUTO
-  E-designation/restrictive-declaration diligence; exact-name,
+  E-designation/restrictive-declaration diligence; current adopted NYC
+  Planning Mandatory Inclusionary Housing mapped-area overlap; exact-name,
   current-PLUTO legal-entity portfolio summaries; and a publisher quality-gate
   summary plus a generation-to-generation drift report exposed by the
   index/sweep endpoints. The drift report covers inventory turnover, top-rank
@@ -86,14 +87,18 @@ Current pinned release tag:
   The index also exposes aggregate score-replay evidence proving all 5,000
   published scores came from the profiled matrix. Failed thresholds require a
   recorded reviewed override before publication. Owner, lien-sale, violation,
-  portfolio, floodplain, and environmental-designation fields are stripped from anonymous
+  portfolio, floodplain, environmental-designation, and MIH fields are stripped from anonymous
   map, sweep, and detail responses. The authenticated compact map carries portfolio counts,
   `critical_violation_count`, `floodplain_1pct`, and the boolean
-  `environmental_review_required`; detailed agency/map fields, designation
+  `environmental_review_required` and
+  `mandatory_inclusionary_housing`; detailed agency/map fields, designation
   type/number, and dates load on parcel selection. An E-designation or
   restrictive declaration is an
   air/noise/hazardous-materials diligence requirement, not a contamination
-  finding or ranking input. Portfolio matching preserves legal form,
+  finding or ranking input. An MIH overlap is a dated spatial reference, not
+  a tax-lot legal determination; applicability and the controlling option
+  still require current Appendix F and project-specific review. Portfolio
+  matching preserves legal form,
   never groups natural-person names, and does not infer beneficial ownership or
   related LLCs.
 - Selected parcel detail includes a server-built
@@ -200,7 +205,7 @@ decision audit, or a broken Parcel Intelligence page. The verifier also checks
 that the public audit metrics match the accepted model metadata and that
 anonymous ownership/diligence evidence remains withheld. Public readiness must
 remain a limited preview and cannot reveal protected lien, violation, flood,
-environmental, or imagery signals.
+  environmental, MIH, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not

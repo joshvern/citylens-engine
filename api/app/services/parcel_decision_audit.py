@@ -227,6 +227,10 @@ def build_parcel_decision_audit(
             diligence_signals.append("1% floodplain overlap")
         if row.environmental_review_required is True:
             diligence_signals.append("environmental review instrument")
+        if row.mandatory_inclusionary_housing is True:
+            diligence_signals.append(
+                "mandatory inclusionary housing mapped-area overlap"
+            )
         if row.recent_change:
             diligence_signals.append("recent aerial change")
     if not premium_access:
@@ -254,7 +258,7 @@ def build_parcel_decision_audit(
             "summary": diligence_summary,
             "source": (
                 "NYC DOF, DOB Safety, OATH/ECB, HPD, PLUTO/FEMA, OER context, "
-                "and CityLens imagery"
+                "NYC Planning MIH, and CityLens imagery"
             ),
             "as_of": (
                 _joined_dates(
@@ -262,6 +266,7 @@ def build_parcel_decision_audit(
                     row.violation_data_as_of,
                     row.floodplain_data_as_of,
                     row.environmental_designation_data_as_of,
+                    row.mih_data_as_of,
                 )
                 if premium_access
                 else None
@@ -333,6 +338,11 @@ def build_parcel_decision_audit(
             ),
             "environmental review instrument": (
                 "Confirm environmental review instrument requirements."
+            ),
+            "mandatory inclusionary housing mapped-area overlap": (
+                "Verify MIH applicability, mapped options, and affordable-"
+                "housing requirements against current Appendix F before "
+                "relying on residual land value."
             ),
             "recent aerial change": (
                 "Reconcile recent aerial change with official filings and site conditions."

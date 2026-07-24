@@ -232,6 +232,12 @@ class ParcelIntelRow(BaseModel):
         Literal["e_designation", "restrictive_declaration", "other"]
     ] = None
     environmental_designation_data_as_of: Optional[str] = None
+    # Current adopted NYC Planning MIH mapped-area overlap. This is
+    # authenticated post-score diligence, not a zoning opinion or rank input.
+    mandatory_inclusionary_housing: Optional[bool] = None
+    mih_options: Optional[list[str]] = None
+    mih_area_count: Optional[int] = None
+    mih_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -360,6 +366,7 @@ class ParcelIntelMapRow(BaseModel):
     critical_violation_count: Optional[int] = 0
     floodplain_1pct: Optional[bool] = None
     environmental_review_required: Optional[bool] = None
+    mandatory_inclusionary_housing: Optional[bool] = None
     owner_name: Optional[str] = None
     owner_entity_type: Optional[str] = None
     owner_portfolio_id: Optional[str] = None
@@ -511,6 +518,7 @@ class ParcelWorkflowSnapshot(BaseModel):
     environmental_designation_kind: Optional[
         Literal["e_designation", "restrictive_declaration", "other"]
     ] = None
+    mandatory_inclusionary_housing: Optional[bool] = None
     recent_change: Optional[bool] = None
 
 
@@ -737,6 +745,7 @@ class ParcelWorkflowAlert(BaseModel):
         "critical_violations_changed",
         "flood_overlay_changed",
         "environmental_review_changed",
+        "mih_overlay_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     ]

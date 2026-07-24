@@ -28,6 +28,8 @@ def _quality_row() -> dict:
         "owner_coverage": 1.0,
         "geometry_coverage": 1.0,
         "floodplain_coverage": 1.0,
+        "environmental_review_coverage": 1.0,
+        "mih_coverage": 1.0,
     }
 
 
@@ -50,6 +52,7 @@ def _index() -> dict:
             "current_violations": 7,
             "floodplain_screen": 45,
             "environmental_review": 45,
+            "mandatory_inclusionary_housing": 45,
         }.items()
     }
     return {

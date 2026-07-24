@@ -110,6 +110,11 @@ Current pinned release tag:
   [`docs/prospective_outcomes.md`](docs/prospective_outcomes.md). Per-lead
   audit events are available from
   `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated
+  `/v1/parcel-intel/workflow/actions` endpoint turns each open lead's
+  structured next action and due date into a server-derived queue: overdue,
+  due today, due within seven days, scheduled, or unscheduled. It also reports
+  missing assignees and unknown outcomes after 30 days. Terminal records clear
+  stale reminders and leave the action queue automatically. The authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
   snapshots with the current atomic feed and reports owner, newer-sale,
   zoning, opportunity, rank/tier, lien, violation, flood, environmental designation,

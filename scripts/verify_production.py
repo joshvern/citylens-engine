@@ -767,6 +767,7 @@ def run_checks(
 
     for label, path in (
         ("workflow list", "/v1/parcel-intel/workflow"),
+        ("workflow actions", "/v1/parcel-intel/workflow/actions"),
         ("workflow analytics", "/v1/parcel-intel/workflow/analytics"),
         ("workflow alerts", "/v1/parcel-intel/workflow/alerts"),
         ("workflow events", "/v1/parcel-intel/workflow/3020960069/events"),

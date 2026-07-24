@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -99,6 +99,7 @@ class FakeWorkflowStore:
 class _FakeParcel:
     def model_dump(self) -> dict:
         return {
+            "address": "100 E 21 STREET",
             "property_facts_as_of": "2026-07-24",
             "citywide_rank": 82,
             "acquisition_rank": 21,
@@ -234,6 +235,63 @@ def test_workflow_events_and_prospective_analytics(auth_override) -> None:
         and cohort["total"] == 1
         for cohort in payload["cohorts"]
     )
+
+
+def test_workflow_action_queue_and_input_invariants(auth_override) -> None:
+    auth_override(app_user_id="workflow-actions-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    due_date = (date.today() - timedelta(days=1)).isoformat()
+
+    missing_action = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={
+            "borough": "brooklyn",
+            "stage": "reviewing",
+            "next_action_due_date": due_date,
+        },
+    )
+    assert missing_action.status_code == 422
+    assert "next_action is required" in missing_action.text
+
+    created = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={
+            "borough": "brooklyn",
+            "stage": "reviewing",
+            "next_action": "Call owner",
+            "next_action_due_date": due_date,
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["next_action"] == "Call owner"
+    assert created.json()["next_action_due_date"] == due_date
+    assert created.json()["snapshot"]["address"] == "100 E 21 STREET"
+
+    actions = client.get("/v1/parcel-intel/workflow/actions")
+    assert actions.status_code == 200, actions.text
+    payload = actions.json()
+    assert payload["schema_version"] == "citylens/parcel-workflow-actions@v1"
+    assert payload["open_records"] == 1
+    assert payload["overdue_count"] == 1
+    assert payload["items"][0]["bbl"] == "3020960069"
+    assert payload["items"][0]["action_state"] == "overdue"
+
+    closed = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={
+            "borough": "brooklyn",
+            "stage": "pursue",
+            "outcome": "closed",
+            "next_action": "Stale reminder",
+            "next_action_due_date": due_date,
+        },
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["next_action"] is None
+    assert closed.json()["next_action_due_date"] is None
+    assert client.get("/v1/parcel-intel/workflow/actions").json()["open_records"] == 0
 
 
 def test_workflow_analytics_methodology_is_public_and_data_free() -> None:

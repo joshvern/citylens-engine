@@ -45,6 +45,11 @@ owns the browser UI.
     user scoped, and never exposed anonymously. It reports decision-relevant
     differences without changing model scores or guessing why a parcel left
     the eligible feed.
+  - Authenticated parcel workflow actions are also computed on request from
+    user-owned records. The server classifies next-action due dates as overdue,
+    due today, due soon, scheduled, or unscheduled; flags missing assignees and
+    30-day-old records without an outcome; and excludes terminal records.
+    Browser clients do not own these classifications.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).

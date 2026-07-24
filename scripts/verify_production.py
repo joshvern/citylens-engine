@@ -384,6 +384,74 @@ def validate_index(
         "index: citywide rank sequence is invalid",
         failures,
     )
+    land_use_reconciliation = quality.get("land_use_reconciliation")
+    _expect(
+        isinstance(land_use_reconciliation, dict),
+        "index: land-use source reconciliation is missing",
+        failures,
+    )
+    land_use_reconciliation = (
+        land_use_reconciliation
+        if isinstance(land_use_reconciliation, dict)
+        else {}
+    )
+    _expect(
+        land_use_reconciliation.get("schema")
+        == "citylens-parcel-intel/land-use-reconciliation@v1",
+        "index: land-use reconciliation schema is invalid",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("source_schema")
+        == "citylens-parcel-intel/zap-activity@v1",
+        "index: land-use reconciliation source schema is invalid",
+        failures,
+    )
+    source_sha256 = land_use_reconciliation.get("source_sha256")
+    _expect(
+        isinstance(source_sha256, str)
+        and len(source_sha256) == 64
+        and all(character in "0123456789abcdef" for character in source_sha256),
+        "index: land-use reconciliation source digest is invalid",
+        failures,
+    )
+    source_blocked_count = land_use_reconciliation.get(
+        "source_blocked_bbl_count"
+    )
+    _expect(
+        isinstance(source_blocked_count, int) and source_blocked_count > 0,
+        "index: land-use reconciliation has no blocked source BBLs",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("declared_blocked_bbl_count")
+        == source_blocked_count,
+        "index: land-use reconciliation blocked counts disagree",
+        failures,
+    )
+    _expect(
+        isinstance(
+            land_use_reconciliation.get("candidate_blocked_bbl_count"), int
+        )
+        and land_use_reconciliation["candidate_blocked_bbl_count"] > 0,
+        "index: land-use reconciliation exercised no blocked candidates",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("published_leakage_count") == 0,
+        "index: authoritative ZAP-blocked BBL leaked into published leads",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("passed") is True,
+        "index: land-use reconciliation did not pass",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("failures") == [],
+        "index: land-use reconciliation has failures",
+        failures,
+    )
     quality_boroughs = quality.get("boroughs")
     quality_boroughs = quality_boroughs if isinstance(quality_boroughs, dict) else {}
     for slug in BOROUGHS:
@@ -399,6 +467,7 @@ def validate_index(
         for field in (
             "project_leakage_count",
             "land_use_project_leakage_count",
+            "authoritative_zap_bbl_leakage_count",
             "duplicate_bbl_count",
             "invalid_owner_leakage_count",
             "non_private_owner_leakage_count",

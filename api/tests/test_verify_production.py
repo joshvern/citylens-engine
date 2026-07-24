@@ -20,6 +20,7 @@ def _quality_row() -> dict:
         "row_count": 1000,
         "project_leakage_count": 0,
         "land_use_project_leakage_count": 0,
+        "authoritative_zap_bbl_leakage_count": 0,
         "duplicate_bbl_count": 0,
         "invalid_owner_leakage_count": 0,
         "non_private_owner_leakage_count": 0,
@@ -69,6 +70,20 @@ def _index() -> dict:
             "failures": [],
             "citywide_acquisition_eligible_count": 5000,
             "citywide_rank_sequence_valid": True,
+            "land_use_reconciliation": {
+                "schema": (
+                    "citylens-parcel-intel/land-use-reconciliation@v1"
+                ),
+                "source_schema": "citylens-parcel-intel/zap-activity@v1",
+                "source_generated_at": "2026-07-23T00:00:00Z",
+                "source_sha256": "a" * 64,
+                "declared_blocked_bbl_count": 3108,
+                "source_blocked_bbl_count": 3108,
+                "candidate_blocked_bbl_count": 442,
+                "published_leakage_count": 0,
+                "passed": True,
+                "failures": [],
+            },
             "boroughs": {
                 slug: _quality_row()
                 for slug in (
@@ -154,6 +169,32 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("days old" in failure for failure in failures)
     assert "index: queens project_leakage_count is not zero" in failures
     assert any("prospective 2026 validation flag" in failure for failure in failures)
+
+
+def test_index_validator_rejects_land_use_source_reconciliation_leakage() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    bad["quality_gate"]["land_use_reconciliation"][
+        "published_leakage_count"
+    ] = 1
+    bad["quality_gate"]["land_use_reconciliation"]["passed"] = False
+    bad["quality_gate"]["land_use_reconciliation"]["failures"] = [
+        "published_blocked_bbl_leakage"
+    ]
+    bad["quality_gate"]["boroughs"]["brooklyn"][
+        "authoritative_zap_bbl_leakage_count"
+    ] = 1
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert (
+        "index: authoritative ZAP-blocked BBL leaked into published leads"
+        in failures
+    )
+    assert (
+        "index: brooklyn authoritative_zap_bbl_leakage_count is not zero"
+        in failures
+    )
 
 
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:

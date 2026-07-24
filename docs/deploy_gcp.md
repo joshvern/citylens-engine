@@ -321,7 +321,10 @@ the 5,000-row score replay to pass; any failed thresholds must have an explicit
 reviewed override reason recorded by the publisher. It opens one public parcel
 detail and requires the v1 decision audit, exact accepted-model validation
 metrics, unambiguous rank/eligibility/diligence roles, and redacted
-ownership/diligence evidence. The repository workflow
+ownership/diligence evidence. It also requires the publisher's hashed
+authoritative ZAP BBL reconciliation to show a non-empty source universe,
+blocked candidates actually exercised, consistent source counts, and zero
+published leakage. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours and stores
 the machine-readable report. Investigate scheduled failures before the feed
 crosses the API's 45-day stale threshold.

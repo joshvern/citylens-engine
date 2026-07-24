@@ -563,6 +563,15 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "mih_options": None,
     "mih_area_count": None,
     "mih_data_as_of": None,
+    "nearest_transit_complex_id": None,
+    "nearest_transit_station_name": None,
+    "nearest_transit_station_distance_m": None,
+    "nearest_transit_routes": None,
+    "nearest_transit_ada_status": None,
+    "transit_station_count_400m": None,
+    "transit_station_count_800m": None,
+    "transit_access_tier": None,
+    "transit_data_as_of": None,
     "assemblage_id": None,
     "assemblage_lot_count": None,
     "assemblage_combined_lot_area_sqft": None,
@@ -590,6 +599,12 @@ def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
             "floodplain_1pct": None,
             "environmental_review_required": None,
             "mandatory_inclusionary_housing": None,
+            "nearest_transit_station_name": None,
+            "nearest_transit_station_distance_m": None,
+            "nearest_transit_routes": None,
+            "nearest_transit_ada_status": None,
+            "transit_station_count_800m": None,
+            "transit_access_tier": None,
         }
     )
 

@@ -275,6 +275,39 @@ def build_parcel_decision_audit(
             "affects_acquisition_eligibility": False,
         }
     )
+    transit_distance = row.nearest_transit_station_distance_m
+    if not premium_access:
+        transit_status = "unavailable"
+        transit_summary = (
+            "Sign in to review current subway/SIR accessibility context."
+        )
+    elif isinstance(transit_distance, int):
+        routes = ", ".join(row.nearest_transit_routes or []) or "no routes"
+        transit_status = "verified"
+        transit_summary = (
+            f"Nearest MTA station complex: "
+            f"{row.nearest_transit_station_name or 'Unnamed station'}, "
+            f"{transit_distance:,} m straight-line; routes {routes}; "
+            f"{row.transit_station_count_800m or 0} complex(es) within 800 m."
+        )
+    else:
+        transit_status = "unavailable"
+        transit_summary = (
+            "No validated current station-complex proximity was joined."
+        )
+    checks.append(
+        {
+            "key": "transit_access",
+            "layer": "current_diligence",
+            "label": "Subway/SIR accessibility",
+            "status": transit_status,
+            "summary": transit_summary,
+            "source": "MTA Subway Stations",
+            "as_of": row.transit_data_as_of if premium_access else None,
+            "affects_model_rank": False,
+            "affects_acquisition_eligibility": False,
+        }
+    )
 
     warnings = [str(value).strip() for value in row.data_warnings if str(value).strip()]
     if row.acquisition_eligible is not True:
@@ -323,6 +356,11 @@ def build_parcel_decision_audit(
     elif premium_access:
         review_items.append(
             "Verify zoning capacity before relying on an underwriting screen."
+        )
+    if premium_access and isinstance(transit_distance, int):
+        cleared_items.append(
+            "Current MTA station-complex proximity is available as a "
+            "straight-line location screen."
         )
 
     if premium_access:
@@ -432,6 +470,11 @@ def build_parcel_decision_audit(
                 (
                     "No joined diligence flag means no flag in the cited snapshot, "
                     "not a clean title, buildable site, or completed investigation."
+                ),
+                (
+                    "Transit distance is straight-line to an MTA station-complex "
+                    "centroid, not walking distance, entrance access, service "
+                    "frequency, or travel time."
                 ),
             ],
         }

@@ -148,6 +148,11 @@ class _FakeParcel:
             "environmental_review_required": False,
             "environmental_designation_number": None,
             "environmental_designation_kind": None,
+            "nearest_transit_complex_id": "628",
+            "nearest_transit_station_name": "Church Av",
+            "nearest_transit_station_distance_m": 420,
+            "transit_access_tier": "walkable",
+            "transit_data_as_of": "2026-07-24",
             "recent_change": False,
         }
 
@@ -435,6 +440,9 @@ def test_workflow_snapshot_is_server_owned_immutable_and_typed(
     assert snapshot["citywide_rank"] == 82
     assert snapshot["zoning_district_1"] == "R5"
     assert snapshot["allowed_far"] == 2.0
+    assert snapshot["nearest_transit_complex_id"] == "628"
+    assert snapshot["nearest_transit_station_distance_m"] == 420
+    assert snapshot["transit_access_tier"] == "walkable"
     assert "unbounded_payload" not in snapshot
 
     updated = client.put(

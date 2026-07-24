@@ -21,9 +21,11 @@ owns the browser UI.
     is capped at 25 rows per borough with premium fields stripped;
     authenticated users can load 1,000 per borough. Large JSON responses are
     gzip-compressed. Historical NYC DOF final lien-sale and current DOB
-    Safety/OATH/HPD violation fields are premium diligence context and never
-    exposed anonymously. These overlays are post-score and do not modify
-    acquisition ranks.
+    Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
+    station-complex proximity are premium diligence context and never exposed
+    anonymously. These overlays are post-score and do not modify acquisition
+    ranks. MTA distance is straight-line centroid-to-complex context rather
+    than entrance-level walking or service-frequency analysis.
   - Selected parcel detail adds a read-time
     `citylens/parcel-decision-audit@v1` object. The API, rather than the
     browser, assigns each explanation to historical model signal,
@@ -55,7 +57,8 @@ owns the browser UI.
     baseline with the current generation. The contract is computed on request,
     user scoped, and never exposed anonymously. It reports decision-relevant
     differences without changing model scores or guessing why a parcel left
-    the eligible feed.
+    the eligible feed. Transit alerts require a station-complex or access-tier
+    change; distance-only centroid noise is ignored.
   - Authenticated parcel workflow actions are also computed on request from
     user-owned records. The server classifies next-action due dates as overdue,
     due today, due soon, scheduled, or unscheduled; flags missing assignees and

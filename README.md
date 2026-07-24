@@ -78,7 +78,9 @@ Current pinned release tag:
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
   PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; current PLUTO
   E-designation/restrictive-declaration diligence; current adopted NYC
-  Planning Mandatory Inclusionary Housing mapped-area overlap; exact-name,
+  Planning Mandatory Inclusionary Housing mapped-area overlap; current MTA
+  station-complex proximity, routes, ADA status, and 400/800 m counts;
+  exact-name,
   current-PLUTO legal-entity portfolio summaries; and a publisher quality-gate
   summary plus a generation-to-generation drift report exposed by the
   index/sweep endpoints. The drift report covers inventory turnover, top-rank
@@ -87,7 +89,7 @@ Current pinned release tag:
   The index also exposes aggregate score-replay evidence proving all 5,000
   published scores came from the profiled matrix. Failed thresholds require a
   recorded reviewed override before publication. Owner, lien-sale, violation,
-  portfolio, floodplain, environmental-designation, and MIH fields are stripped from anonymous
+  portfolio, floodplain, environmental-designation, MIH, and transit fields are stripped from anonymous
   map, sweep, and detail responses. The authenticated compact map carries portfolio counts,
   `critical_violation_count`, `floodplain_1pct`, and the boolean
   `environmental_review_required` and
@@ -101,6 +103,9 @@ Current pinned release tag:
   matching preserves legal form,
   never groups natural-person names, and does not infer beneficial ownership or
   related LLCs.
+  Transit distance is a great-circle tax-lot-centroid screen, not a walking
+  route, entrance distance, travel-time estimate, frequency measure, or
+  zoning determination; it is never a rank or eligibility input.
 - Selected parcel detail includes a server-built
   `citylens/parcel-decision-audit@v1` explanation. It keeps four evidence
   concepts separate: historical model signal, deterministic acquisition
@@ -144,8 +149,10 @@ Current pinned release tag:
   in-product reminders, not email or webhook delivery. The authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
   snapshots with the current atomic feed and reports owner, newer-sale,
-  zoning, opportunity, rank/tier, lien, violation, flood, environmental designation,
-  imagery, exact-name portfolio, and feed-removal changes. A removed lead is
+  zoning, opportunity, rank/tier, lien, violation, flood, environmental
+  designation, MIH, transit-complex/tier, imagery, exact-name portfolio, and
+  feed-removal changes. Small transit distance fluctuations do not alert when
+  the nearest complex and access tier are unchanged. A removed lead is
   deliberately labeled for current-record verification rather than being
   called sold, built, or completed without authoritative evidence.
 - Production Parcel Intelligence manifests may use
@@ -207,7 +214,7 @@ decision audit, or a broken Parcel Intelligence page. The verifier also checks
 that the public audit metrics match the accepted model metadata and that
 anonymous ownership/diligence evidence remains withheld. Public readiness must
 remain a limited preview and cannot reveal protected lien, violation, flood,
-  environmental, MIH, or imagery signals.
+  environmental, MIH, transit, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not

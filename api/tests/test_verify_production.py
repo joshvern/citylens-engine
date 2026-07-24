@@ -31,6 +31,7 @@ def _quality_row() -> dict:
         "floodplain_coverage": 1.0,
         "environmental_review_coverage": 1.0,
         "mih_coverage": 1.0,
+        "transit_coverage": 1.0,
     }
 
 
@@ -54,6 +55,7 @@ def _index() -> dict:
             "floodplain_screen": 45,
             "environmental_review": 45,
             "mandatory_inclusionary_housing": 45,
+            "transit_access": 45,
         }.items()
     }
     return {
@@ -462,6 +464,16 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
                 "status": "unavailable",
                 "summary": "Sign in to review current diligence overlays.",
                 "source": "Current official sources",
+                "as_of": None,
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": False,
+            },
+            {
+                "key": "transit_access",
+                "layer": "current_diligence",
+                "status": "unavailable",
+                "summary": "Sign in to review subway/SIR accessibility.",
+                "source": "MTA Subway Stations",
                 "as_of": None,
                 "affects_model_rank": False,
                 "affects_acquisition_eligibility": False,

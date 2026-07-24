@@ -309,6 +309,30 @@ def _row_alerts(
             )
         )
 
+    before_mih = snapshot.get("mandatory_inclusionary_housing")
+    after_mih = current.get("mandatory_inclusionary_housing")
+    if isinstance(before_mih, bool) and isinstance(after_mih, bool) and (
+        before_mih != after_mih
+    ):
+        alerts.append(
+            _alert(
+                bbl=bbl,
+                borough=borough,
+                code="mih_overlay_changed",
+                severity="high" if after_mih else "low",
+                title="MIH mapped-area screen changed",
+                detail=(
+                    "The current NYC Planning Mandatory Inclusionary Housing "
+                    "mapped-area overlap differs from the saved baseline. "
+                    "Verify current Appendix F and project-specific "
+                    "applicability before underwriting."
+                ),
+                field="mandatory_inclusionary_housing",
+                before=before_mih,
+                after=after_mih,
+            )
+        )
+
     before_change = snapshot.get("recent_change")
     after_change = current.get("recent_change")
     if isinstance(before_change, bool) and isinstance(after_change, bool) and (

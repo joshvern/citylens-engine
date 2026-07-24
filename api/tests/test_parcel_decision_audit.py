@@ -45,6 +45,9 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
             critical_violation_count=2,
             floodplain_1pct=True,
             environmental_review_required=True,
+            mandatory_inclusionary_housing=True,
+            mih_options=["Option 1"],
+            mih_data_as_of="2026-07-24",
             recent_change=True,
         ),
         _manifest(),
@@ -67,6 +70,9 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert any(
         "floodplain exposure" in item for item in audit.readiness.review_items
     )
+    assert any(
+        "MIH applicability" in item for item in audit.readiness.review_items
+    )
     assert "purchase recommendation" in audit.readiness.disclaimer
 
 
@@ -78,6 +84,7 @@ def test_public_decision_audit_does_not_summarize_private_signals() -> None:
             critical_violation_count=2,
             floodplain_1pct=True,
             environmental_review_required=True,
+            mandatory_inclusionary_housing=True,
             recent_change=True,
         ),
         _manifest(),
@@ -95,6 +102,9 @@ def test_public_decision_audit_does_not_summarize_private_signals() -> None:
         "Protected ownership and diligence evidence is withheld in this preview."
     ]
     assert "tax-lien" not in " ".join(audit.readiness.review_items)
+    assert "mandatory inclusionary housing" not in " ".join(
+        audit.readiness.review_items
+    ).lower()
 
 
 def test_current_project_exclusion_dominates_overall_audit_status() -> None:

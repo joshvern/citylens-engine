@@ -29,6 +29,7 @@ def _workflow_item(**overrides):
             "environmental_review_required": False,
             "environmental_designation_number": None,
             "environmental_designation_kind": None,
+            "mandatory_inclusionary_housing": False,
             "recent_change": False,
             "owner_portfolio_lot_count": 2,
         },
@@ -53,6 +54,7 @@ def _current_row(**overrides):
         "environmental_review_required": True,
         "environmental_designation_number": "R-14",
         "environmental_designation_kind": "restrictive_declaration",
+        "mandatory_inclusionary_housing": True,
         "recent_change": True,
         "owner_portfolio_lot_count": 3,
     }
@@ -82,10 +84,11 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         "critical_violations_changed",
         "flood_overlay_changed",
         "environmental_review_changed",
+        "mih_overlay_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }
-    assert result["severity_counts"]["high"] == 5
+    assert result["severity_counts"]["high"] == 6
     assert result["alerts"][0]["severity"] == "high"
 
 
@@ -186,6 +189,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
         "critical_violations_changed",
         "flood_overlay_changed",
         "environmental_review_changed",
+        "mih_overlay_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }

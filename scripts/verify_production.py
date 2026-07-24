@@ -61,6 +61,10 @@ PRIVATE_NULL_FIELDS = (
     "environmental_designation_number",
     "environmental_designation_kind",
     "environmental_designation_data_as_of",
+    "mandatory_inclusionary_housing",
+    "mih_options",
+    "mih_area_count",
+    "mih_data_as_of",
 )
 REQUIRED_SOURCE_SLAS = (
     "property_facts",
@@ -73,6 +77,7 @@ REQUIRED_SOURCE_SLAS = (
     "current_violations",
     "floodplain_screen",
     "environmental_review",
+    "mandatory_inclusionary_housing",
 )
 EXPECTED_WORKFLOW_HORIZONS = (
     ("owner_contacted", 30),
@@ -401,7 +406,13 @@ def validate_index(
             "invalid_owner_portfolio_count",
         ):
             _expect(row.get(field) == 0, f"index: {slug} {field} is not zero", failures)
-        for field in ("owner_coverage", "geometry_coverage", "floodplain_coverage"):
+        for field in (
+            "owner_coverage",
+            "geometry_coverage",
+            "floodplain_coverage",
+            "environmental_review_coverage",
+            "mih_coverage",
+        ):
             _expect(row.get(field) == 1.0, f"index: {slug} {field} is not complete", failures)
 
     generation_diff = index.get("generation_diff")
@@ -675,6 +686,7 @@ def validate_public_decision_audit(
         "immediate-hazard",
         "floodplain",
         "environmental review",
+        "mandatory inclusionary housing",
         "recent aerial change",
     ):
         _expect(

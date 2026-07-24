@@ -559,6 +559,10 @@ _ANON_STRIPPED_FIELDS: dict[str, Any] = {
     "environmental_designation_number": None,
     "environmental_designation_kind": None,
     "environmental_designation_data_as_of": None,
+    "mandatory_inclusionary_housing": None,
+    "mih_options": None,
+    "mih_area_count": None,
+    "mih_data_as_of": None,
     "assemblage_id": None,
     "assemblage_lot_count": None,
     "assemblage_combined_lot_area_sqft": None,
@@ -585,6 +589,7 @@ def _strip_map_premium_fields(row: ParcelIntelMapRow) -> ParcelIntelMapRow:
             "critical_violation_count": None,
             "floodplain_1pct": None,
             "environmental_review_required": None,
+            "mandatory_inclusionary_housing": None,
         }
     )
 

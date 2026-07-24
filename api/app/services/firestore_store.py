@@ -457,10 +457,20 @@ class FirestoreStore:
 
         @firestore.transactional  # type: ignore[misc]
         def _txn(transaction) -> dict[str, Any]:
-            snap = ref.get(transaction=transaction)
-            existing = snap.to_dict() if snap.exists else {}
             now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
+            existing = snap.to_dict() if snap.exists else {}
             existing = existing or {}
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
             effective_payload = _workflow_effective_payload(
                 existing=existing,
                 incoming=payload,
@@ -517,6 +527,18 @@ class FirestoreStore:
                     "changed_fields": changed_fields,
                 }
                 transaction.set(ref.collection("events").document(event_id), event)
+                usage_payload = _product_usage_day_payload(
+                    existing=existing_usage,
+                    event=(
+                        "workflow_created"
+                        if event_type in {"created", "restored"}
+                        else "workflow_updated"
+                    ),
+                    source="workflow",
+                    occurred_at=now,
+                )
+                if usage_payload is not None:
+                    transaction.set(usage_ref, usage_payload)
             return doc
 
         def _op() -> dict[str, Any]:
@@ -531,13 +553,23 @@ class FirestoreStore:
 
         @firestore.transactional  # type: ignore[misc]
         def _txn(transaction) -> bool:
+            now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
             snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
             if not snap.exists:
                 return False
             data = snap.to_dict() or {}
             if data.get("archived_at") is not None:
                 return False
-            now = utcnow()
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
             transaction.set(
                 ref,
                 {
@@ -564,6 +596,14 @@ class FirestoreStore:
                     "changed_fields": ["archived_at"],
                 },
             )
+            usage_payload = _product_usage_day_payload(
+                existing=existing_usage,
+                event="workflow_archived",
+                source="workflow",
+                occurred_at=now,
+            )
+            if usage_payload is not None:
+                transaction.set(usage_ref, usage_payload)
             return True
 
         def _op() -> bool:

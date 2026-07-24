@@ -263,7 +263,7 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         json={
             "schema_version": "citylens/parcel-product-event@v1",
             "event": "workflow_created",
-            "source": "map",
+            "source": "workflow",
         },
     )
     assert mismatched.status_code == 422

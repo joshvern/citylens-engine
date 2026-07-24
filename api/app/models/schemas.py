@@ -467,12 +467,7 @@ ParcelWorkflowOutcome = Literal[
     "lost",
 ]
 
-ParcelProductEventName = Literal[
-    "parcel_opened",
-    "workflow_created",
-    "workflow_updated",
-    "workflow_archived",
-]
+ParcelProductEventName = Literal["parcel_opened"]
 
 ParcelProductEventSource = Literal[
     "direct",
@@ -480,20 +475,19 @@ ParcelProductEventSource = Literal[
     "ranking",
     "action_queue",
     "watchlist",
-    "header",
-    "workflow",
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "parcel_opened": {"direct", "map", "ranking", "action_queue", "watchlist"},
-    "workflow_created": {"header", "workflow"},
-    "workflow_updated": {"workflow"},
-    "workflow_archived": {"workflow"},
 }
 
 
 class ParcelProductEventCreate(BaseModel):
-    """Value-minimized authenticated product-adoption event."""
+    """Value-minimized client event.
+
+    Workflow lifecycle counters are derived transactionally by the API from
+    canonical workflow mutations. Only parcel opens remain client-reported.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

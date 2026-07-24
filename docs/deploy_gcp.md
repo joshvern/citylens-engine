@@ -382,7 +382,11 @@ gcloud firestore fields ttls list \
 ```
 
 The API writes only aggregate daily event/source counts to this collection.
-Do not add BBLs, addresses, owners, URLs, workflow text, or event-level rows.
+Parcel opens are value-minimized client counters; workflow lifecycle counters
+are written transactionally with the canonical workflow mutation, so dropped
+browser telemetry cannot erase a real save and idempotent retries cannot
+inflate it. Do not add BBLs, addresses, owners, URLs, workflow text, or
+event-level rows.
 Generate the aggregate operator report with:
 
 ```bash

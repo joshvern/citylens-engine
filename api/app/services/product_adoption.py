@@ -86,9 +86,10 @@ def build_product_adoption_report(
     workflow_creates = events.get("workflow_created", 0)
     warnings: list[str] = [
         (
-            "These are directional client-side adoption counters, not model "
-            "accuracy, unique-parcel counts, or a replacement for canonical "
-            "workflow records."
+            "Parcel opens are directional client-side counters; workflow "
+            "lifecycle counts are derived transactionally from canonical "
+            "workflow mutations. Neither is model accuracy or a "
+            "unique-parcel count."
         )
     ]
     if not events:

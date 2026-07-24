@@ -65,6 +65,15 @@ PRIVATE_NULL_FIELDS = (
     "mih_options",
     "mih_area_count",
     "mih_data_as_of",
+    "nearest_transit_complex_id",
+    "nearest_transit_station_name",
+    "nearest_transit_station_distance_m",
+    "nearest_transit_routes",
+    "nearest_transit_ada_status",
+    "transit_station_count_400m",
+    "transit_station_count_800m",
+    "transit_access_tier",
+    "transit_data_as_of",
 )
 REQUIRED_SOURCE_SLAS = (
     "property_facts",
@@ -78,6 +87,7 @@ REQUIRED_SOURCE_SLAS = (
     "floodplain_screen",
     "environmental_review",
     "mandatory_inclusionary_housing",
+    "transit_access",
 )
 EXPECTED_WORKFLOW_HORIZONS = (
     ("owner_contacted", 30),
@@ -481,6 +491,7 @@ def validate_index(
             "floodplain_coverage",
             "environmental_review_coverage",
             "mih_coverage",
+            "transit_coverage",
         ):
             _expect(row.get(field) == 1.0, f"index: {slug} {field} is not complete", failures)
 
@@ -824,6 +835,7 @@ def validate_public_decision_audit(
         "property_facts",
         "ownership",
         "current_diligence",
+        "transit_access",
     }
     _expect(
         required_keys.issubset(by_key),
@@ -848,6 +860,7 @@ def validate_public_decision_audit(
     historical = by_key.get("historical_model", {})
     eligibility = by_key.get("acquisition_eligibility", {})
     diligence = by_key.get("current_diligence", {})
+    transit = by_key.get("transit_access", {})
     ownership = by_key.get("ownership", {})
     _expect(
         historical.get("layer") == "model_signal"
@@ -870,7 +883,18 @@ def validate_public_decision_audit(
         "parcel detail: diligence-only role is ambiguous",
         failures,
     )
-    for key, check in (("ownership", ownership), ("current_diligence", diligence)):
+    _expect(
+        transit.get("layer") == "current_diligence"
+        and transit.get("affects_model_rank") is False
+        and transit.get("affects_acquisition_eligibility") is False,
+        "parcel detail: transit diligence-only role is ambiguous",
+        failures,
+    )
+    for key, check in (
+        ("ownership", ownership),
+        ("current_diligence", diligence),
+        ("transit_access", transit),
+    ):
         _expect(
             check.get("status") == "unavailable"
             and "sign in" in str(check.get("summary") or "").lower()

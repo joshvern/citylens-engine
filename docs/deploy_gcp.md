@@ -313,7 +313,7 @@ scheduled production monitor:
 ```
 
 This intentionally needs no credential. It verifies that anonymous requests
-cannot read workflow, owner, portfolio, change, violation, lien, flood, or
+cannot read workflow, owner, portfolio, change, violation, lien, flood, transit, or
 model-explanation fields while exercising the API's full generation checksum
 and row-schema validation for every borough. It also requires the immutable
 `generation_diff` release report, its 142-column inference drift report, and
@@ -324,7 +324,9 @@ metrics, unambiguous rank/eligibility/diligence roles, and redacted
 ownership/diligence evidence. It also requires the publisher's hashed
 authoritative ZAP BBL reconciliation to show a non-empty source universe,
 blocked candidates actually exercised, consistent source counts, and zero
-published leakage. The repository workflow
+published leakage. It also requires the official MTA station source SLA,
+complete per-borough transit enrichment, anonymous transit redaction, and an
+audit statement that transit is diligence-only. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours and stores
 the machine-readable report. Investigate scheduled failures before the feed
 crosses the API's 45-day stale threshold.

@@ -48,6 +48,13 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
             mandatory_inclusionary_housing=True,
             mih_options=["Option 1"],
             mih_data_as_of="2026-07-24",
+            nearest_transit_station_name="Church Av",
+            nearest_transit_station_distance_m=420,
+            nearest_transit_routes=["B", "Q"],
+            nearest_transit_ada_status="full",
+            transit_station_count_800m=2,
+            transit_access_tier="walkable",
+            transit_data_as_of="2026-07-24",
             recent_change=True,
         ),
         _manifest(),
@@ -66,6 +73,9 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert checks["current_diligence"].affects_acquisition_eligibility is False
     assert checks["current_diligence"].status == "review"
     assert "historical final tax-lien sale" in checks["current_diligence"].summary
+    assert checks["transit_access"].status == "verified"
+    assert "420 m straight-line" in checks["transit_access"].summary
+    assert checks["transit_access"].affects_model_rank is False
     assert audit.readiness.status == "review_required"
     assert any(
         "floodplain exposure" in item for item in audit.readiness.review_items
@@ -94,6 +104,7 @@ def test_public_decision_audit_does_not_summarize_private_signals() -> None:
     checks = {check.key: check for check in audit.checks}
     assert checks["ownership"].status == "unavailable"
     assert checks["current_diligence"].status == "unavailable"
+    assert checks["transit_access"].status == "unavailable"
     assert "Sign in" in checks["current_diligence"].summary
     assert "tax-lien" not in checks["current_diligence"].summary
     assert audit.overall_status == "screened"

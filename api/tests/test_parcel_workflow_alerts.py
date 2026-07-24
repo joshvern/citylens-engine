@@ -30,6 +30,11 @@ def _workflow_item(**overrides):
             "environmental_designation_number": None,
             "environmental_designation_kind": None,
             "mandatory_inclusionary_housing": False,
+            "nearest_transit_complex_id": "A",
+            "nearest_transit_station_name": "Old Station",
+            "nearest_transit_station_distance_m": 740,
+            "transit_access_tier": "walkable",
+            "transit_data_as_of": "2026-07-20",
             "recent_change": False,
             "owner_portfolio_lot_count": 2,
         },
@@ -55,6 +60,11 @@ def _current_row(**overrides):
         "environmental_designation_number": "R-14",
         "environmental_designation_kind": "restrictive_declaration",
         "mandatory_inclusionary_housing": True,
+        "nearest_transit_complex_id": "B",
+        "nearest_transit_station_name": "New Station",
+        "nearest_transit_station_distance_m": 310,
+        "transit_access_tier": "very_close",
+        "transit_data_as_of": "2026-07-24",
         "recent_change": True,
         "owner_portfolio_lot_count": 3,
     }
@@ -85,6 +95,7 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         "flood_overlay_changed",
         "environmental_review_changed",
         "mih_overlay_changed",
+        "transit_access_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }
@@ -139,6 +150,45 @@ def test_alerts_ignore_unwatched_archived_and_unknown_baseline_values() -> None:
     assert result["warnings"] == []
 
 
+def test_transit_alert_ignores_distance_noise_when_complex_and_tier_match() -> None:
+    item = _workflow_item(
+        snapshot={
+            "feed_generated_at": "2026-07-20T00:00:00Z",
+            "nearest_transit_complex_id": "A",
+            "nearest_transit_station_name": "Same Station",
+            "nearest_transit_station_distance_m": 510,
+            "transit_access_tier": "walkable",
+        }
+    )
+    current = _current_row(
+        owner_name=None,
+        last_sale_year=None,
+        zoning_district_1=None,
+        opportunity_category=None,
+        priority_tier=None,
+        citywide_rank=None,
+        tax_lien_sale_year=None,
+        critical_violation_count=None,
+        floodplain_1pct=None,
+        environmental_review_required=None,
+        mandatory_inclusionary_housing=None,
+        recent_change=None,
+        owner_portfolio_lot_count=None,
+        nearest_transit_complex_id="A",
+        nearest_transit_station_name="Same Station",
+        nearest_transit_station_distance_m=525,
+        transit_access_tier="walkable",
+    )
+
+    result = build_workflow_alerts(
+        [item],
+        [current],
+        feed_generated_at="2026-07-24T00:00:00Z",
+    )
+
+    assert result["alerts"] == []
+
+
 class _FakeStore:
     def list_parcel_workflow(
         self, *, app_user_id: str, include_archived: bool = False
@@ -190,6 +240,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
         "flood_overlay_changed",
         "environmental_review_changed",
         "mih_overlay_changed",
+        "transit_access_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }

@@ -333,6 +333,54 @@ def _row_alerts(
             )
         )
 
+    before_transit_id = snapshot.get("nearest_transit_complex_id")
+    after_transit_id = current.get("nearest_transit_complex_id")
+    before_transit_tier = snapshot.get("transit_access_tier")
+    after_transit_tier = current.get("transit_access_tier")
+    if (
+        _normalized_text(before_transit_id) is not None
+        and _normalized_text(after_transit_id) is not None
+        and (
+            _changed(before_transit_id, after_transit_id)
+            or _changed(before_transit_tier, after_transit_tier)
+        )
+    ):
+        alerts.append(
+            _alert(
+                bbl=bbl,
+                borough=borough,
+                code="transit_access_changed",
+                severity="medium",
+                title="Transit proximity context changed",
+                detail=(
+                    "The nearest MTA station complex or straight-line access "
+                    "tier differs from the saved baseline. Review the dated "
+                    "station source; this is not a walking-route measurement."
+                ),
+                field="nearest_transit_complex_id",
+                before={
+                    "complex_id": before_transit_id,
+                    "station_name": snapshot.get(
+                        "nearest_transit_station_name"
+                    ),
+                    "distance_m": snapshot.get(
+                        "nearest_transit_station_distance_m"
+                    ),
+                    "tier": before_transit_tier,
+                },
+                after={
+                    "complex_id": after_transit_id,
+                    "station_name": current.get(
+                        "nearest_transit_station_name"
+                    ),
+                    "distance_m": current.get(
+                        "nearest_transit_station_distance_m"
+                    ),
+                    "tier": after_transit_tier,
+                },
+            )
+        )
+
     before_change = snapshot.get("recent_change")
     after_change = current.get("recent_change")
     if isinstance(before_change, bool) and isinstance(after_change, bool) and (

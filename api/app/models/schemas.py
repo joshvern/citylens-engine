@@ -238,6 +238,23 @@ class ParcelIntelRow(BaseModel):
     mih_options: Optional[list[str]] = None
     mih_area_count: Optional[int] = None
     mih_data_as_of: Optional[str] = None
+    # Current MTA subway/SIR station-complex proximity. Straight-line
+    # authenticated diligence only; not a walking route or rank input.
+    nearest_transit_complex_id: Optional[str] = None
+    nearest_transit_station_name: Optional[str] = None
+    nearest_transit_station_distance_m: Optional[int] = Field(
+        default=None, ge=0
+    )
+    nearest_transit_routes: Optional[list[str]] = None
+    nearest_transit_ada_status: Optional[
+        Literal["full", "partial", "none"]
+    ] = None
+    transit_station_count_400m: Optional[int] = Field(default=None, ge=0)
+    transit_station_count_800m: Optional[int] = Field(default=None, ge=0)
+    transit_access_tier: Optional[
+        Literal["very_close", "walkable", "limited", "distant"]
+    ] = None
+    transit_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
     block_id: Optional[str] = None
@@ -367,6 +384,18 @@ class ParcelIntelMapRow(BaseModel):
     floodplain_1pct: Optional[bool] = None
     environmental_review_required: Optional[bool] = None
     mandatory_inclusionary_housing: Optional[bool] = None
+    nearest_transit_station_name: Optional[str] = None
+    nearest_transit_station_distance_m: Optional[int] = Field(
+        default=None, ge=0
+    )
+    nearest_transit_routes: Optional[list[str]] = None
+    nearest_transit_ada_status: Optional[
+        Literal["full", "partial", "none"]
+    ] = None
+    transit_station_count_800m: Optional[int] = Field(default=None, ge=0)
+    transit_access_tier: Optional[
+        Literal["very_close", "walkable", "limited", "distant"]
+    ] = None
     owner_name: Optional[str] = None
     owner_entity_type: Optional[str] = None
     owner_portfolio_id: Optional[str] = None
@@ -519,6 +548,17 @@ class ParcelWorkflowSnapshot(BaseModel):
         Literal["e_designation", "restrictive_declaration", "other"]
     ] = None
     mandatory_inclusionary_housing: Optional[bool] = None
+    nearest_transit_complex_id: Optional[str] = Field(default=None, max_length=32)
+    nearest_transit_station_name: Optional[str] = Field(
+        default=None, max_length=160
+    )
+    nearest_transit_station_distance_m: Optional[int] = Field(
+        default=None, ge=0
+    )
+    transit_access_tier: Optional[
+        Literal["very_close", "walkable", "limited", "distant"]
+    ] = None
+    transit_data_as_of: Optional[str] = Field(default=None, max_length=32)
     recent_change: Optional[bool] = None
 
 
@@ -746,6 +786,7 @@ class ParcelWorkflowAlert(BaseModel):
         "flood_overlay_changed",
         "environmental_review_changed",
         "mih_overlay_changed",
+        "transit_access_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     ]

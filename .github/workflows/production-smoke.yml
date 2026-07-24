@@ -1,0 +1,90 @@
+name: production-smoke
+
+on:
+  schedule:
+    # Six-hourly, offset from the top of the hour to avoid shared-runner spikes.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: API origin to verify
+        required: false
+        default: https://api.citylens.dev
+        type: string
+      web_base:
+        description: Web origin to verify
+        required: false
+        default: https://www.citylens.dev
+        type: string
+      max_age_days:
+        description: Maximum acceptable parcel-feed age
+        required: false
+        default: "35"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Verify production contracts
+        env:
+          API_BASE: ${{ inputs.api_base || 'https://api.citylens.dev' }}
+          WEB_BASE: ${{ inputs.web_base || 'https://www.citylens.dev' }}
+          MAX_AGE_DAYS: ${{ inputs.max_age_days || '35' }}
+        run: |
+          python scripts/verify_production.py \
+            --api-base "${API_BASE}" \
+            --web-base "${WEB_BASE}" \
+            --max-age-days "${MAX_AGE_DAYS}" \
+            --output production-verification.json
+
+      - name: Publish verification summary
+        if: always()
+        run: |
+          if [ ! -f production-verification.json ]; then
+            echo "## CityLens production verification" >> "${GITHUB_STEP_SUMMARY}"
+            echo "The verifier exited before it could write a report." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          python - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
+          import json
+
+          report = json.load(open("production-verification.json", encoding="utf-8"))
+          icon = "✅" if report.get("passed") else "❌"
+          print(f"## {icon} CityLens production verification")
+          print()
+          print(f"- Feed generation: `{report.get('feed_generated_at', 'unknown')}`")
+          print(f"- Verified at: `{report.get('verified_at', 'unknown')}`")
+          print(f"- Result: `{'passed' if report.get('passed') else 'failed'}`")
+          failures = report.get("failures") or []
+          if failures:
+              print()
+              print("### Failures")
+              for failure in failures:
+                  print(f"- {failure}")
+          PY
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-verification
+          path: production-verification.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -130,6 +130,24 @@ When the API returns a demo run, its artifact URLs are rewritten to same-origin 
 paths like `/v1/demo/artifacts/<run_id>/<artifact_name>`. The browser never needs
 direct GCS URLs for demo mode.
 
+## Production verification
+
+The secret-free production verifier exercises the live API, all five parcel
+generation objects, and the web route:
+
+```bash
+./.venv/bin/python scripts/verify_production.py \
+  --output production-verification.json
+```
+
+It fails on stale/missing feeds, quality-gate regressions, model-provenance
+drift, borough or rank gaps, anonymous premium-field exposure, missing gzip,
+unavailable Firestore, public workflow access, or a broken Parcel Intelligence
+page. [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
+same verifier every six hours and on demand, publishes a job summary, and
+retains the JSON report for 30 days. A failure is an incident signal; do not
+weaken a contract assertion merely to make the scheduled check green.
+
 ### VS Code folder expectations
 
 - Open `citylens-engine/` as its own folder when you want engine-specific Python

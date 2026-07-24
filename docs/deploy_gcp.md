@@ -301,6 +301,25 @@ Worker (Cloud Run Job):
 
 ### 10) Local sanity checks (before deploying)
 
+After deployment, run the same adversarial public-contract check used by the
+scheduled production monitor:
+
+```bash
+./.venv/bin/python scripts/verify_production.py \
+  --api-base https://api.citylens.dev \
+  --web-base https://www.citylens.dev \
+  --max-age-days 35 \
+  --output production-verification.json
+```
+
+This intentionally needs no credential. It verifies that anonymous requests
+cannot read workflow, owner, portfolio, change, violation, lien, flood, or
+model-explanation fields while exercising the API's full generation checksum
+and row-schema validation for every borough. The repository workflow
+`.github/workflows/production-smoke.yml` repeats it every six hours and stores
+the machine-readable report. Investigate scheduled failures before the feed
+crosses the API's 45-day stale threshold.
+
 Set the active project:
 
 ```bash

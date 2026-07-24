@@ -3,7 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from scripts.verify_production import validate_index, validate_map, validate_sweep
+from scripts.verify_production import (
+    evaluate_source_slas,
+    validate_index,
+    validate_map,
+    validate_sweep,
+)
 
 
 def _quality_row() -> dict:
@@ -25,10 +30,30 @@ def _quality_row() -> dict:
 
 
 def _index() -> dict:
+    data_sources = {
+        key: {
+            "source": key,
+            "retrieved_at": "2026-07-23",
+            "max_age_days": max_age,
+            "stale": False,
+        }
+        for key, max_age in {
+            "property_facts": 45,
+            "ownership": 45,
+            "constraints": 180,
+            "project_activity": 14,
+            "land_use_activity": 45,
+            "owner_portfolio": 45,
+            "tax_lien_sale_history": 45,
+            "current_violations": 7,
+            "floodplain_screen": 45,
+        }.items()
+    }
     return {
         "generated_at": "2026-07-23T00:00:00Z",
         "age_days": 1.0,
         "stale": False,
+        "data_sources": data_sources,
         "boroughs": [
             {"slug": slug, "display_name": slug.title(), "count": 1000}
             for slug in ("manhattan", "brooklyn", "queens", "bronx", "staten_island")
@@ -120,6 +145,44 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("days old" in failure for failure in failures)
     assert "index: queens project_leakage_count is not zero" in failures
     assert any("prospective 2026 validation flag" in failure for failure in failures)
+
+
+def test_source_sla_validator_recomputes_age_and_warns_before_breach() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    index = _index()
+    index["data_sources"]["current_violations"]["retrieved_at"] = "2026-07-19"
+
+    failures, warnings, report = evaluate_source_slas(index, now=now)
+
+    assert failures == []
+    assert warnings == [
+        "index: source SLA current_violations has 2.0 days remaining"
+    ]
+    assert report["passed"] is True
+    assert report["warning_count"] == 1
+    assert report["sources"]["current_violations"]["status"] == "warning"
+
+
+def test_source_sla_validator_rejects_missing_stale_and_future_sources() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    index = _index()
+    del index["data_sources"]["ownership"]
+    index["data_sources"]["project_activity"]["retrieved_at"] = "2026-06-01"
+    index["data_sources"]["property_facts"]["retrieved_at"] = "2026-07-25"
+
+    failures, _, report = evaluate_source_slas(index, now=now)
+
+    assert "index: source SLA ownership is missing" in failures
+    assert any(
+        failure.startswith("index: source SLA project_activity is stale")
+        for failure in failures
+    )
+    assert (
+        "index: source SLA property_facts retrieved_at is in the future"
+        in failures
+    )
+    assert report["passed"] is False
+    assert report["breach_count"] == 3
 
 
 def test_index_validator_requires_reviewed_generation_diff_override() -> None:

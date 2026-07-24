@@ -439,6 +439,15 @@ def validate_index(
         "index: land-use reconciliation blocked counts disagree",
         failures,
     )
+    private_current_project_count = land_use_reconciliation.get(
+        "private_current_project_count"
+    )
+    non_parcel_applicable_project_count = land_use_reconciliation.get(
+        "non_parcel_applicable_project_count"
+    )
+    non_parcel_applicable_project_ids = land_use_reconciliation.get(
+        "non_parcel_applicable_project_ids"
+    )
     blocking_project_count = land_use_reconciliation.get(
         "blocking_project_count"
     )
@@ -447,6 +456,33 @@ def validate_index(
     )
     unjoined_blocking_project_count = land_use_reconciliation.get(
         "unjoined_blocking_project_count"
+    )
+    _expect(
+        isinstance(private_current_project_count, int)
+        and not isinstance(private_current_project_count, bool)
+        and private_current_project_count > 0,
+        "index: land-use reconciliation private project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(non_parcel_applicable_project_count, int)
+        and not isinstance(non_parcel_applicable_project_count, bool)
+        and non_parcel_applicable_project_count >= 0,
+        "index: land-use reconciliation non-parcel project count is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(non_parcel_applicable_project_ids, list)
+        and all(
+            isinstance(project_id, str) and bool(project_id.strip())
+            for project_id in non_parcel_applicable_project_ids
+        )
+        and len(set(non_parcel_applicable_project_ids))
+        == len(non_parcel_applicable_project_ids)
+        and len(non_parcel_applicable_project_ids)
+        == non_parcel_applicable_project_count,
+        "index: land-use reconciliation non-parcel project IDs are invalid",
+        failures,
     )
     _expect(
         isinstance(blocking_project_count, int)
@@ -476,6 +512,15 @@ def validate_index(
         and joined_blocking_project_count + unjoined_blocking_project_count
         == blocking_project_count,
         "index: land-use reconciliation project counts disagree",
+        failures,
+    )
+    _expect(
+        isinstance(private_current_project_count, int)
+        and isinstance(non_parcel_applicable_project_count, int)
+        and isinstance(blocking_project_count, int)
+        and blocking_project_count + non_parcel_applicable_project_count
+        == private_current_project_count,
+        "index: land-use reconciliation project scope counts disagree",
         failures,
     )
     unjoined_blocking_project_ids = land_use_reconciliation.get(
@@ -512,6 +557,61 @@ def validate_index(
         and not isinstance(project_bbl_crosswalk_coverage, bool)
         and 0.99 <= project_bbl_crosswalk_coverage <= 1.0,
         "index: land-use project-to-BBL coverage is below 99%",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("project_detail_source")
+        == (
+            "https://zap-api-production.herokuapp.com/projects/"
+            "{project_id}"
+        ),
+        "index: land-use project-detail source is invalid",
+        failures,
+    )
+    project_detail_retrieved_at = _parse_timestamp(
+        land_use_reconciliation.get("project_detail_retrieved_at")
+    )
+    _expect(
+        project_detail_retrieved_at is not None,
+        "index: land-use project-detail timestamp is invalid",
+        failures,
+    )
+    if project_detail_retrieved_at is not None:
+        project_detail_age_days = max(
+            (now - project_detail_retrieved_at).total_seconds(), 0.0
+        ) / 86400
+        _expect(
+            project_detail_age_days <= 45,
+            (
+                "index: land-use project details are "
+                f"{project_detail_age_days:.1f} days old"
+            ),
+            failures,
+        )
+    project_detail_supplemental_relation_count = (
+        land_use_reconciliation.get(
+            "project_detail_supplemental_relation_count"
+        )
+    )
+    _expect(
+        isinstance(project_detail_supplemental_relation_count, int)
+        and not isinstance(
+            project_detail_supplemental_relation_count, bool
+        )
+        and project_detail_supplemental_relation_count >= 0,
+        "index: land-use supplemental relation count is invalid",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("project_detail_fetch_failure_count")
+        == 0,
+        "index: land-use project-detail refresh has failures",
+        failures,
+    )
+    _expect(
+        land_use_reconciliation.get("project_detail_fetch_failure_ids")
+        == [],
+        "index: land-use project-detail failure IDs are not empty",
         failures,
     )
     _expect(

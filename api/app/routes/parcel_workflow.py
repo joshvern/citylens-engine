@@ -153,6 +153,30 @@ def list_workflow_events(
     )
 
 
+@router.get(
+    "/parcel-intel/workflow/{bbl}",
+    response_model=ParcelWorkflowItem | None,
+)
+def get_workflow(
+    bbl: str,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict | None:
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    item = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+    )
+    if item is not None and item.get("archived_at") is not None:
+        return None
+    return item
+
+
 @router.put("/parcel-intel/workflow/{bbl}", response_model=ParcelWorkflowItem)
 def upsert_workflow(
     bbl: str,

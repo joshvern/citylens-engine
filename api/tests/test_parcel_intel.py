@@ -124,6 +124,10 @@ def _row(bbl: str, **overrides) -> dict:
         "pfirm15_floodplain": True,
         "floodplain_1pct": True,
         "floodplain_data_as_of": "2026-07-23",
+        "environmental_review_required": True,
+        "environmental_designation_number": "R-14",
+        "environmental_designation_kind": "restrictive_declaration",
+        "environmental_designation_data_as_of": "2026-07-23",
         "is_landmark": False,
         "is_historic_district": False,
         "block_id": bbl[:6],
@@ -419,6 +423,9 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         row["critical_violation_count"] is None for row in body["rows"]
     )
     assert all(row["floodplain_1pct"] is None for row in body["rows"])
+    assert all(
+        row["environmental_review_required"] is None for row in body["rows"]
+    )
     assert "s-maxage=600" in response.headers["cache-control"]
     assert response.headers["content-encoding"] == "gzip"
     # Compact rows do not serialize expensive detail-only fields.
@@ -463,6 +470,9 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert response.json()["rows"][0]["tax_lien_sale_year"] == 2025
     assert response.json()["rows"][0]["critical_violation_count"] == 3
     assert response.json()["rows"][0]["floodplain_1pct"] is True
+    assert (
+        response.json()["rows"][0]["environmental_review_required"] is True
+    )
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -527,6 +537,10 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert public.json()["pfirm15_floodplain"] is None
     assert public.json()["floodplain_1pct"] is None
     assert public.json()["floodplain_data_as_of"] is None
+    assert public.json()["environmental_review_required"] is None
+    assert public.json()["environmental_designation_number"] is None
+    assert public.json()["environmental_designation_kind"] is None
+    assert public.json()["environmental_designation_data_as_of"] is None
     assert public.json()["top_features"] == []
     assert public.json()["parcel_geometry"] == geometry
     assert "s-maxage=600" in public.headers["cache-control"]
@@ -562,6 +576,16 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     assert private.json()["pfirm15_floodplain"] is True
     assert private.json()["floodplain_1pct"] is True
     assert private.json()["floodplain_data_as_of"] == "2026-07-23"
+    assert private.json()["environmental_review_required"] is True
+    assert private.json()["environmental_designation_number"] == "R-14"
+    assert (
+        private.json()["environmental_designation_kind"]
+        == "restrictive_declaration"
+    )
+    assert (
+        private.json()["environmental_designation_data_as_of"]
+        == "2026-07-23"
+    )
     assert len(private.json()["top_features"]) == 1
     assert private.headers["cache-control"] == "private, no-store"
 
@@ -931,6 +955,10 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
     assert served["owner_portfolio_total_lot_area_sqft"] is None
     assert served["owner_portfolio_candidate_count"] is None
     assert served["owner_portfolio_data_as_of"] is None
+    assert served["environmental_review_required"] is None
+    assert served["environmental_designation_number"] is None
+    assert served["environmental_designation_kind"] is None
+    assert served["environmental_designation_data_as_of"] is None
     assert served["assemblage_id"] is None
     assert served["assemblage_lot_count"] is None
     assert served["assemblage_combined_lot_area_sqft"] is None
@@ -979,6 +1007,9 @@ def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:
     assert served["owner_portfolio_total_lot_area_sqft"] == 72000.0
     assert served["owner_portfolio_candidate_count"] == 4
     assert served["recent_change"] is True
+    assert served["environmental_review_required"] is True
+    assert served["environmental_designation_number"] == "R-14"
+    assert served["environmental_designation_kind"] == "restrictive_declaration"
     # Authenticated payloads must never sit in a shared cache.
     assert r.headers["cache-control"] == "private, no-store"
 

@@ -47,6 +47,7 @@ def _index() -> dict:
             "tax_lien_sale_history": 45,
             "current_violations": 7,
             "floodplain_screen": 45,
+            "environmental_review": 45,
         }.items()
     }
     return {

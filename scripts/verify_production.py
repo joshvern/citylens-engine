@@ -57,6 +57,10 @@ PRIVATE_NULL_FIELDS = (
     "pfirm15_floodplain",
     "floodplain_1pct",
     "floodplain_data_as_of",
+    "environmental_review_required",
+    "environmental_designation_number",
+    "environmental_designation_kind",
+    "environmental_designation_data_as_of",
 )
 REQUIRED_SOURCE_SLAS = (
     "property_facts",
@@ -68,6 +72,7 @@ REQUIRED_SOURCE_SLAS = (
     "tax_lien_sale_history",
     "current_violations",
     "floodplain_screen",
+    "environmental_review",
 )
 
 

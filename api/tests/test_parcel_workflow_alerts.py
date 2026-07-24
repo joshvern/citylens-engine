@@ -26,6 +26,9 @@ def _workflow_item(**overrides):
             "tax_lien_sale_year": 2022,
             "critical_violation_count": 0,
             "floodplain_1pct": False,
+            "environmental_review_required": False,
+            "environmental_designation_number": None,
+            "environmental_designation_kind": None,
             "recent_change": False,
             "owner_portfolio_lot_count": 2,
         },
@@ -47,6 +50,9 @@ def _current_row(**overrides):
         "tax_lien_sale_year": 2023,
         "critical_violation_count": 2,
         "floodplain_1pct": True,
+        "environmental_review_required": True,
+        "environmental_designation_number": "R-14",
+        "environmental_designation_kind": "restrictive_declaration",
         "recent_change": True,
         "owner_portfolio_lot_count": 3,
     }
@@ -75,10 +81,11 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         "tax_lien_history_changed",
         "critical_violations_changed",
         "flood_overlay_changed",
+        "environmental_review_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }
-    assert result["severity_counts"]["high"] == 4
+    assert result["severity_counts"]["high"] == 5
     assert result["alerts"][0]["severity"] == "high"
 
 
@@ -178,6 +185,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
         "tax_lien_history_changed",
         "critical_violations_changed",
         "flood_overlay_changed",
+        "environmental_review_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }

@@ -70,6 +70,11 @@ def test_analytics_uses_explicit_denominators_and_preserves_archived_labels() ->
         "numerator": 1,
         "denominator": 2,
         "rate": 0.5,
+        "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower": 0.0945,
+            "upper": 0.9055,
+        },
         "sufficient_denominator": False,
     }
 
@@ -127,7 +132,7 @@ def test_analytics_uses_fixed_horizons_and_excludes_late_backfills() -> None:
     )
 
     analytics = build_workflow_analytics(rows, as_of=as_of)
-    assert analytics["schema_version"] == "citylens/parcel-workflow-analytics@v2"
+    assert analytics["schema_version"] == "citylens/parcel-workflow-analytics@v3"
     assert analytics["measurement_status"] == "usable"
     assert analytics["valid_saved_at_records"] == 31
     assert analytics["oldest_followup_days"] == 500
@@ -140,6 +145,11 @@ def test_analytics_uses_fixed_horizons_and_excludes_late_backfills() -> None:
         "reached_within_horizon": 12,
         "pending_records": 0,
         "rate": 0.3871,
+        "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower": 0.2373,
+            "upper": 0.5618,
+        },
         "sufficient_denominator": True,
     }
     assert windows["qualified"]["reached_within_horizon"] == 8
@@ -176,4 +186,5 @@ def test_analytics_withholds_directional_status_until_observation_time_matures()
     assert analytics["measurement_label"] == "Collecting observation time"
     assert analytics["valid_saved_at_records"] == 40
     assert analytics["maturity_windows"][0]["eligible_records"] == 0
+    assert analytics["maturity_windows"][0]["confidence_interval"] is None
     assert any("invalid" in warning for warning in analytics["warnings"])

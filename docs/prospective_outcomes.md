@@ -49,6 +49,17 @@ Rank-band cohort rates use the same fixed horizons and expose their own
 denominators. Raw lifetime milestone counts remain available only as
 operational funnel context.
 
+Every prospective rate includes a two-sided 95% Wilson score interval. The
+product keeps the point estimate hidden until the corresponding fixed-horizon
+denominator reaches 10, then displays the interval beside it. This avoids
+presenting a small cohort as a precise conversion estimate.
+
+An account with no saved workflow records has no prospective outcome evidence.
+The product shows an activation state instead of rendering empty percentage
+cards. The first rate can appear only after 10 saved leads complete the
+corresponding observation window; overall evidence remains `collecting` until
+at least 30 leads have been saved.
+
 ## Selection and timing limitations
 
 The population is user-saved leads, not every parcel shown or ranked by

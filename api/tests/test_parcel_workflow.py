@@ -248,7 +248,7 @@ def test_workflow_events_and_prospective_analytics(auth_override) -> None:
     analytics = client.get("/v1/parcel-intel/workflow/analytics")
     assert analytics.status_code == 200, analytics.text
     payload = analytics.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-analytics@v2"
+    assert payload["schema_version"] == "citylens/parcel-workflow-analytics@v3"
     assert payload["measurement_status"] == "collecting"
     assert payload["total_records"] == 1
     assert payload["valid_saved_at_records"] == 1
@@ -351,11 +351,13 @@ def test_workflow_analytics_methodology_is_public_and_data_free() -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["schema_version"] == (
-        "citylens/parcel-workflow-analytics-methodology@v1"
+        "citylens/parcel-workflow-analytics-methodology@v2"
     )
     assert payload["analytics_schema_version"] == (
-        "citylens/parcel-workflow-analytics@v2"
+        "citylens/parcel-workflow-analytics@v3"
     )
+    assert payload["confidence_level"] == 0.95
+    assert "Wilson" in payload["uncertainty_semantics"]
     assert payload["model_accuracy_claim"] is False
     assert [
         (window["milestone"], window["horizon_days"])

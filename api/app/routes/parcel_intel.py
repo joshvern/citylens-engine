@@ -299,6 +299,7 @@ class ParcelIntelRegistry:
             data_sources=manifest.get("data_sources") or {},
             quality_gate=manifest.get("quality_gate") or {},
             generation_diff=manifest.get("generation_diff") or {},
+            inference_replay=manifest.get("inference_replay") or {},
             age_days=age_days,
             stale=stale,
         )
@@ -690,4 +691,5 @@ def parcel_intel_sweep(
         data_sources=(manifest or {}).get("data_sources") or {},
         quality_gate=(manifest or {}).get("quality_gate") or {},
         generation_diff=(manifest or {}).get("generation_diff") or {},
+        inference_replay=(manifest or {}).get("inference_replay") or {},
     )

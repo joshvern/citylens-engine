@@ -233,8 +233,8 @@ def validate_index(
         failures,
     )
     _expect(
-        generation_diff.get("status") in {"initial_generation", "compared"},
-        "index: generation_diff status is invalid",
+        generation_diff.get("status") == "compared",
+        "index: generation_diff is not in comparison mode",
         failures,
     )
     diff_gate = generation_diff.get("gate")
@@ -262,6 +262,78 @@ def validate_index(
     _expect(
         diff_candidate.get("row_count") == 5000,
         "index: generation_diff candidate row count is not 5,000",
+        failures,
+    )
+    feature_drift = generation_diff.get("inference_feature_drift")
+    _expect(
+        isinstance(feature_drift, dict),
+        "index: inference feature drift report is missing",
+        failures,
+    )
+    feature_drift = feature_drift if isinstance(feature_drift, dict) else {}
+    _expect(
+        feature_drift.get("schema")
+        == "citylens-parcel-intel/inference-feature-drift@v1",
+        "index: inference feature drift schema is invalid",
+        failures,
+    )
+    _expect(
+        feature_drift.get("status") == "compared",
+        "index: inference feature drift is not in comparison mode",
+        failures,
+    )
+    feature_candidate = feature_drift.get("candidate")
+    feature_candidate = (
+        feature_candidate if isinstance(feature_candidate, dict) else {}
+    )
+    _expect(
+        feature_candidate.get("row_count") == 5000,
+        "index: inference feature row count is not 5,000",
+        failures,
+    )
+    _expect(
+        feature_candidate.get("column_count") == 142,
+        "index: inference feature column count is not 142",
+        failures,
+    )
+    feature_fingerprint = feature_candidate.get("feature_spec_sha256")
+    _expect(
+        isinstance(feature_fingerprint, str)
+        and len(feature_fingerprint) == 64
+        and all(character in "0123456789abcdef" for character in feature_fingerprint),
+        "index: inference feature fingerprint is invalid",
+        failures,
+    )
+    feature_gate = feature_drift.get("gate")
+    feature_gate = feature_gate if isinstance(feature_gate, dict) else {}
+    _expect(
+        feature_gate.get("passed") is True,
+        "index: inference feature drift gate did not pass",
+        failures,
+    )
+    replay = index.get("inference_replay")
+    _expect(
+        isinstance(replay, dict),
+        "index: inference score replay is missing",
+        failures,
+    )
+    replay = replay if isinstance(replay, dict) else {}
+    _expect(
+        replay.get("schema") == "citylens-parcel-intel/inference-replay@v1",
+        "index: inference score replay schema is invalid",
+        failures,
+    )
+    _expect(
+        replay.get("passed") is True
+        and replay.get("status") == "matched"
+        and replay.get("row_count") == 5000
+        and replay.get("mismatch_count") == 0,
+        "index: inference score replay did not match all 5,000 rows",
+        failures,
+    )
+    _expect(
+        replay.get("maximum_absolute_error") == 0.0,
+        "index: inference score replay has non-zero maximum error",
         failures,
     )
 

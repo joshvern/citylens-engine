@@ -181,6 +181,18 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
         "generation_diff": {
             "schema": "citylens-parcel-intel/generation-diff@v1",
             "status": "compared",
+            "inference_feature_drift": {
+                "schema": (
+                    "citylens-parcel-intel/inference-feature-drift@v1"
+                ),
+                "status": "compared",
+                "candidate": {
+                    "row_count": 5000,
+                    "column_count": 142,
+                    "feature_spec_sha256": "a" * 64,
+                },
+                "gate": {"passed": True, "failures": [], "warnings": []},
+            },
             "gate": {
                 "passed": True,
                 "thresholds_passed": True,
@@ -188,6 +200,14 @@ def _manifest(boroughs: list[str], generated_at: str = "2026-05-08T00:00:00+00:0
                 "override_reason": None,
                 "failures": [],
             },
+        },
+        "inference_replay": {
+            "schema": "citylens-parcel-intel/inference-replay@v1",
+            "row_count": 5000,
+            "passed": True,
+            "status": "matched",
+            "mismatch_count": 0,
+            "maximum_absolute_error": 0.0,
         },
     }
 
@@ -291,6 +311,10 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     assert body["data_sources"]["property_facts"]["source"] == "NYC PLUTO"
     assert body["quality_gate"]["passed"] is True
     assert body["generation_diff"]["gate"]["passed"] is True
+    assert body["generation_diff"]["inference_feature_drift"]["gate"][
+        "passed"
+    ] is True
+    assert body["inference_replay"]["mismatch_count"] == 0
     # Cache header is the gating metric for whether Vercel/CDN edge-caches.
     assert "cache-control" in r.headers
     assert "s-maxage=600" in r.headers["cache-control"]

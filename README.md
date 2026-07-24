@@ -81,8 +81,10 @@ Current pinned release tag:
   summary plus a generation-to-generation drift report exposed by the
   index/sweep endpoints. The drift report covers inventory turnover, top-rank
   retention, retained-lead rank movement, score PSI, source vintages, model
-  identity, and required-field coverage; failed thresholds require a recorded
-  reviewed override before publication. Owner, lien-sale, and violation fields
+  identity, required-field coverage, and all 142 accepted-model input columns.
+  The index also exposes aggregate score-replay evidence proving all 5,000
+  published scores came from the profiled matrix. Failed thresholds require a
+  recorded reviewed override before publication. Owner, lien-sale, and violation fields
   plus portfolio and floodplain fields are stripped from anonymous map, sweep,
   and detail responses. The authenticated compact map carries portfolio counts,
   `critical_violation_count`, and `floodplain_1pct`; detailed agency/map fields
@@ -144,7 +146,8 @@ generation objects, and the web route:
 ```
 
 It fails on stale/missing feeds, quality-gate regressions, missing or failed
-generation-diff evidence, unreviewed drift overrides, model-provenance drift,
+generation-diff evidence, input-feature drift, score-replay mismatch,
+unreviewed drift overrides, model-provenance drift,
 borough or rank gaps, anonymous premium-field exposure, missing gzip,
 unavailable Firestore, public workflow access, or a broken Parcel Intelligence
 page. [production-smoke.yml](.github/workflows/production-smoke.yml) runs the

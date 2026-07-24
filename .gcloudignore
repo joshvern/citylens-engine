@@ -6,6 +6,9 @@
 **
 
 # ...then include only what the engine Docker builds need.
+!.dockerignore
+!pyproject.toml
+!uv.lock
 !api/**
 !worker/**
 !deploy/**
@@ -15,6 +18,7 @@
 **/__pycache__/**
 **/.pytest_cache/**
 **/.ruff_cache/**
+**/*.egg-info/**
 
 # Exclude OS/editor clutter.
 **/.DS_Store

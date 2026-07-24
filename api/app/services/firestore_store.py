@@ -20,6 +20,18 @@ def identity_id_for(provider: str, subject: str) -> str:
     return hashlib.sha256(f"{provider}:{subject}".encode("utf-8")).hexdigest()
 
 
+def _workflow_effective_payload(
+    *,
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    record_exists: bool,
+) -> dict[str, Any]:
+    effective = dict(incoming)
+    if record_exists and isinstance(existing.get("snapshot"), dict):
+        effective["snapshot"] = existing["snapshot"]
+    return effective
+
+
 # Programmatic user API keys are prefixed so the auth dependency can
 # route them to a DB lookup without trying JWKS verification first.
 USER_API_KEY_PREFIX = "clk_live_"
@@ -383,6 +395,15 @@ class FirestoreStore:
 
         return retry_transient(_op)
 
+    def get_parcel_workflow(
+        self, *, app_user_id: str, bbl: str
+    ) -> dict[str, Any] | None:
+        def _op() -> dict[str, Any] | None:
+            snap = self._parcel_workflow_col(app_user_id).document(bbl).get()
+            return (snap.to_dict() or {}) if snap.exists else None
+
+        return retry_transient(_op)
+
     def upsert_parcel_workflow(
         self,
         *,
@@ -399,9 +420,17 @@ class FirestoreStore:
             existing = snap.to_dict() if snap.exists else {}
             now = utcnow()
             existing = existing or {}
+            effective_payload = _workflow_effective_payload(
+                existing=existing,
+                incoming=payload,
+                record_exists=snap.exists,
+            )
+            # The exposure snapshot is a save-time baseline. Preserve it
+            # exactly after creation so later workflow edits cannot regroup
+            # outcomes using future ranks or property facts.
             changed_fields = sorted(
                 key
-                for key, value in payload.items()
+                for key, value in effective_payload.items()
                 if existing.get(key) != value
             )
             was_archived = existing.get("archived_at") is not None
@@ -409,7 +438,7 @@ class FirestoreStore:
                 "created" if not snap.exists else "restored" if was_archived else "updated"
             )
             milestones = milestone_patch(
-                outcome=str(payload.get("outcome") or "unknown"),
+                outcome=str(effective_payload.get("outcome") or "unknown"),
                 existing=existing,
                 occurred_at=now,
             )
@@ -417,7 +446,7 @@ class FirestoreStore:
             should_write_event = bool(changed_fields or was_archived or not snap.exists)
             doc = {
                 **existing,
-                **payload,
+                **effective_payload,
                 **milestones,
                 "bbl": bbl,
                 "user_id": app_user_id,
@@ -435,11 +464,13 @@ class FirestoreStore:
                     "event_type": event_type,
                     "occurred_at": now,
                     "from_stage": existing.get("stage"),
-                    "to_stage": payload.get("stage"),
+                    "to_stage": effective_payload.get("stage"),
                     "from_outcome": existing.get("outcome"),
-                    "to_outcome": payload.get("outcome"),
+                    "to_outcome": effective_payload.get("outcome"),
                     "from_decision_reason": existing.get("decision_reason"),
-                    "to_decision_reason": payload.get("decision_reason"),
+                    "to_decision_reason": effective_payload.get(
+                        "decision_reason"
+                    ),
                     # Preserve an audit trail without copying note or assignee
                     # values into an analytics-facing event record.
                     "changed_fields": changed_fields,

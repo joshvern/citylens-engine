@@ -98,9 +98,16 @@ Current pinned release tag:
   related LLCs.
 - The authenticated acquisition workflow preserves an immutable,
   value-minimized event history and soft-archives removed leads. The
-  user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports explicit
-  saved/contacted/qualified/offered/contracted/closed denominators and cohort
-  coverage; it is prospective workflow evidence, not model accuracy. Per-lead
+  user-scoped `/v1/parcel-intel/workflow/analytics` endpoint reports
+  maturity-qualified 30-day contact, 90-day qualification, 180-day offer,
+  270-day contract, and 365-day close rates. A lead enters a denominator only
+  after its full observation window; late-recorded milestones do not count as
+  on-time outcomes. The public, data-free
+  `/v1/parcel-intel/workflow/analytics/methodology` endpoint publishes this
+  contract for deployment verification. These are selected, user-saved
+  workflow outcomes—not model accuracy, seller intent, or transaction
+  probability. See
+  [`docs/prospective_outcomes.md`](docs/prospective_outcomes.md). Per-lead
   audit events are available from
   `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved

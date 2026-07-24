@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.services.parcel_workflow_analytics import (
     build_workflow_analytics,
@@ -60,7 +60,7 @@ def test_analytics_uses_explicit_denominators_and_preserves_archived_labels() ->
             },
         },
     ]
-    analytics = build_workflow_analytics(rows)
+    analytics = build_workflow_analytics(rows, as_of=now)
     assert analytics["total_records"] == 2
     assert analytics["active_records"] == 1
     assert analytics["archived_records"] == 1
@@ -72,3 +72,108 @@ def test_analytics_uses_explicit_denominators_and_preserves_archived_labels() ->
         "rate": 0.5,
         "sufficient_denominator": False,
     }
+
+
+def test_analytics_uses_fixed_horizons_and_excludes_late_backfills() -> None:
+    as_of = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    rows: list[dict] = []
+    for index in range(30):
+        saved_at = as_of - timedelta(days=400 + index)
+        row = {
+            "borough": "brooklyn",
+            "stage": "pursue",
+            "outcome": "unknown",
+            "saved_at": saved_at,
+            "archived_at": None,
+            "event_count": 2,
+            "snapshot": {
+                "citywide_rank": index + 1,
+                "opportunity_category": "ground_up_candidate",
+            },
+        }
+        if index < 12:
+            row["outcome"] = "owner_contacted"
+            row["first_contacted_at"] = saved_at + timedelta(days=20)
+        if index < 8:
+            row["outcome"] = "qualified"
+            row["first_qualified_at"] = saved_at + timedelta(days=60)
+        if index < 4:
+            row["outcome"] = "closed"
+            row["first_closed_at"] = saved_at + timedelta(days=300)
+        rows.append(row)
+
+    # This record eventually reached every inferred milestone but was entered
+    # after each deadline. It remains visible in the operational funnel and
+    # must not inflate fixed-horizon prospective rates.
+    late_saved = as_of - timedelta(days=500)
+    rows.append(
+        {
+            "borough": "queens",
+            "stage": "pursue",
+            "outcome": "closed",
+            "saved_at": late_saved,
+            "archived_at": None,
+            "event_count": 3,
+            "first_contacted_at": late_saved + timedelta(days=31),
+            "first_qualified_at": late_saved + timedelta(days=91),
+            "first_offer_submitted_at": late_saved + timedelta(days=181),
+            "first_under_contract_at": late_saved + timedelta(days=271),
+            "first_closed_at": late_saved + timedelta(days=366),
+            "snapshot": {
+                "citywide_rank": 700,
+                "opportunity_category": "vacant_site",
+            },
+        }
+    )
+
+    analytics = build_workflow_analytics(rows, as_of=as_of)
+    assert analytics["schema_version"] == "citylens/parcel-workflow-analytics@v2"
+    assert analytics["measurement_status"] == "usable"
+    assert analytics["valid_saved_at_records"] == 31
+    assert analytics["oldest_followup_days"] == 500
+    windows = {row["milestone"]: row for row in analytics["maturity_windows"]}
+    assert windows["owner_contacted"] == {
+        "milestone": "owner_contacted",
+        "label": "Contacted within 30 days",
+        "horizon_days": 30,
+        "eligible_records": 31,
+        "reached_within_horizon": 12,
+        "pending_records": 0,
+        "rate": 0.3871,
+        "sufficient_denominator": True,
+    }
+    assert windows["qualified"]["reached_within_horizon"] == 8
+    assert windows["closed"]["reached_within_horizon"] == 4
+    assert analytics["funnel"]["closed"] == 5
+
+
+def test_analytics_withholds_directional_status_until_observation_time_matures() -> None:
+    as_of = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    rows = [
+        {
+            "borough": "bronx",
+            "stage": "new",
+            "outcome": "unknown",
+            "saved_at": as_of - timedelta(days=5),
+            "event_count": 1,
+            "snapshot": {"citywide_rank": index + 1},
+        }
+        for index in range(40)
+    ]
+    rows.append(
+        {
+            "borough": "bronx",
+            "stage": "new",
+            "outcome": "unknown",
+            "saved_at": "not-a-date",
+            "event_count": 1,
+            "snapshot": {"citywide_rank": 41},
+        }
+    )
+
+    analytics = build_workflow_analytics(rows, as_of=as_of)
+    assert analytics["measurement_status"] == "collecting"
+    assert analytics["measurement_label"] == "Collecting observation time"
+    assert analytics["valid_saved_at_records"] == 40
+    assert analytics["maturity_windows"][0]["eligible_records"] == 0
+    assert any("invalid" in warning for warning in analytics["warnings"])

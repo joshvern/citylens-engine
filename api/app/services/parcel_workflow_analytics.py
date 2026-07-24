@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Any, Iterable
 
 MINIMUM_COHORT_SIZE = 30
@@ -25,6 +26,44 @@ _MILESTONE_FIELDS = {
     "rejected": "first_rejected_at",
     "lost": "first_lost_at",
 }
+_MATURITY_WINDOWS: tuple[tuple[str, str, int], ...] = (
+    ("owner_contacted", "Contacted within 30 days", 30),
+    ("qualified", "Qualified within 90 days", 90),
+    ("offer_submitted", "Offer submitted within 180 days", 180),
+    ("under_contract", "Under contract within 270 days", 270),
+    ("closed", "Closed within 365 days", 365),
+)
+
+
+def workflow_analytics_methodology() -> dict[str, Any]:
+    """Return the public, data-free prospective measurement contract."""
+
+    return {
+        "schema_version": (
+            "citylens/parcel-workflow-analytics-methodology@v1"
+        ),
+        "analytics_schema_version": "citylens/parcel-workflow-analytics@v2",
+        "horizons": [
+            {
+                "milestone": milestone,
+                "label": label,
+                "horizon_days": horizon_days,
+            }
+            for milestone, label, horizon_days in _MATURITY_WINDOWS
+        ],
+        "minimum_cohort_size": MINIMUM_COHORT_SIZE,
+        "minimum_rate_denominator": MINIMUM_RATE_DENOMINATOR,
+        "selection_scope": (
+            "User-saved leads only; rates do not estimate all ranked parcels, "
+            "seller intent, or transaction probability."
+        ),
+        "timestamp_semantics": (
+            "Eligibility starts at immutable saved_at. Outcomes use the first "
+            "recorded milestone timestamp; late backfills are not counted as "
+            "within-horizon outcomes."
+        ),
+        "model_accuracy_claim": False,
+    }
 
 
 def utcnow() -> datetime:
@@ -82,6 +121,87 @@ def _rate(numerator: int, denominator: int) -> dict[str, Any]:
     }
 
 
+def _as_utc_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _followup_days(item: dict[str, Any], *, as_of: datetime) -> int | None:
+    saved_at = _as_utc_datetime(item.get("saved_at"))
+    if saved_at is None or saved_at > as_of:
+        return None
+    return int((as_of - saved_at).total_seconds() // 86_400)
+
+
+def _is_mature(
+    item: dict[str, Any], *, horizon_days: int, as_of: datetime
+) -> bool:
+    days = _followup_days(item, as_of=as_of)
+    return days is not None and days >= horizon_days
+
+
+def _reached_within_horizon(
+    item: dict[str, Any],
+    *,
+    milestone: str,
+    horizon_days: int,
+) -> bool:
+    saved_at = _as_utc_datetime(item.get("saved_at"))
+    reached_at = _as_utc_datetime(item.get(_MILESTONE_FIELDS[milestone]))
+    if saved_at is None or reached_at is None or reached_at < saved_at:
+        return False
+    return reached_at <= saved_at + timedelta(days=horizon_days)
+
+
+def _maturity_window(
+    items: list[dict[str, Any]],
+    *,
+    milestone: str,
+    label: str,
+    horizon_days: int,
+    as_of: datetime,
+) -> dict[str, Any]:
+    valid = [
+        item for item in items if _followup_days(item, as_of=as_of) is not None
+    ]
+    eligible = [
+        item
+        for item in valid
+        if _is_mature(item, horizon_days=horizon_days, as_of=as_of)
+    ]
+    reached = sum(
+        _reached_within_horizon(
+            item,
+            milestone=milestone,
+            horizon_days=horizon_days,
+        )
+        for item in eligible
+    )
+    return {
+        "milestone": milestone,
+        "label": label,
+        "horizon_days": horizon_days,
+        "eligible_records": len(eligible),
+        "reached_within_horizon": reached,
+        "pending_records": len(valid) - len(eligible),
+        "rate": round(reached / len(eligible), 4) if eligible else None,
+        "sufficient_denominator": len(eligible) >= MINIMUM_RATE_DENOMINATOR,
+    }
+
+
 def _rank_band(item: dict[str, Any]) -> str:
     snapshot = item.get("snapshot") or {}
     rank = snapshot.get("citywide_rank") or snapshot.get("acquisition_rank")
@@ -98,7 +218,9 @@ def _rank_band(item: dict[str, Any]) -> str:
     return "1001+"
 
 
-def _cohort_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _cohort_rows(
+    items: list[dict[str, Any]], *, as_of: datetime
+) -> list[dict[str, Any]]:
     dimensions: tuple[tuple[str, Any], ...] = (
         ("borough", lambda row: str(row.get("borough") or "unknown")),
         ("rank_band", _rank_band),
@@ -123,6 +245,45 @@ def _cohort_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             closed = sum(_has_milestone(item, "closed") for item in cohort)
             rejected = sum(_has_milestone(item, "rejected") for item in cohort)
             lost = sum(_has_milestone(item, "lost") for item in cohort)
+            contacted_eligible = [
+                item
+                for item in cohort
+                if _is_mature(item, horizon_days=30, as_of=as_of)
+            ]
+            qualified_eligible = [
+                item
+                for item in cohort
+                if _is_mature(item, horizon_days=90, as_of=as_of)
+            ]
+            close_eligible = [
+                item
+                for item in cohort
+                if _is_mature(item, horizon_days=365, as_of=as_of)
+            ]
+            contacted_in_window = sum(
+                _reached_within_horizon(
+                    item,
+                    milestone="owner_contacted",
+                    horizon_days=30,
+                )
+                for item in contacted_eligible
+            )
+            qualified_in_window = sum(
+                _reached_within_horizon(
+                    item,
+                    milestone="qualified",
+                    horizon_days=90,
+                )
+                for item in qualified_eligible
+            )
+            closed_in_window = sum(
+                _reached_within_horizon(
+                    item,
+                    milestone="closed",
+                    horizon_days=365,
+                )
+                for item in close_eligible
+            )
             rows.append(
                 {
                     "dimension": dimension,
@@ -135,17 +296,37 @@ def _cohort_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "closed": closed,
                     "rejected": rejected,
                     "lost": lost,
-                    "contacted_rate": round(contacted / total, 4) if total else None,
-                    "qualified_rate": (
-                        round(qualified_ / contacted, 4) if contacted else None
+                    "contacted_rate_denominator": len(contacted_eligible),
+                    "qualified_rate_denominator": len(qualified_eligible),
+                    "close_rate_denominator": len(close_eligible),
+                    "contacted_rate": (
+                        round(contacted_in_window / len(contacted_eligible), 4)
+                        if contacted_eligible
+                        else None
                     ),
-                    "close_rate": round(closed / total, 4) if total else None,
+                    "qualified_rate": (
+                        round(qualified_in_window / len(qualified_eligible), 4)
+                        if qualified_eligible
+                        else None
+                    ),
+                    "close_rate": (
+                        round(closed_in_window / len(close_eligible), 4)
+                        if close_eligible
+                        else None
+                    ),
                 }
             )
     return rows
 
 
-def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
+def build_workflow_analytics(
+    items: list[dict[str, Any]],
+    *,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    generated_at = _as_utc_datetime(as_of) if as_of is not None else utcnow()
+    if generated_at is None:
+        raise ValueError("as_of must be a valid datetime")
     total = len(items)
     active = sum(not bool(item.get("archived_at")) for item in items)
     event_history = sum(int(item.get("event_count") or 0) > 0 for item in items)
@@ -161,15 +342,42 @@ def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
         name: sum(_has_milestone(item, name) for item in items)
         for name in (*_PROGRESSION, "rejected", "lost")
     }
-    if total < MINIMUM_COHORT_SIZE:
+    followup_days = sorted(
+        days
+        for item in items
+        if (days := _followup_days(item, as_of=generated_at)) is not None
+    )
+    maturity_windows = [
+        _maturity_window(
+            items,
+            milestone=milestone,
+            label=label,
+            horizon_days=horizon_days,
+            as_of=generated_at,
+        )
+        for milestone, label, horizon_days in _MATURITY_WINDOWS
+    ]
+    any_directional_window = any(
+        window["eligible_records"] >= MINIMUM_RATE_DENOMINATOR
+        for window in maturity_windows
+    )
+    close_window = maturity_windows[-1]
+    if total < MINIMUM_COHORT_SIZE or not any_directional_window:
         status = "collecting"
-        label = "Collecting prospective outcomes"
-    elif event_history < total * 0.8 or rank_snapshots < total * 0.8:
+        label = "Collecting observation time"
+    elif (
+        event_history < total * 0.8
+        or rank_snapshots < total * 0.8
+        or len(followup_days) < total * 0.8
+    ):
         status = "directional"
-        label = "Directional prospective evidence"
+        label = "Directional maturity-qualified evidence"
+    elif close_window["eligible_records"] < MINIMUM_COHORT_SIZE:
+        status = "directional"
+        label = "Directional maturity-qualified evidence"
     else:
         status = "usable"
-        label = "Usable prospective workflow evidence"
+        label = "Usable maturity-qualified evidence"
 
     warnings = [
         "These are user-entered prospective workflow outcomes, not model accuracy.",
@@ -177,11 +385,29 @@ def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
             "Rates describe saved leads only and do not estimate seller intent "
             "or transaction probability."
         ),
+        (
+            "Fixed-horizon rates use immutable save time and first-recorded "
+            "milestone time; late backfills are not treated as on-time outcomes."
+        ),
+        (
+            "Operational funnel counts are lifetime milestones. Use the "
+            "maturity windows—not the raw funnel—to evaluate prospective rates."
+        ),
     ]
     if total < MINIMUM_COHORT_SIZE:
         warnings.append(
             f"At least {MINIMUM_COHORT_SIZE} saved leads are required before "
             "cohort rates are directional."
+        )
+    if not any_directional_window:
+        warnings.append(
+            f"At least {MINIMUM_RATE_DENOMINATOR} leads must complete an "
+            "observation window before any prospective rate is directional."
+        )
+    if len(followup_days) < total:
+        warnings.append(
+            f"{total - len(followup_days)} record(s) have a missing, invalid, "
+            "or future saved_at and are excluded from fixed-horizon rates."
         )
     if event_history < total:
         warnings.append(
@@ -195,8 +421,8 @@ def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
         )
 
     return {
-        "schema_version": "citylens/parcel-workflow-analytics@v1",
-        "generated_at": utcnow(),
+        "schema_version": "citylens/parcel-workflow-analytics@v2",
+        "generated_at": generated_at,
         "measurement_status": status,
         "measurement_label": label,
         "total_records": total,
@@ -204,6 +430,11 @@ def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
         "archived_records": total - active,
         "event_history_records": event_history,
         "rank_snapshot_records": rank_snapshots,
+        "valid_saved_at_records": len(followup_days),
+        "oldest_followup_days": followup_days[-1] if followup_days else None,
+        "median_followup_days": (
+            round(float(median(followup_days)), 1) if followup_days else None
+        ),
         "minimum_cohort_size": MINIMUM_COHORT_SIZE,
         "minimum_rate_denominator": MINIMUM_RATE_DENOMINATOR,
         "stage_counts": dict(Counter(str(item.get("stage") or "new") for item in items)),
@@ -241,6 +472,7 @@ def build_workflow_analytics(items: list[dict[str, Any]]) -> dict[str, Any]:
                 milestones["closed"], milestones["under_contract"]
             ),
         },
-        "cohorts": _cohort_rows(items),
+        "maturity_windows": maturity_windows,
+        "cohorts": _cohort_rows(items, as_of=generated_at),
         "warnings": warnings,
     }

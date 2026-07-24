@@ -72,6 +72,18 @@ jobs:
           print(f"- Feed generation: `{report.get('feed_generated_at', 'unknown')}`")
           print(f"- Verified at: `{report.get('verified_at', 'unknown')}`")
           print(f"- Result: `{'passed' if report.get('passed') else 'failed'}`")
+          source_sla = report.get("source_sla") or {}
+          print(
+              f"- Source SLAs: `{len(source_sla.get('sources') or {})} checked`, "
+              f"`{source_sla.get('warning_count', 0)} warning(s)`, "
+              f"`{source_sla.get('breach_count', 0)} breach(es)`"
+          )
+          warnings = report.get("warnings") or []
+          if warnings:
+              print()
+              print("### Source freshness warnings")
+              for warning in warnings:
+                  print(f"- {warning}")
           failures = report.get("failures") or []
           if failures:
               print()

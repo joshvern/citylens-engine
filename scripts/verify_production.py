@@ -58,6 +58,17 @@ PRIVATE_NULL_FIELDS = (
     "floodplain_1pct",
     "floodplain_data_as_of",
 )
+REQUIRED_SOURCE_SLAS = (
+    "property_facts",
+    "ownership",
+    "constraints",
+    "project_activity",
+    "land_use_activity",
+    "owner_portfolio",
+    "tax_lien_sale_history",
+    "current_violations",
+    "floodplain_screen",
+)
 
 
 @dataclass(frozen=True)
@@ -148,6 +159,129 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def evaluate_source_slas(
+    index: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    """Evaluate each decision-relevant source against its published SLA.
+
+    The publisher owns the SLA durations in ``data_sources``. The production
+    verifier independently recomputes age from ``retrieved_at`` so a stale
+    source cannot pass merely because its cached ``age_days`` or ``stale`` flag
+    is incorrect.
+    """
+
+    failures: list[str] = []
+    warnings: list[str] = []
+    sources = index.get("data_sources")
+    if not isinstance(sources, dict):
+        return (
+            ["index: data_sources is missing"],
+            warnings,
+            {
+                "passed": False,
+                "warning_count": 0,
+                "breach_count": len(REQUIRED_SOURCE_SLAS),
+                "sources": {},
+            },
+        )
+
+    source_report: dict[str, Any] = {}
+    for key in REQUIRED_SOURCE_SLAS:
+        raw = sources.get(key)
+        if not isinstance(raw, dict):
+            failures.append(f"index: source SLA {key} is missing")
+            source_report[key] = {"status": "missing"}
+            continue
+
+        retrieved_at = _parse_timestamp(raw.get("retrieved_at"))
+        max_age = raw.get("max_age_days")
+        if retrieved_at is None:
+            failures.append(
+                f"index: source SLA {key} retrieved_at is missing or invalid"
+            )
+        if not isinstance(max_age, (int, float)) or isinstance(max_age, bool) or max_age <= 0:
+            failures.append(
+                f"index: source SLA {key} max_age_days is missing or invalid"
+            )
+            max_age = None
+
+        age_days = (
+            max((now - retrieved_at).total_seconds(), 0.0) / 86400
+            if retrieved_at is not None
+            else None
+        )
+        warning_lead_days = (
+            min(7.0, max(2.0, float(max_age) * 0.2))
+            if max_age is not None
+            else None
+        )
+        remaining_days = (
+            float(max_age) - age_days
+            if max_age is not None and age_days is not None
+            else None
+        )
+
+        status = "current"
+        if retrieved_at is not None and retrieved_at > now:
+            status = "breached"
+            failures.append(
+                f"index: source SLA {key} retrieved_at is in the future"
+            )
+        elif (
+            raw.get("stale") is True
+            or (
+                age_days is not None
+                and max_age is not None
+                and age_days > float(max_age)
+            )
+        ):
+            status = "breached"
+            failures.append(
+                f"index: source SLA {key} is stale"
+                + (
+                    f" ({age_days:.1f} days old; limit {float(max_age):.1f})"
+                    if age_days is not None and max_age is not None
+                    else ""
+                )
+            )
+        elif (
+            remaining_days is not None
+            and warning_lead_days is not None
+            and remaining_days <= warning_lead_days
+        ):
+            status = "warning"
+            warnings.append(
+                f"index: source SLA {key} has {remaining_days:.1f} days remaining"
+            )
+
+        source_report[key] = {
+            "source": raw.get("source"),
+            "retrieved_at": raw.get("retrieved_at"),
+            "age_days": round(age_days, 2) if age_days is not None else None,
+            "max_age_days": float(max_age) if max_age is not None else None,
+            "remaining_days": (
+                round(remaining_days, 2) if remaining_days is not None else None
+            ),
+            "status": status,
+        }
+
+    return (
+        failures,
+        warnings,
+        {
+            "passed": not failures,
+            "warning_count": len(warnings),
+            "breach_count": sum(
+                row.get("status") in {"breached", "missing"}
+                for row in source_report.values()
+            ),
+            "sources": source_report,
+        },
+    )
+
+
 def validate_index(
     index: dict[str, Any],
     *,
@@ -165,6 +299,8 @@ def validate_index(
             failures,
         )
     _expect(index.get("stale") is False, "index: API marks the feed stale", failures)
+    source_failures, _, _ = evaluate_source_slas(index, now=now)
+    failures.extend(source_failures)
 
     boroughs = index.get("boroughs")
     _expect(isinstance(boroughs, list), "index: boroughs is not a list", failures)
@@ -523,12 +659,17 @@ def run_checks(
     index_result = _request(f"{api_base}/v1/parcel-intel/index", timeout=timeout)
     index = _json(index_result, "index", failures)
     timings["index"] = round(index_result.elapsed_seconds, 3)
+    verified_at = datetime.now(timezone.utc)
     failures.extend(
         validate_index(
             index,
             max_age_days=max_age_days,
-            now=datetime.now(timezone.utc),
+            now=verified_at,
         )
+    )
+    _, source_warnings, source_sla = evaluate_source_slas(
+        index,
+        now=verified_at,
     )
     generated_at = index.get("generated_at")
 
@@ -599,12 +740,14 @@ def run_checks(
 
     summary = {
         "schema_version": "citylens/production-verification@v1",
-        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_at": verified_at.isoformat(),
         "api_base": api_base,
         "web_base": web_base,
         "feed_generated_at": generated_at,
         "max_age_days": max_age_days,
-        "checks": 12,
+        "checks": 13,
+        "source_sla": source_sla,
+        "warnings": source_warnings,
         "timings_seconds": timings,
         "passed": not failures,
         "failures": failures,

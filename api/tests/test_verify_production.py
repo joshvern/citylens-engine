@@ -81,19 +81,30 @@ def _index() -> dict:
                 "source_sha256": "a" * 64,
                 "declared_blocked_bbl_count": 3108,
                 "source_blocked_bbl_count": 3108,
-                "blocking_project_count": 801,
-                "joined_blocking_project_count": 795,
-                "unjoined_blocking_project_count": 6,
+                "private_current_project_count": 801,
+                "non_parcel_applicable_project_count": 1,
+                "non_parcel_applicable_project_ids": ["2022Y0395"],
+                "blocking_project_count": 800,
+                "joined_blocking_project_count": 796,
+                "unjoined_blocking_project_count": 4,
                 "unjoined_blocking_project_ids": [
                     "2021K0396",
                     "2022R0129",
-                    "2022Y0395",
-                    "2025M0464",
                     "2026R0327",
                     "P2013X0306",
                 ],
                 "minimum_project_bbl_crosswalk_coverage": 0.99,
-                "project_bbl_crosswalk_coverage": 0.9925093632958801,
+                "project_bbl_crosswalk_coverage": 0.995,
+                "project_detail_source": (
+                    "https://zap-api-production.herokuapp.com/projects/"
+                    "{project_id}"
+                ),
+                "project_detail_retrieved_at": (
+                    "2026-07-24T08:52:20.198447+00:00"
+                ),
+                "project_detail_supplemental_relation_count": 1,
+                "project_detail_fetch_failure_count": 0,
+                "project_detail_fetch_failure_ids": [],
                 "candidate_blocked_bbl_count": 442,
                 "published_leakage_count": 0,
                 "passed": True,
@@ -227,6 +238,31 @@ def test_index_validator_rejects_incomplete_land_use_project_crosswalk() -> None
         in failures
     )
     assert "index: land-use project-to-BBL coverage is below 99%" in failures
+
+
+def test_index_validator_rejects_land_use_scope_or_detail_failures() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    reconciliation = bad["quality_gate"]["land_use_reconciliation"]
+    reconciliation["non_parcel_applicable_project_count"] = 2
+    reconciliation["project_detail_fetch_failure_count"] = 1
+    reconciliation["project_detail_fetch_failure_ids"] = ["2021K0396"]
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert (
+        "index: land-use reconciliation non-parcel project IDs are invalid"
+        in failures
+    )
+    assert (
+        "index: land-use reconciliation project scope counts disagree"
+        in failures
+    )
+    assert "index: land-use project-detail refresh has failures" in failures
+    assert (
+        "index: land-use project-detail failure IDs are not empty"
+        in failures
+    )
 
 
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:

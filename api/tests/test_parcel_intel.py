@@ -330,6 +330,7 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
                 acquisition_rank=i + 1,
                 citywide_rank=i * 2 + 1,
                 owner_name="BROOKLYN OWNER LLC",
+                recent_change=True,
                 owner_entity_type="llc",
                 owner_portfolio_id="brooklyn-owner",
                 owner_portfolio_lot_count=8,
@@ -344,6 +345,7 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
                 acquisition_rank=i + 1,
                 citywide_rank=i * 2 + 2,
                 owner_name="QUEENS OWNER LLC",
+                recent_change=True,
                 owner_entity_type="llc",
                 owner_portfolio_id="queens-owner",
                 owner_portfolio_lot_count=5,
@@ -370,6 +372,7 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         "queens",
     }
     assert all(row["owner_name"] is None for row in body["rows"])
+    assert all(row["recent_change"] is False for row in body["rows"])
     assert all(row["owner_entity_type"] is None for row in body["rows"])
     assert all(row["owner_portfolio_id"] is None for row in body["rows"])
     assert all(
@@ -395,6 +398,7 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
             acquisition_rank=i + 1,
             citywide_rank=i + 1,
             owner_name="ACME REALTY LLC",
+            recent_change=True,
             owner_entity_type="llc",
             owner_portfolio_id="acme-portfolio",
             owner_portfolio_lot_count=9,
@@ -414,6 +418,7 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert response.status_code == 200, response.text
     assert len(response.json()["rows"]) == 30
     assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert response.json()["rows"][0]["recent_change"] is True
     assert response.json()["rows"][0]["owner_entity_type"] == "llc"
     assert response.json()["rows"][0]["owner_portfolio_id"] == "acme-portfolio"
     assert response.json()["rows"][0]["owner_portfolio_lot_count"] == 9
@@ -436,6 +441,8 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
             "3020000001",
             acquisition_rank=1,
             owner_name="ACME REALTY LLC",
+            owner_name_source="acris",
+            owner_type="P",
             owner_entity_type="llc",
             owner_portfolio_id="acme-portfolio",
             owner_portfolio_match_method="exact_normalized_pluto_owner_name",
@@ -463,6 +470,8 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     public = client.get("/v1/parcel-intel/parcel/3020000001")
     assert public.status_code == 200, public.text
     assert public.json()["owner_name"] is None
+    assert public.json()["owner_name_source"] is None
+    assert public.json()["owner_type"] is None
     assert public.json()["owner_entity_type"] is None
     assert public.json()["owner_portfolio_id"] is None
     assert public.json()["owner_portfolio_match_method"] is None
@@ -493,6 +502,8 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
     private = client.get("/v1/parcel-intel/parcel/3020000001")
     assert private.status_code == 200, private.text
     assert private.json()["owner_name"] == "ACME REALTY LLC"
+    assert private.json()["owner_name_source"] == "acris"
+    assert private.json()["owner_type"] == "P"
     assert private.json()["owner_entity_type"] == "llc"
     assert private.json()["owner_portfolio_id"] == "acme-portfolio"
     assert private.json()["owner_portfolio_match_method"] == (
@@ -836,6 +847,8 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
             observed_imagery_year=2024,
             recent_change=True,
             owner_name="ACME REALTY LLC",
+            owner_name_source="acris",
+            owner_type="P",
             owner_entity_type="llc",
             owner_portfolio_id="acme-portfolio",
             owner_portfolio_match_method="exact_normalized_pluto_owner_name",
@@ -872,6 +885,8 @@ def test_anon_sweep_strips_premium_fields(monkeypatch) -> None:
     assert served["observed_imagery_year"] is None
     assert served["recent_change"] is False
     assert served["owner_name"] is None
+    assert served["owner_name_source"] is None
+    assert served["owner_type"] is None
     assert served["owner_entity_type"] is None
     assert served["owner_portfolio_id"] is None
     assert served["owner_portfolio_match_method"] is None

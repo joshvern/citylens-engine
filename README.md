@@ -184,6 +184,12 @@ Current pinned release tag:
   the nearest complex and access tier are unchanged. A removed lead is
   deliberately labeled for current-record verification rather than being
   called sold, built, or completed without authoritative evidence.
+- Authenticated users can persist the complete citywide explorer state through
+  `GET|PUT|DELETE /v1/parcel-intel/saved-searches`. The v2 saved-view contract
+  stores borough scope, search text, priority/opportunity filters, optional
+  owner-portfolio focus, and map overlay. Responses are private/no-store.
+  `alert_frequency` is intentionally limited to `off`; scheduled saved-search
+  delivery is not implemented and the API does not imply otherwise.
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse

@@ -110,6 +110,35 @@ def _index() -> dict:
                 "passed": True,
                 "failures": [],
             },
+            "ranking_tie_audit": {
+                "schema": "citylens-parcel-intel/ranking-tie-audit@v1",
+                "primary_field": "score_calibrated",
+                "tiebreaker_field": "score_raw",
+                "tiebreaker_scope": "equal_calibrated_probability_only",
+                "tiebreaker_is_public": False,
+                "deterministic_fallback": ["model_rank", "bbl"],
+                "boroughs": {
+                    slug: {
+                        "row_count": 1000,
+                        "tiebreaker_count": 1000,
+                        "tiebreaker_coverage": 1.0,
+                    }
+                    for slug in (
+                        "manhattan",
+                        "brooklyn",
+                        "queens",
+                        "bronx",
+                        "staten_island",
+                    )
+                },
+                "citywide": {
+                    "row_count": 5000,
+                    "tiebreaker_count": 5000,
+                    "tiebreaker_coverage": 1.0,
+                },
+                "passed": True,
+                "failures": [],
+            },
             "boroughs": {
                 slug: _quality_row()
                 for slug in (
@@ -131,6 +160,13 @@ def _index() -> dict:
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
             "prospective_2026_validated": False,
+            "ranking_policy": {
+                "primary_field": "score_calibrated",
+                "tiebreaker_field": "score_raw",
+                "tiebreaker_scope": "equal_calibrated_probability_only",
+                "tiebreaker_is_public": False,
+                "deterministic_fallback": ["model_rank", "bbl"],
+            },
         },
         "generation_diff": {
             "schema": "citylens-parcel-intel/generation-diff@v1",
@@ -263,6 +299,26 @@ def test_index_validator_rejects_land_use_scope_or_detail_failures() -> None:
         "index: land-use project-detail failure IDs are not empty"
         in failures
     )
+
+
+def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    audit = bad["quality_gate"]["ranking_tie_audit"]
+    audit["boroughs"]["queens"]["tiebreaker_count"] = 999
+    audit["boroughs"]["queens"]["tiebreaker_coverage"] = 0.999
+    audit["citywide"]["tiebreaker_count"] = 4999
+    audit["citywide"]["tiebreaker_coverage"] = 0.9998
+    bad["model_metadata"]["ranking_policy"]["tiebreaker_is_public"] = True
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert "index: queens ranking tie-break coverage is incomplete" in failures
+    assert (
+        "index: citywide ranking tie-break coverage is incomplete"
+        in failures
+    )
+    assert "index: model ranking policy is invalid" in failures
 
 
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:

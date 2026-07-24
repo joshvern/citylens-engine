@@ -545,18 +545,65 @@ def test_saved_search_crud(auth_override) -> None:
     created = client.put(
         "/v1/parcel-intel/saved-searches/brooklyn-vacant",
         json={
-            "name": "Brooklyn vacant sites",
-            "borough": "brooklyn",
-            "filters": {"landUseFilter": "vacant"},
-            "alert_frequency": "weekly",
+            "name": "  Citywide vacant sites  ",
+            "borough": "all",
+            "filters": {
+                "query": "  llc  ",
+                "priority": "high_or_better",
+                "opportunity": "vacant_site",
+                "overlay": "opportunity",
+            },
+            "alert_frequency": "off",
         },
     )
     assert created.status_code == 200, created.text
-    assert created.json()["alert_frequency"] == "weekly"
-    searches = client.get("/v1/parcel-intel/saved-searches").json()
-    assert searches[0]["name"] == "Brooklyn vacant sites"
+    assert created.headers["cache-control"] == "private, no-store"
+    assert created.json()["schema_version"] == "citylens/parcel-saved-view@v2"
+    assert created.json()["name"] == "Citywide vacant sites"
+    assert created.json()["filters"]["query"] == "llc"
+    assert created.json()["alert_frequency"] == "off"
+    listed = client.get("/v1/parcel-intel/saved-searches")
+    assert listed.headers["cache-control"] == "private, no-store"
+    assert listed.json()[0]["name"] == "Citywide vacant sites"
     removed = client.delete("/v1/parcel-intel/saved-searches/brooklyn-vacant")
     assert removed.status_code == 204
+    assert removed.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "name": "Imaginary weekly alert",
+            "borough": "all",
+            "alert_frequency": "weekly",
+        },
+        {
+            "name": "Invalid owner focus",
+            "borough": "all",
+            "filters": {
+                "opportunity": "vacant_site",
+                "owner_portfolio_id": "owner-1",
+            },
+        },
+        {
+            "name": "Invalid opportunity",
+            "borough": "all",
+            "filters": {"opportunity": "seller_intent"},
+        },
+    ],
+)
+def test_saved_search_rejects_unrestorable_or_unimplemented_state(
+    auth_override, payload: dict
+) -> None:
+    auth_override(app_user_id="search-user")
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: FakeWorkflowStore()
+    client = TestClient(app)
+    response = client.put(
+        "/v1/parcel-intel/saved-searches/invalid-view",
+        json=payload,
+    )
+    assert response.status_code == 422
 
 
 def test_workflow_rejects_bad_bbl(auth_override) -> None:
@@ -631,7 +678,7 @@ def test_workflow_snapshot_is_server_owned_immutable_and_typed(
         json={
             "name": "Invalid",
             "borough": "brooklyn",
-            "filters": {"landUseFilter": "not-a-real-filter"},
+            "filters": {"opportunity": "not-a-real-filter"},
         },
     )
     assert bad_search.status_code == 422

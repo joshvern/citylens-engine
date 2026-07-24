@@ -102,6 +102,10 @@ Firestore:
 - `users/{app_user_id}/parcel_workflow/{bbl}`: canonical user-owned acquisition
   workflow state; reporting reads only aggregate record/user counts and archive
   state
+- `users/{app_user_id}/parcel_saved_searches/{search_id}`: private
+  `citylens/parcel-saved-view@v2` explorer state. It restores the citywide
+  borough/filter/search/overlay context and is never shared-cacheable. Saved
+  views are persistence only; no scheduled-alert delivery is claimed.
 
 GCS:
 - `gs://<CITYLENS_BUCKET>/runs/<run_id>/<artifact_filename>`

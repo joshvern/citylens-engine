@@ -313,9 +313,11 @@ def delete_workflow(
 
 @router.get("/parcel-intel/saved-searches", response_model=list[ParcelSavedSearch])
 def list_saved_searches(
+    response: Response,
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
 ) -> list[dict]:
+    response.headers["Cache-Control"] = "private, no-store"
     return store.list_parcel_saved_searches(app_user_id=auth.app_user_id)
 
 
@@ -323,15 +325,20 @@ def list_saved_searches(
 def upsert_saved_search(
     search_id: str,
     body: ParcelSavedSearchUpdate,
+    response: Response,
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
 ) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", search_id):
         raise HTTPException(status_code=422, detail="Invalid search id")
+    response.headers["Cache-Control"] = "private, no-store"
     return store.upsert_parcel_saved_search(
         app_user_id=auth.app_user_id,
         search_id=search_id,
-        payload=body.model_dump(),
+        payload={
+            **body.model_dump(),
+            "schema_version": "citylens/parcel-saved-view@v2",
+        },
     )
 
 
@@ -340,6 +347,7 @@ def upsert_saved_search(
 )
 def delete_saved_search(
     search_id: str,
+    response: Response,
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
 ) -> Response:
@@ -347,4 +355,6 @@ def delete_saved_search(
         app_user_id=auth.app_user_id, search_id=search_id
     ):
         raise HTTPException(status_code=404, detail="Not found")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    response.headers["Cache-Control"] = "private, no-store"
+    return response

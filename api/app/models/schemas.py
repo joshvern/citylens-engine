@@ -941,51 +941,70 @@ class ParcelWorkflowAlerts(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class ParcelSavedSearchUpdate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
-    filters: "ParcelSavedSearchFilters" = Field(
-        default_factory=lambda: ParcelSavedSearchFilters()
-    )
-    alert_frequency: Literal["off", "daily", "weekly"] = "weekly"
-
-
 class ParcelSavedSearchFilters(BaseModel):
-    landUseFilter: Literal[
-        "all", "residential", "commercial", "industrial", "vacant"
-    ] = "all"
-    priorityFilter: Literal[
-        "all", "highest", "high_or_better", "medium_or_better"
-    ] = "all"
-    opportunityFilter: Literal[
+    """The complete, restorable state of the citywide parcel explorer."""
+
+    query: str = Field(default="", max_length=160)
+    priority: Literal["all", "highest", "high_or_better"] = "all"
+    opportunity: Literal[
         "all",
-        "ground_up",
+        "uncommitted",
+        "assemblage",
+        "tax_lien",
+        "violations",
+        "floodplain",
+        "environmental_review",
+        "mih",
+        "transit_800m",
+        "portfolio",
         "vacant_site",
         "ground_up_candidate",
         "conversion_or_overbuilt",
         "active_project",
-    ] = "ground_up"
-    hideLandmarked: bool = False
-    recentSaleOnly: bool = False
-    recentChangeOnly: bool = False
-    pipelineOnly: bool = False
-    zoningFamilies: list[Literal["R", "C", "M", "Other"]] = Field(
-        default_factory=lambda: ["R", "C", "M", "Other"], max_length=4
+    ] = "uncommitted"
+    owner_portfolio_id: Optional[str] = Field(default=None, max_length=128)
+    overlay: Literal["priority", "opportunity", "borough"] = "borough"
+
+    @model_validator(mode="after")
+    def normalize_and_validate(self) -> ParcelSavedSearchFilters:
+        self.query = self.query.strip()
+        if self.opportunity != "portfolio" and self.owner_portfolio_id is not None:
+            raise PydanticCustomError(
+                "invalid_saved_view_owner_focus",
+                "owner_portfolio_id requires opportunity='portfolio'",
+            )
+        if self.owner_portfolio_id is not None:
+            self.owner_portfolio_id = self.owner_portfolio_id.strip()
+            if not self.owner_portfolio_id:
+                self.owner_portfolio_id = None
+        return self
+
+
+class ParcelSavedSearchUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    borough: Literal[
+        "all", "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    filters: ParcelSavedSearchFilters = Field(
+        default_factory=ParcelSavedSearchFilters
     )
-    sortKey: Literal[
-        "score_calibrated",
-        "lot_area_sqft",
-        "last_sale_price",
-        "years_held",
-        "year_built",
-        "num_floors",
-        "allowed_far",
-        "far_utilization_pct",
-    ] = "score_calibrated"
-    direction: Literal["asc", "desc"] = "desc"
+    # Saved views are persistence only. CityLens does not yet deliver scheduled
+    # saved-search alerts, so accepting daily/weekly would be a false promise.
+    alert_frequency: Literal["off"] = "off"
+
+    @model_validator(mode="after")
+    def normalize_name(self) -> ParcelSavedSearchUpdate:
+        self.name = self.name.strip()
+        if not self.name:
+            raise PydanticCustomError(
+                "blank_saved_view_name",
+                "name must not be blank",
+            )
+        return self
 
 
 class ParcelSavedSearch(ParcelSavedSearchUpdate):
+    schema_version: Literal["citylens/parcel-saved-view@v2"]
     search_id: str
     created_at: datetime
     updated_at: datetime

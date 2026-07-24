@@ -52,12 +52,18 @@ def test_worker_image_is_reproducible_and_non_root() -> None:
 
 def test_docker_context_excludes_local_environments_and_secrets() -> None:
     dockerignore = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    gcloudignore = (REPO_ROOT / ".gcloudignore").read_text(
+        encoding="utf-8"
+    ).splitlines()
 
     assert ".venv" in dockerignore
     assert ".env" in dockerignore
     assert ".env.*" in dockerignore
     assert ".git" in dockerignore
     assert "deploy/*.sh" in dockerignore
+    assert "!.dockerignore" in gcloudignore
+    assert "!pyproject.toml" in gcloudignore
+    assert "!uv.lock" in gcloudignore
 
 
 def test_versioned_deploy_scripts_keep_worker_runtime_contract() -> None:

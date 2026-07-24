@@ -97,7 +97,13 @@ Current pinned release tag:
   saved/contacted/qualified/offered/contracted/closed denominators and cohort
   coverage; it is prospective workflow evidence, not model accuracy. Per-lead
   audit events are available from
-  `/v1/parcel-intel/workflow/{bbl}/events`.
+  `/v1/parcel-intel/workflow/{bbl}/events`. The authenticated
+  `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
+  snapshots with the current atomic feed and reports owner, newer-sale,
+  zoning, opportunity, rank/tier, lien, violation, flood, imagery, exact-name
+  portfolio, and feed-removal changes. A removed lead is deliberately labeled
+  for current-record verification rather than being called sold, built, or
+  completed without authoritative evidence.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
   plus one stable manifest pointer. The API validates the pointer path,

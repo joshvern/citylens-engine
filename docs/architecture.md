@@ -40,6 +40,11 @@ owns the browser UI.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
     reports parcel-intel presence/freshness flags.
+  - Authenticated parcel workflow alerts compare each watched lead's saved
+    baseline with the current generation. The contract is computed on request,
+    user scoped, and never exposed anonymously. It reports decision-relevant
+    differences without changing model scores or guessing why a parcel left
+    the eligible feed.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).

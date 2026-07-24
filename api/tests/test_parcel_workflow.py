@@ -246,6 +246,10 @@ def test_workflow_snapshot_and_saved_filters_are_typed(auth_override) -> None:
         "latest_nb_status": None,
         "redev_status": None,
         "observed_imagery_year": None,
+        "tax_lien_sale_year": None,
+        "critical_violation_count": None,
+        "floodplain_1pct": None,
+        "recent_change": None,
     }
 
     bad_search = client.put(

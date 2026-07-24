@@ -160,6 +160,19 @@ Current pinned release tag:
   the nearest complex and access tier are unchanged. A removed lead is
   deliberately labeled for current-record verification rather than being
   called sold, built, or completed without authoritative evidence.
+- Authenticated Parcel Intelligence clients may submit the strict
+  `citylens/parcel-product-event@v1` contract to
+  `POST /v1/parcel-intel/product-events`. The endpoint accepts only a small
+  allowlist of coarse event/source pairs and rejects parcel IDs, addresses,
+  owners, URLs, notes, tags, assignees, contacts, and arbitrary properties.
+  Firestore stores one aggregate counter document per user/day under
+  `product_usage_days`; it does not store event-level records. Counters are
+  capped at 1,000 per user/day, rate-limited at the API, and expire after 90
+  days through the `expires_at` TTL field. Run
+  `scripts/report_product_adoption.py` for an aggregate-only 30-day operator
+  report. Its open-to-save ratio is directional product-adoption evidence,
+  not model accuracy, unique-parcel conversion, seller intent, or a substitute
+  for canonical workflow records.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
   plus one stable manifest pointer. The API validates the pointer path,
@@ -224,6 +237,23 @@ remain a limited preview and cannot reveal protected lien, violation, flood,
 same verifier every six hours and on demand, publishes a job summary, and
 retains the JSON report for 30 days. A failure is an incident signal; do not
 weaken a contract assertion merely to make the scheduled check green.
+
+## Product adoption report
+
+After deploying the product-event endpoint and enabling Firestore TTL, operators
+can inspect aggregate adoption without exporting user or parcel identifiers:
+
+```bash
+./.venv/bin/python scripts/report_product_adoption.py \
+  --project citylens-001 \
+  --days 30 \
+  --output product-adoption-report.json
+```
+
+The report contains only window totals, event/source counts, active-user and
+active-user-day counts, and a directional parcel-open to workflow-create ratio.
+Do not publish raw `product_usage_days` documents or use this report as a model
+accuracy claim.
 
 ### VS Code folder expectations
 

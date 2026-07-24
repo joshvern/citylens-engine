@@ -113,6 +113,8 @@ def _request(
     timeout: float,
     accept_gzip: bool = False,
     attempts: int = 3,
+    method: str = "GET",
+    json_body: dict[str, Any] | None = None,
 ) -> HttpResult:
     headers = {
         "Accept": "application/json",
@@ -120,11 +122,18 @@ def _request(
     }
     if accept_gzip:
         headers["Accept-Encoding"] = "gzip"
+    data = None
+    if json_body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(json_body, separators=(",", ":")).encode("utf-8")
     last_error: Exception | None = None
     for attempt in range(attempts):
         started = time.monotonic()
         try:
-            with urlopen(Request(url, headers=headers), timeout=timeout) as response:
+            with urlopen(
+                Request(url, headers=headers, data=data, method=method),
+                timeout=timeout,
+            ) as response:
                 return HttpResult(
                     status=int(response.status),
                     headers={key.lower(): value for key, value in response.headers.items()},
@@ -1395,6 +1404,24 @@ def run_checks(
         result = _request(f"{api_base}{path}", timeout=timeout)
         timings[label.replace(" ", "_")] = round(result.elapsed_seconds, 3)
         _expect(result.status == 401, f"{label}: anonymous request returned {result.status}", failures)
+
+    product_event_result = _request(
+        f"{api_base}/v1/parcel-intel/product-events",
+        timeout=timeout,
+        method="POST",
+        json_body={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "parcel_opened",
+            "source": "direct",
+        },
+    )
+    timings["product_events"] = round(product_event_result.elapsed_seconds, 3)
+    _expect(
+        product_event_result.status == 401,
+        "product events: anonymous request returned "
+        f"{product_event_result.status}",
+        failures,
+    )
 
     methodology_result = _request(
         f"{api_base}/v1/parcel-intel/workflow/analytics/methodology",

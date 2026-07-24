@@ -42,6 +42,8 @@ USER_API_KEY_PREFIX = "clk_live_"
 # Number of plaintext bytes; encoded as URL-safe base64 (~43 chars after
 # stripping padding). Total visible key length ~ len(prefix) + 43 = 52.
 USER_API_KEY_BYTES = 32
+PRODUCT_EVENT_RETENTION_DAYS = 90
+PRODUCT_EVENT_DAILY_LIMIT = 1_000
 
 
 def _hash_api_key(plaintext: str) -> str:
@@ -58,6 +60,41 @@ class MonthlyQuotaExceeded(Exception):
         self.runs_used = runs_used
         self.monthly_run_limit = monthly_run_limit
         self.month_key = month_key
+
+
+def _product_usage_day_payload(
+    *,
+    existing: dict[str, Any],
+    event: str,
+    source: str,
+    occurred_at: datetime,
+) -> dict[str, Any] | None:
+    """Build an aggregate-only, bounded product-usage day document."""
+
+    total = int(existing.get("total_events") or 0)
+    if total >= PRODUCT_EVENT_DAILY_LIMIT:
+        return None
+    events = {
+        str(key): int(value or 0)
+        for key, value in (existing.get("events") or {}).items()
+    }
+    sources = {
+        str(key): int(value or 0)
+        for key, value in (existing.get("sources") or {}).items()
+    }
+    events[event] = events.get(event, 0) + 1
+    source_key = f"{event}:{source}"
+    sources[source_key] = sources.get(source_key, 0) + 1
+    return {
+        "schema_version": "citylens/parcel-product-usage-day@v1",
+        "day": occurred_at.date().isoformat(),
+        "events": events,
+        "sources": sources,
+        "total_events": total + 1,
+        "created_at": existing.get("created_at") or occurred_at,
+        "updated_at": occurred_at,
+        "expires_at": occurred_at + timedelta(days=PRODUCT_EVENT_RETENTION_DAYS),
+    }
 
 
 class FirestoreStore:
@@ -626,6 +663,43 @@ class FirestoreStore:
                 .stream()
             )
             return [snap.to_dict() or {} for snap in docs]
+
+        return retry_transient(_op)
+
+    def record_parcel_product_event(
+        self,
+        *,
+        app_user_id: str,
+        event: str,
+        source: str,
+        occurred_at: datetime | None = None,
+    ) -> bool:
+        now = occurred_at or utcnow()
+        ref = (
+            self.client.collection(self.users_collection)
+            .document(app_user_id)
+            .collection("product_usage_days")
+            .document(now.date().isoformat())
+        )
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> bool:
+            snap = ref.get(transaction=transaction)
+            existing = (snap.to_dict() or {}) if snap.exists else {}
+            payload = _product_usage_day_payload(
+                existing=existing,
+                event=event,
+                source=source,
+                occurred_at=now,
+            )
+            if payload is None:
+                return False
+            transaction.set(ref, payload)
+            return True
+
+        def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
 
         return retry_transient(_op)
 

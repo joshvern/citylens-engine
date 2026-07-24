@@ -349,6 +349,37 @@ Firestore “ready check” (avoids heredoc pitfalls):
 ./.venv/bin/python -c 'from google.cloud import firestore; c=firestore.Client(project="<PROJECT_ID>"); print("ok", c.project)'
 ```
 
+Enable the 90-day retention boundary for aggregate Parcel Intelligence product
+usage counters. Firestore TTL is a collection-group policy, so this applies to
+every nested `users/{user_id}/product_usage_days/{day}` document:
+
+```bash
+gcloud firestore fields ttls update expires_at \
+  --collection-group=product_usage_days \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --enable-ttl
+```
+
+Verify the policy:
+
+```bash
+gcloud firestore fields ttls describe expires_at \
+  --collection-group=product_usage_days \
+  --database='(default)' \
+  --project="<PROJECT_ID>"
+```
+
+The API writes only aggregate daily event/source counts to this collection.
+Do not add BBLs, addresses, owners, URLs, workflow text, or event-level rows.
+Generate the aggregate operator report with:
+
+```bash
+./.venv/bin/python scripts/report_product_adoption.py \
+  --project "<PROJECT_ID>" \
+  --days 30
+```
+
 Example for your project:
 
 ```bash

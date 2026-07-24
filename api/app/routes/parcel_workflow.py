@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from ..models.schemas import (
     ParcelIntelRow,
+    ParcelProductEventCreate,
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
     ParcelWorkflowActions,
@@ -32,6 +33,7 @@ from ..services.parcel_workflow_analytics import (
     build_workflow_analytics,
     workflow_analytics_methodology,
 )
+from ..services.rate_limit import enforce_token_bucket
 from ..services.settings import Settings, get_settings
 from .parcel_intel import (
     ParcelIntelRegistry,
@@ -99,6 +101,28 @@ def workflow_actions(
 ) -> dict:
     items = store.list_parcel_workflow(app_user_id=auth.app_user_id)
     return build_workflow_actions(items)
+
+
+@router.post("/parcel-intel/product-events", status_code=status.HTTP_204_NO_CONTENT)
+def record_product_event(
+    body: ParcelProductEventCreate,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> Response:
+    enforce_token_bucket(
+        key=f"parcel-product-event:{auth.app_user_id}",
+        capacity=30,
+        refill_per_second=0.5,
+    )
+    store.record_parcel_product_event(
+        app_user_id=auth.app_user_id,
+        event=body.event,
+        source=body.source,
+    )
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 def _canonical_workflow_snapshot(

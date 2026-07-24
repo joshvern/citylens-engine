@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import parcel_workflow
-from app.services.firestore_store import _workflow_effective_payload
+from app.services.firestore_store import (
+    PRODUCT_EVENT_DAILY_LIMIT,
+    _product_usage_day_payload,
+    _workflow_effective_payload,
+)
 from app.services.parcel_workflow_actions import workflow_reminder_fingerprint
 
 
@@ -15,6 +19,7 @@ class FakeWorkflowStore:
     def __init__(self) -> None:
         self.items: dict[str, dict] = {}
         self.events: dict[str, list[dict]] = {}
+        self.product_events: list[dict] = []
         self.searches: dict[str, dict] = {}
 
     def list_parcel_workflow(
@@ -97,6 +102,22 @@ class FakeWorkflowStore:
         self, *, app_user_id: str, bbl: str
     ) -> list[dict]:
         return self.events.get(bbl, [])
+
+    def record_parcel_product_event(
+        self,
+        *,
+        app_user_id: str,
+        event: str,
+        source: str,
+    ) -> bool:
+        self.product_events.append(
+            {
+                "app_user_id": app_user_id,
+                "event": event,
+                "source": source,
+            }
+        )
+        return True
 
     def list_parcel_saved_searches(self, *, app_user_id: str) -> list[dict]:
         return list(self.searches.values())
@@ -212,6 +233,85 @@ def test_workflow_crud(auth_override) -> None:
     assert removed.status_code == 204
     assert client.get("/v1/parcel-intel/workflow").json() == []
     assert client.get("/v1/parcel-intel/workflow/3020960069").json() is None
+
+
+def test_product_event_contract_is_value_minimized(auth_override) -> None:
+    auth_override(app_user_id="user-adoption")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "parcel_opened",
+            "source": "ranking",
+        },
+    )
+    assert response.status_code == 204
+    assert response.headers["cache-control"] == "private, no-store"
+    assert store.product_events == [
+        {
+            "app_user_id": "user-adoption",
+            "event": "parcel_opened",
+            "source": "ranking",
+        }
+    ]
+
+    mismatched = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "workflow_created",
+            "source": "map",
+        },
+    )
+    assert mismatched.status_code == 422
+    identifying = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "parcel_opened",
+            "source": "map",
+            "bbl": "3020960069",
+        },
+    )
+    assert identifying.status_code == 422
+
+
+def test_product_usage_day_is_aggregate_only_and_bounded() -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    payload = _product_usage_day_payload(
+        existing={},
+        event="parcel_opened",
+        source="map",
+        occurred_at=now,
+    )
+    assert payload is not None
+    assert payload["events"] == {"parcel_opened": 1}
+    assert payload["sources"] == {"parcel_opened:map": 1}
+    assert payload["total_events"] == 1
+    assert payload["expires_at"] == now + timedelta(days=90)
+    assert not {
+        "bbl",
+        "address",
+        "owner",
+        "notes",
+        "tags",
+        "assignee",
+        "url",
+    }.intersection(payload)
+
+    assert (
+        _product_usage_day_payload(
+            existing={"total_events": PRODUCT_EVENT_DAILY_LIMIT},
+            event="parcel_opened",
+            source="map",
+            occurred_at=now,
+        )
+        is None
+    )
 
 
 def test_store_payload_preserves_existing_exposure_snapshot() -> None:

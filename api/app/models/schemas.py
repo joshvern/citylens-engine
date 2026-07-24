@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 
 class ArtifactResponse(BaseModel):
@@ -465,6 +466,50 @@ ParcelWorkflowOutcome = Literal[
     "rejected",
     "lost",
 ]
+
+ParcelProductEventName = Literal[
+    "parcel_opened",
+    "workflow_created",
+    "workflow_updated",
+    "workflow_archived",
+]
+
+ParcelProductEventSource = Literal[
+    "direct",
+    "map",
+    "ranking",
+    "action_queue",
+    "watchlist",
+    "header",
+    "workflow",
+]
+
+_PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
+    "parcel_opened": {"direct", "map", "ranking", "action_queue", "watchlist"},
+    "workflow_created": {"header", "workflow"},
+    "workflow_updated": {"workflow"},
+    "workflow_archived": {"workflow"},
+}
+
+
+class ParcelProductEventCreate(BaseModel):
+    """Value-minimized authenticated product-adoption event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["citylens/parcel-product-event@v1"]
+    event: ParcelProductEventName
+    source: ParcelProductEventSource
+
+    @model_validator(mode="after")
+    def validate_source_for_event(self) -> "ParcelProductEventCreate":
+        if self.source not in _PARCEL_PRODUCT_EVENT_SOURCES[self.event]:
+            raise PydanticCustomError(
+                "invalid_product_event_source",
+                "source {source!r} is invalid for event {event!r}",
+                {"source": self.source, "event": self.event},
+            )
+        return self
 
 
 class ParcelWorkflowUpdate(BaseModel):

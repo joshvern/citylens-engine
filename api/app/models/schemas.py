@@ -85,6 +85,53 @@ class TopFeature(BaseModel):
     contribution_pct: float
 
 
+class ParcelDecisionAuditValidation(BaseModel):
+    target: str
+    evaluation_scope: str
+    precision_at_100: Optional[float] = Field(default=None, ge=0, le=1)
+    precision_at_1000: Optional[float] = Field(default=None, ge=0, le=1)
+    base_rate: Optional[float] = Field(default=None, ge=0, le=1)
+    prospective_validated: bool = False
+    disclaimer: str
+
+
+class ParcelDecisionAuditCheck(BaseModel):
+    key: str
+    layer: Literal[
+        "model_signal",
+        "eligibility_gate",
+        "current_diligence",
+        "source_freshness",
+    ]
+    label: str
+    status: Literal[
+        "verified",
+        "review",
+        "excluded",
+        "unavailable",
+        "informational",
+    ]
+    summary: str
+    source: str
+    as_of: Optional[str] = None
+    affects_model_rank: bool = False
+    affects_acquisition_eligibility: bool = False
+
+
+class ParcelDecisionAudit(BaseModel):
+    schema_version: Literal["citylens/parcel-decision-audit@v1"]
+    overall_status: Literal[
+        "screened",
+        "screened_with_flags",
+        "excluded",
+        "incomplete",
+    ]
+    overall_label: str
+    validation: ParcelDecisionAuditValidation
+    checks: list[ParcelDecisionAuditCheck] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class ParcelIntelRow(BaseModel):
     bbl: str
     address: Optional[str] = None
@@ -244,6 +291,10 @@ class ParcelIntelRow(BaseModel):
     owner_portfolio_total_lot_area_sqft: Optional[float] = None
     owner_portfolio_candidate_count: Optional[int] = None
     owner_portfolio_data_as_of: Optional[str] = None
+
+
+class ParcelIntelParcelResponse(ParcelIntelRow):
+    decision_audit: ParcelDecisionAudit
 
 
 class ParcelIntelMapRow(BaseModel):

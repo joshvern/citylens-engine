@@ -318,7 +318,10 @@ model-explanation fields while exercising the API's full generation checksum
 and row-schema validation for every borough. It also requires the immutable
 `generation_diff` release report, its 142-column inference drift report, and
 the 5,000-row score replay to pass; any failed thresholds must have an explicit
-reviewed override reason recorded by the publisher. The repository workflow
+reviewed override reason recorded by the publisher. It opens one public parcel
+detail and requires the v1 decision audit, exact accepted-model validation
+metrics, unambiguous rank/eligibility/diligence roles, and redacted
+ownership/diligence evidence. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours and stores
 the machine-readable report. Investigate scheduled failures before the feed
 crosses the API's 45-day stale threshold.

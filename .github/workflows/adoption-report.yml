@@ -76,6 +76,7 @@ jobs:
           inventory = report["workflow_inventory"]
           saved_views = report["saved_view_inventory"]
           reuse = report["saved_view_reuse"]
+          pilot = report["pilot_intake"]
           icon = "✅" if gate["status"] == "ready" else "🟡"
           print(f"## {icon} CityLens adoption evidence")
           print()
@@ -97,6 +98,11 @@ jobs:
               f"- Saved-view applies: `{reuse['applied']}` across "
               f"`{reuse['apply_users']}` user(s) "
               f"(`{reuse['evidence_gate']['status']}`)"
+          )
+          print(
+              f"- Pilot requests: `{pilot['records']}` total, "
+              f"`{pilot['recent_requests']}` in this window, "
+              f"`{pilot['new_requests_waiting']}` waiting for review"
           )
           print()
           print(gate["claim"])
@@ -120,6 +126,7 @@ jobs:
           )
           gate = report["activation_evidence_gate"]
           reuse_gate = report["saved_view_reuse"]["evidence_gate"]
+          pilot = report["pilot_intake"]
           if gate["status"] != "ready":
               print(
                   "::warning title=Activation evidence is collecting::"
@@ -131,6 +138,11 @@ jobs:
                   "::warning title=Saved-view reuse evidence is collecting::"
                   f"{reuse_gate['applies_remaining']} apply event(s) and "
                   f"{reuse_gate['users_remaining']} user(s) remain."
+              )
+          if pilot["new_requests_waiting"]:
+              print(
+                  "::warning title=Pilot requests are waiting::"
+                  f"{pilot['new_requests_waiting']} request(s) need review."
               )
           PY
 

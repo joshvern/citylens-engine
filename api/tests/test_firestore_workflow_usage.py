@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.services import firestore_store
@@ -236,3 +236,63 @@ def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
         search_id="private-search-id",
     )
     assert client.documents[usage_path]["events"]["saved_view_deleted"] == 1
+
+
+def test_pilot_request_storage_is_idempotent_and_expires(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 20, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    request_id = "pr_0123456789abcdef0123456789abcdef"
+    payload = {
+        "schema_version": "citylens/pilot-request@v1",
+        "plan": "acquisitions",
+        "name": "Jordan Lee",
+        "work_email": "jordan@example.com",
+        "company": "Example Development",
+        "role": "Acquisitions director",
+        "team_size": "2-5",
+        "target_boroughs": ["brooklyn"],
+        "workflow_summary": "We need a shared development-site workflow.",
+        "consent": True,
+    }
+
+    created = store.create_pilot_request(
+        request_id=request_id,
+        payload=payload,
+    )
+    assert created["status"] == "new"
+    assert created["expires_at"] == now + timedelta(days=365)
+
+    retried = store.create_pilot_request(
+        request_id=request_id,
+        payload={**payload, "company": "Must not overwrite"},
+    )
+    assert retried == created
+    path = ("pilot_requests", request_id)
+    assert client.documents[path]["company"] == "Example Development"
+
+    contacted = store.update_pilot_request_status(
+        request_id=request_id,
+        status="contacted",
+        admin_user_id="private-admin-id",
+    )
+    assert contacted is not None
+    assert contacted["status"] == "contacted"
+    assert contacted["status_updated_by"] == "private-admin-id"
+    assert contacted["expires_at"] == now + timedelta(days=365)
+
+    unchanged = store.update_pilot_request_status(
+        request_id=request_id,
+        status="contacted",
+        admin_user_id="another-admin",
+    )
+    assert unchanged == contacted
+    assert unchanged["status_updated_by"] == "private-admin-id"

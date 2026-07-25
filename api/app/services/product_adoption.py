@@ -4,6 +4,11 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
+PILOT_REQUEST_STATUS_VALUES = frozenset(
+    {"new", "contacted", "qualified", "declined", "converted", "spam"}
+)
+PILOT_PLAN_VALUES = frozenset({"acquisitions", "concierge"})
+
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -45,6 +50,7 @@ def build_product_adoption_report(
     *,
     workflow_rows: Iterable[dict[str, Any]] = (),
     saved_view_rows: Iterable[dict[str, Any]] = (),
+    pilot_request_rows: Iterable[dict[str, Any]] = (),
     as_of: datetime | None = None,
     days: int = 30,
 ) -> dict[str, Any]:
@@ -129,6 +135,27 @@ def build_product_adoption_report(
         saved_view_users.add(user_id)
         saved_view_records += 1
 
+    pilot_statuses: Counter[str] = Counter()
+    pilot_plans: Counter[str] = Counter()
+    recent_pilot_requests = 0
+    rejected_pilot_rows = 0
+    for row in pilot_request_rows:
+        request_status = row.get("status")
+        plan = row.get("plan")
+        created_at = row.get("created_at")
+        if (
+            request_status not in PILOT_REQUEST_STATUS_VALUES
+            or plan not in PILOT_PLAN_VALUES
+            or not isinstance(created_at, datetime)
+        ):
+            rejected_pilot_rows += 1
+            continue
+        pilot_statuses[str(request_status)] += 1
+        pilot_plans[str(plan)] += 1
+        created_day = _as_utc(created_at).date()
+        if window_start <= created_day <= window_end:
+            recent_pilot_requests += 1
+
     minimum_workflow_records = 30
     minimum_workflow_users = 3
     activation_ready = (
@@ -167,9 +194,13 @@ def build_product_adoption_report(
             f"{saved_view_applies}/{minimum_saved_view_applies} applies across "
             f"{len(saved_view_apply_users)}/{minimum_saved_view_apply_users} users."
         )
+    if pilot_statuses.get("new", 0):
+        warnings.append(
+            f"{pilot_statuses['new']} pilot request(s) are waiting for review."
+        )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v3",
+        "schema_version": "citylens/product-adoption-report@v4",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -226,6 +257,19 @@ def build_product_adoption_report(
                     "users, or model outcomes."
                 ),
             },
+        },
+        "pilot_intake": {
+            "records": sum(pilot_statuses.values()),
+            "recent_requests": recent_pilot_requests,
+            "status_counts": dict(sorted(pilot_statuses.items())),
+            "plan_counts": dict(sorted(pilot_plans.items())),
+            "new_requests_waiting": pilot_statuses.get("new", 0),
+            "excluded_or_invalid_rows": rejected_pilot_rows,
+            "privacy_scope": (
+                "Aggregate counts only; excludes names, emails, companies, "
+                "roles, boroughs, workflow summaries, request IDs, and "
+                "network metadata."
+            ),
         },
         "activation_evidence_gate": {
             "status": "ready" if activation_ready else "collecting",

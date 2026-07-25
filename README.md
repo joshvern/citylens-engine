@@ -193,13 +193,14 @@ Current pinned release tag:
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
-  parcel-open sources and rejects workflow lifecycle claims, parcel IDs,
-  addresses, owners, URLs, notes, tags, assignees, contacts, and arbitrary
-  properties. Workflow create, update, restore, and archive counters are
-  instead derived by the API inside the same Firestore transaction as the
-  canonical workflow mutation. Effective no-op retries do not add events or
-  counters. Firestore stores one aggregate counter document per user/day under
-  `product_usage_days`; it does not store event-level product telemetry.
+  parcel-open and saved-view-apply sources and rejects workflow lifecycle
+  claims, parcel IDs, addresses, owners, URLs, notes, tags, assignees,
+  contacts, and arbitrary properties. Workflow and saved-view lifecycle
+  counters are instead derived by the API inside the same Firestore
+  transaction as the canonical mutation. Effective no-op retries do not add
+  events or counters. Firestore stores one aggregate counter document per
+  user/day under `product_usage_days`; it does not store event-level product
+  telemetry.
   Counters are capped at 1,000 per user/day, client parcel-open events are
   rate-limited at the API, and aggregate documents expire after 90 days
   through the `expires_at` TTL field. Run
@@ -211,6 +212,16 @@ Current pinned release tag:
   authoritative workflow creates; neither the ratio nor the gate is model
   accuracy, unique-parcel conversion, lead quality, seller intent, or a
   substitute for canonical workflow records.
+- Public design-partner intake uses
+  `POST /v1/pilot-requests` with the bounded
+  `citylens/pilot-request@v1` contract and an opaque `Idempotency-Key`.
+  Requests require explicit consent, are honeypot-filtered and per-IP
+  throttled, store no IP address or user agent, and expire after 365 days.
+  `GET /v1/pilot-requests` and
+  `PATCH /v1/pilot-requests/{request_id}` are admin-only, private/no-store
+  queue operations. Status is controlled (`new`, `contacted`, `qualified`,
+  `declined`, `converted`, or `spam`); the queue does not claim automated
+  outreach or CRM synchronization.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
   plus one stable manifest pointer. The API validates the pointer path,
@@ -290,22 +301,48 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v3 report contains only window totals, event/source counts, active-user and
+The v4 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
-a directional parcel-open to workflow-create ratio, and separate activation
-and saved-view-reuse evidence gates. Parcel opens and saved-view applies are
-best-effort client-side directional counters. Workflow lifecycle and saved-view
-create/update/delete counts are transactionally derived from their canonical
-server mutations, so a dropped follow-up browser request cannot erase a real
-save and an unchanged retry cannot inflate the counters. The workflow
+a directional parcel-open to workflow-create ratio, separate activation and
+saved-view-reuse evidence gates, and aggregate pilot-intake plan/status counts.
+Parcel opens and saved-view applies are best-effort client-side directional
+counters. Workflow lifecycle and saved-view create/update/delete counts are
+transactionally derived from their canonical server mutations, so a dropped
+follow-up browser request cannot erase a real save and an unchanged retry
+cannot inflate the counters. The workflow
 [adoption-report.yml](.github/workflows/adoption-report.yml) runs this report
 daily through a repository- and branch-restricted keyless Google identity,
 publishes warnings while evidence is collecting, and retains the aggregate-only
 artifact for 90 days. The inventory query projects only saved-view schema
 version and derives user counts from the document parent; it never reads view
-names, search text, filters, or owners. Do not publish raw
-`product_usage_days`, `parcel_workflow`, or `parcel_saved_searches` documents,
-and do not use this report as a model-accuracy or lead-quality claim.
+names, search text, filters, or owners. The pilot-intake query selects only
+status, plan, and creation time, raises a workflow warning when requests await
+review, and never reads contact fields, request IDs, boroughs, or workflow
+text. Do not publish raw `product_usage_days`, `parcel_workflow`,
+`parcel_saved_searches`, or `pilot_requests` documents, and do not use this
+report as a model-accuracy or lead-quality claim.
+
+## Pilot intake operations
+
+The public contact form submits to the API with an opaque idempotency key.
+Administrators can inspect and advance the private queue without exporting it
+to browser analytics:
+
+```bash
+curl -sS \
+  -H "X-API-Key: ${CITYLENS_ADMIN_API_KEY}" \
+  "https://api.citylens.dev/v1/pilot-requests?status=new&limit=100"
+
+curl -sS -X PATCH \
+  -H "X-API-Key: ${CITYLENS_ADMIN_API_KEY}" \
+  -H "Content-Type: application/json" \
+  "https://api.citylens.dev/v1/pilot-requests/<REQUEST_ID>" \
+  --data '{"schema_version":"citylens/pilot-request-status@v1","status":"contacted"}'
+```
+
+Do not place request bodies in logs or analytics. The collection uses the
+`expires_at` field as a 365-day Firestore TTL boundary; convert any active
+commercial relationship into its governed customer record before expiry.
 
 ### VS Code folder expectations
 

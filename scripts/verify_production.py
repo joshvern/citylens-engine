@@ -1705,6 +1705,29 @@ def run_checks(
         failures,
     )
 
+    pilot_request_result = _request(
+        f"{api_base}/v1/pilot-requests",
+        timeout=timeout,
+        method="POST",
+        json_body={},
+    )
+    timings["pilot_requests"] = round(
+        pilot_request_result.elapsed_seconds,
+        3,
+    )
+    _expect(
+        pilot_request_result.status == 422,
+        "pilot requests: invalid anonymous submission returned "
+        f"{pilot_request_result.status}",
+        failures,
+    )
+    _expect(
+        "no-store"
+        in pilot_request_result.headers.get("cache-control", "").lower(),
+        "pilot requests: validation response is cacheable",
+        failures,
+    )
+
     methodology_result = _request(
         f"{api_base}/v1/parcel-intel/workflow/analytics/methodology",
         timeout=timeout,
@@ -1744,7 +1767,7 @@ def run_checks(
         "web_base": web_base,
         "feed_generated_at": generated_at,
         "max_age_days": max_age_days,
-        "checks": 17,
+        "checks": 18,
         "security_headers": {
             "api": {"passed": not api_security_failures},
             "web": {"passed": not web_security_failures},

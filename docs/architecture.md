@@ -80,6 +80,12 @@ owns the browser UI.
     exist across at least three users. No user, parcel, saved-view name, search
     text, filter, or owner identifier is emitted, and neither gate is a model
     or lead-quality metric.
+  - Public pilot intake is a separate bounded conversion contract. An opaque
+    idempotency key produces a non-identifying request ID; explicit consent,
+    honeypot filtering, per-IP throttling, field length limits, and a 365-day
+    TTL bound the surface. The record intentionally excludes IP address,
+    user-agent, referrer, arbitrary metadata, and analytics payloads.
+    Listing and status transitions are admin-only and private/no-store.
   - A `lifespan` handler pre-warms the demo + parcel-intel registries; only
     `CitylensRequest` is imported from `citylens-core` (the heavy pipeline import
     is lazy, kept off the API cold-start path — the worker runs the pipeline).
@@ -111,6 +117,9 @@ Firestore:
   views are persistence only; no scheduled-alert delivery is claimed.
   Reporting selects only the schema marker to count current inventory and does
   not read the saved state.
+- `pilot_requests/{request_id}`: consented design-partner intake with an
+  opaque idempotency-derived ID, controlled operational status, and 365-day
+  `expires_at` boundary. Records are private and are not product telemetry.
 
 GCS:
 - `gs://<CITYLENS_BUCKET>/runs/<run_id>/<artifact_filename>`

@@ -20,6 +20,7 @@ from .routes.health import router as health_router
 from .routes.me import router as me_router
 from .routes.parcel_intel import router as parcel_intel_router
 from .routes.parcel_workflow import router as parcel_workflow_router
+from .routes.pilot_requests import router as pilot_requests_router
 from .routes.run_options import router as run_options_router
 from .routes.runs import router as runs_router
 from .services.logging import configure_json_logging
@@ -198,6 +199,10 @@ async def security_headers_middleware(
     # This middleware is deliberately registered after the CORS/docs
     # middleware so it remains outermost and covers their early responses.
     response = await call_next(request)
+    if request.url.path.startswith("/v1/pilot-requests"):
+        # Intake responses can include validation detail or private queue
+        # records and must never enter a browser or intermediary cache.
+        response.headers.setdefault("Cache-Control", "no-store")
     for name, value in _SECURITY_RESPONSE_HEADERS.items():
         response.headers[name] = value
     return response
@@ -260,6 +265,7 @@ app.include_router(health_router, prefix="/v1")
 app.include_router(demo_router, prefix="/v1")
 app.include_router(parcel_intel_router, prefix="/v1")
 app.include_router(parcel_workflow_router, prefix="/v1")
+app.include_router(pilot_requests_router, prefix="/v1")
 app.include_router(run_options_router, prefix="/v1")
 app.include_router(me_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")

@@ -381,6 +381,29 @@ gcloud firestore fields ttls list \
   --format='table(name,ttlConfig.state)'
 ```
 
+Enable and verify the separate 365-day TTL boundary for consented pilot
+requests. The API writes the expiry timestamp; Firestore owns physical
+deletion:
+
+```bash
+gcloud firestore fields ttls update expires_at \
+  --collection-group=pilot_requests \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --enable-ttl
+
+gcloud firestore fields ttls list \
+  --collection-group=pilot_requests \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --format='table(name,ttlConfig.state)'
+```
+
+Set `CITYLENS_PILOT_REQUESTS_COLLECTION=pilot_requests` unless a deliberate
+environment-specific collection is required. Public submission is
+unauthenticated but bounded, consented, idempotent, honeypot-filtered, and
+throttled. Queue list/status operations still require an admin identity.
+
 The API writes only aggregate daily event/source counts to this collection.
 Parcel opens and saved-view applies are value-minimized client counters.
 Workflow lifecycle and saved-view create/update/delete counters are written

@@ -374,7 +374,16 @@ The named-database restore drill has a mandatory IAM preflight. Do not restore
 while either runtime identity has an unconditional project-level
 `roles/datastore.user` binding: it would inherit access to the drill database.
 The deployment guide requires tested per-database conditions scoped to
-`(default)` before a restore can count as isolated recovery evidence.
+`(default)` before a restore can count as isolated recovery evidence. The
+runtime IAM verifier fails closed on missing, unconditional, duplicate, or
+wrong-database Firestore bindings and reports the retained condition for each
+identity.
+
+The first isolated production restore drill completed successfully on
+2026-07-25. See
+[the versioned drill evidence](docs/firestore_restore_drill_2026-07-25.md) for
+the source backup, operation duration, metadata-only data/index comparison,
+runtime 200/403 isolation proof, TTL reapplication, and guarded cleanup.
 
 The configuration command is read-only by default:
 

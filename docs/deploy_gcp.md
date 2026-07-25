@@ -118,7 +118,8 @@ Grant roles (recommended to keep these narrow; adjust per your org policies):
 
 API service account needs:
 
-- Firestore read/write: `roles/datastore.user`
+- Firestore read/write on the production `(default)` database only:
+  conditionally bound `roles/datastore.user`
 - Trigger Cloud Run Job executions: `roles/run.developer`
 - If you enable signed URLs (`CITYLENS_SIGN_URLS=1`): allow signing with IAMCredentials
   - Also grant the API service account read access to artifacts so the signed URLs can be used to download objects (needs `storage.objects.get`, e.g. `roles/storage.objectViewer` on the bucket).
@@ -126,7 +127,8 @@ API service account needs:
 
 Worker service account needs:
 
-- Firestore read/write: `roles/datastore.user`
+- Firestore read/write on the production `(default)` database only:
+  conditionally bound `roles/datastore.user`
 - Upload artifacts: `roles/storage.objectAdmin` on the bucket
 
 Example commands:
@@ -135,10 +137,12 @@ Example commands:
 PROJECT=<PROJECT_ID>
 API_SA_EMAIL=<API_SA>@${PROJECT}.iam.gserviceaccount.com
 WORKER_SA_EMAIL=<WORKER_SA>@${PROJECT}.iam.gserviceaccount.com
+FIRESTORE_CONDITION="expression=resource.name==\"projects/${PROJECT}/databases/(default)\",title=citylens-default-database-only,description=Restrict CityLens runtime data access to the production default database"
 
 gcloud projects add-iam-policy-binding ${PROJECT} \
   --member=serviceAccount:${API_SA_EMAIL} \
-  --role=roles/datastore.user
+  --role=roles/datastore.user \
+  --condition="${FIRESTORE_CONDITION}"
 
 gcloud projects add-iam-policy-binding ${PROJECT} \
   --member=serviceAccount:${API_SA_EMAIL} \
@@ -150,7 +154,8 @@ gcloud iam service-accounts add-iam-policy-binding ${API_SA_EMAIL} \
 
 gcloud projects add-iam-policy-binding ${PROJECT} \
   --member=serviceAccount:${WORKER_SA_EMAIL} \
-  --role=roles/datastore.user
+  --role=roles/datastore.user \
+  --condition="${FIRESTORE_CONDITION}"
 
 gcloud storage buckets add-iam-policy-binding gs://<BUCKET_NAME> \
   --member=serviceAccount:${WORKER_SA_EMAIL} \
@@ -606,6 +611,16 @@ Add and validate the conditional binding before removing the unconditional
 binding. Then run the complete public production verifier and runtime-IAM
 verifier. Do not continue unless live traffic remains healthy and the runtime
 verifier explicitly proves both identities are restricted to `(default)`.
+Remove an old unconditional binding only with `--condition=None`; omitting
+that flag can target a conditional binding instead. Immediately prove a
+successful REST/client-library read of `(default)` through each impersonated
+runtime identity. Re-add the unconditional binding as rollback if either
+identity loses production access.
+If the drill operator needs impersonation, grant
+`roles/iam.serviceAccountTokenCreator` temporarily on each runtime service
+account resource, not at project scope. Remove those operator grants after the
+negative named-database tests and confirm the API's existing self-signing grant
+is still present.
 Console behavior is not acceptance evidence because Firestore's per-database
 IAM conditions are enforced by REST/client-library access, not by the Google
 Cloud console's database view.
@@ -640,9 +655,45 @@ Verify the restored database independently before removing it:
 - record the backup ID, snapshot time, operation ID, duration, and reviewer
 - delete only the named drill database after the review is complete
 
+Restores may retain database delete protection. Cleanup must therefore validate
+the drill-name prefix, capture the database etag, disable protection only on
+that named database, and supply the etag to deletion:
+
+```bash
+case "${DRILL_DATABASE}" in
+  recovery-drill-*) ;;
+  *) echo "refusing unsafe database name" >&2; exit 1 ;;
+esac
+test "${DRILL_DATABASE}" != "(default)"
+
+gcloud firestore databases update \
+  --project "${PROJECT_ID}" \
+  --database "${DRILL_DATABASE}" \
+  --no-delete-protection
+
+DRILL_ETAG="$(
+  gcloud firestore databases describe \
+    --project "${PROJECT_ID}" \
+    --database "${DRILL_DATABASE}" \
+    --format='value(etag)'
+)"
+test -n "${DRILL_ETAG}"
+
+gcloud firestore databases delete \
+  --project "${PROJECT_ID}" \
+  --database "${DRILL_DATABASE}" \
+  --etag "${DRILL_ETAG}" \
+  --quiet
+```
+
 Firestore backups include data and index configuration, but not TTL policies
 or Firebase Security Rules. A restore is therefore evidence of data
 recoverability, not by itself a complete application cutover.
+
+The accepted 2026-07-25 production drill is recorded in
+[firestore_restore_drill_2026-07-25.md](firestore_restore_drill_2026-07-25.md).
+Future drills must produce the same classes of evidence rather than relying on
+database creation alone.
 
 The same verifier requires API and web HSTS, clickjacking protection, MIME
 sniffing protection, explicit referrer policy, disabled unused browser

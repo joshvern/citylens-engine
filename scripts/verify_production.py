@@ -101,6 +101,13 @@ EXPECTED_PERMISSIONS_POLICY = (
     "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
     "payment=()"
 )
+REQUIRED_WEB_COPY = (
+    "Find the sites worth pursuing this week",
+    "Citywide opportunity explorer",
+    "Filter the five-borough market",
+    "Published evidence",
+    "Address, BBL, owner, or zoning",
+)
 
 
 @dataclass(frozen=True)
@@ -186,6 +193,19 @@ def _json(result: HttpResult, label: str, failures: list[str]) -> dict[str, Any]
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def validate_web_copy(html: str) -> list[str]:
+    """Verify durable map-first product semantics without pinning a tagline."""
+
+    failures: list[str] = []
+    for expected in REQUIRED_WEB_COPY:
+        _expect(
+            expected in html,
+            f"web: missing expected copy: {expected}",
+            failures,
+        )
+    return failures
 
 
 def validate_security_headers(
@@ -2110,12 +2130,7 @@ def run_checks(
     )
     failures.extend(web_security_failures)
     html = web_result.body.decode("utf-8", errors="replace")
-    for expected in (
-        "Find the sites worth pursuing this week",
-        "Citywide opportunity explorer",
-        "See the whole market",
-    ):
-        _expect(expected in html, f"web: missing expected copy: {expected}", failures)
+    failures.extend(validate_web_copy(html))
 
     summary = {
         "schema_version": "citylens/production-verification@v1",

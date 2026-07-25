@@ -299,7 +299,11 @@ remain a limited preview and cannot reveal protected lien, violation, flood,
 environmental, MIH, transit, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same verifier every six hours and on demand, publishes a job summary, and
-retains the JSON report for 30 days. A failure is an incident signal; do not
+retains the JSON report for 30 days. Scheduled failures create or update one
+deduplicated `[Production] Scheduled verification failing` issue; the next
+successful scheduled run records recovery and closes it. Manual checks do not
+create or close incidents unless the operator explicitly enables the
+`manage_incident` dispatch input. A failure is an incident signal; do not
 weaken a contract assertion merely to make the scheduled check green.
 
 ## Product adoption report

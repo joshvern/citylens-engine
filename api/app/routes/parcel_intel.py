@@ -33,7 +33,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -47,6 +47,7 @@ from ..models.schemas import (
     ParcelIntelParcelResponse,
     ParcelIntelRow,
     ParcelIntelSweepResponse,
+    ParcelProspectiveValidationHealth,
     ParcelProspectiveValidationStatus,
 )
 from ..services.auth import maybe_auth
@@ -100,6 +101,11 @@ _GENERATION_RE = re.compile(
     r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_PROSPECTIVE_MAX_OBSERVATION_LAG_DAYS = 8
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def get_gcs(settings: Settings = Depends(get_settings)) -> GcsArtifacts:
@@ -277,9 +283,17 @@ class ParcelIntelRegistry:
 
     def index(self, gcs: GcsArtifacts) -> ParcelIntelIndex:
         manifest = self._refresh_manifest(gcs)
+        now = _utc_now()
         prospective_validation = self._prospective_validation(
             gcs,
             manifest,
+            now=now,
+        )
+        prospective_validation_health = (
+            self._prospective_validation_health(
+                prospective_validation,
+                now=now,
+            )
         )
         boroughs = [
             ParcelIntelBorough(
@@ -312,6 +326,7 @@ class ParcelIntelRegistry:
             generation_diff=manifest.get("generation_diff") or {},
             inference_replay=manifest.get("inference_replay") or {},
             prospective_validation=prospective_validation,
+            prospective_validation_health=prospective_validation_health,
             age_days=age_days,
             stale=stale,
         )
@@ -320,6 +335,8 @@ class ParcelIntelRegistry:
         self,
         gcs: GcsArtifacts,
         manifest: dict[str, Any],
+        *,
+        now: datetime,
     ) -> ParcelProspectiveValidationStatus | None:
         """Load only a strict, parcel-free status for the active generation."""
         active_generation = manifest.get("artifact_generation")
@@ -361,7 +378,59 @@ class ParcelIntelRegistry:
                 active_generation,
             )
             return None
+        if (
+            status.issued_at > now + timedelta(minutes=5)
+            or status.observed_through > now.date()
+            or any(
+                source.rows_updated_at > now + timedelta(minutes=5)
+                for source in status.official_sources
+            )
+        ):
+            log.error(
+                "parcel-intel prospective validation contains future source "
+                "evidence"
+            )
+            return None
         return status
+
+    def _prospective_validation_health(
+        self,
+        status: ParcelProspectiveValidationStatus | None,
+        *,
+        now: datetime,
+    ) -> ParcelProspectiveValidationHealth:
+        if status is None:
+            return ParcelProspectiveValidationHealth(
+                status="unavailable",
+                reason="status_missing_or_invalid",
+            )
+        observation_lag_days = (
+            now.date() - status.observed_through
+        ).days
+        is_stale = (
+            observation_lag_days
+            > _PROSPECTIVE_MAX_OBSERVATION_LAG_DAYS
+        )
+        return ParcelProspectiveValidationHealth(
+            status="stale" if is_stale else "current",
+            reason=(
+                "observation_lag_exceeded" if is_stale else "current"
+            ),
+            observation_lag_days=observation_lag_days,
+            max_observation_lag_days=(
+                _PROSPECTIVE_MAX_OBSERVATION_LAG_DAYS
+            ),
+            next_monitor_due_on=(
+                status.observed_through
+                + timedelta(
+                    days=_PROSPECTIVE_MAX_OBSERVATION_LAG_DAYS
+                )
+            ),
+            oldest_official_source_updated_at=min(
+                source.rows_updated_at
+                for source in status.official_sources
+            ),
+        )
 
     def borough(
         self, gcs: GcsArtifacts, slug: str

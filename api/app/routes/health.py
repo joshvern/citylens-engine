@@ -56,6 +56,14 @@ def health_ready(
         "present": False,
         "age_days": None,
         "stale": False,
+        "prospective_validation": {
+            "status": "unavailable",
+            "reason": "status_missing_or_invalid",
+            "observation_lag_days": None,
+            "max_observation_lag_days": 8,
+            "next_monitor_due_on": None,
+            "oldest_official_source_updated_at": None,
+        },
     }
     try:
         idx = registry.index(gcs)
@@ -63,6 +71,11 @@ def health_ready(
             "present": True,
             "age_days": idx.age_days,
             "stale": idx.stale,
+            "prospective_validation": (
+                idx.prospective_validation_health.model_dump(
+                    mode="json"
+                )
+            ),
         }
     except HTTPException as exc:
         # 503 from the registry = not published / invalid manifest.

@@ -14,7 +14,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -282,13 +282,26 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _has_explicit_timezone(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
 def validate_prospective_validation(
     status: Any,
     *,
     feed_generation: Any,
+    health: Any,
+    now: datetime | None = None,
 ) -> list[str]:
     """Adversarially verify the parcel-free live-cohort public contract."""
     failures: list[str] = []
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     _expect(
         isinstance(status, dict),
         "index: prospective validation status is missing",
@@ -338,6 +351,12 @@ def validate_prospective_validation(
         and matures_at is not None
         and (matures_at - issued_at).days == 365,
         "index: prospective maturity horizon is invalid",
+        failures,
+    )
+    _expect(
+        _has_explicit_timezone(status.get("issued_at"))
+        and _has_explicit_timezone(status.get("matures_at")),
+        "index: prospective timestamps are not timezone-aware",
         failures,
     )
     _expect(
@@ -487,11 +506,19 @@ def validate_prospective_validation(
         and all(
             isinstance(item, dict)
             and _parse_timestamp(item.get("rows_updated_at")) is not None
+            and _has_explicit_timezone(item.get("rows_updated_at"))
             for item in sources
         ),
         "index: prospective official DOB source timestamps are invalid",
         failures,
     )
+    source_timestamps = [
+        parsed
+        for item in (sources if isinstance(sources, list) else [])
+        if isinstance(item, dict)
+        for parsed in [_parse_timestamp(item.get("rows_updated_at"))]
+        if parsed is not None
+    ]
     report_reference = status.get("report_reference")
     observation_id = (
         report_reference.get("observation_id")
@@ -510,10 +537,67 @@ def validate_prospective_validation(
         and observation_id[8] == "-"
         and observation_id[:8].isdigit()
         and all(character in "0123456789abcdef" for character in observation_id[9:])
+        and observed_through is not None
+        and observation_id.startswith(
+            observed_through.strftime("%Y%m%d") + "-"
+        )
         and isinstance(report_sha256, str)
         and len(report_sha256) == 64
         and all(character in "0123456789abcdef" for character in report_sha256),
         "index: prospective report reference is invalid",
+        failures,
+    )
+
+    _expect(
+        isinstance(health, dict),
+        "index: prospective validation health is missing",
+        failures,
+    )
+    health = health if isinstance(health, dict) else {}
+    max_lag_days = health.get("max_observation_lag_days")
+    observation_lag_days = health.get("observation_lag_days")
+    expected_lag_days = (
+        (current.date() - observed_through).days
+        if observed_through is not None
+        else None
+    )
+    expected_health_status = (
+        "stale"
+        if expected_lag_days is not None and expected_lag_days > 8
+        else "current"
+    )
+    expected_health_reason = (
+        "observation_lag_exceeded"
+        if expected_health_status == "stale"
+        else "current"
+    )
+    try:
+        next_monitor_due_on = datetime.fromisoformat(
+            str(health.get("next_monitor_due_on"))
+        ).date()
+    except ValueError:
+        next_monitor_due_on = None
+    oldest_source_updated_at = _parse_timestamp(
+        health.get("oldest_official_source_updated_at")
+    )
+    _expect(
+        expected_lag_days is not None
+        and expected_lag_days >= 0
+        and max_lag_days == 8
+        and observation_lag_days == expected_lag_days
+        and health.get("status") == expected_health_status
+        and health.get("reason") == expected_health_reason
+        and observed_through is not None
+        and next_monitor_due_on
+        == observed_through + timedelta(days=8)
+        and len(source_timestamps) == 2
+        and oldest_source_updated_at == min(source_timestamps),
+        "index: prospective validation freshness telemetry is inconsistent",
+        failures,
+    )
+    _expect(
+        health.get("status") == "current",
+        "index: prospective validation monitor is stale",
         failures,
     )
 
@@ -1456,6 +1540,8 @@ def validate_index(
         validate_prospective_validation(
             index.get("prospective_validation"),
             feed_generation=index.get("feed_generation"),
+            health=index.get("prospective_validation_health"),
+            now=now,
         )
     )
     return failures

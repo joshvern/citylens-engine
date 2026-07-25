@@ -59,7 +59,10 @@ owns the browser UI.
     is absent, failed, or overridden without a recorded reason.
   - Health: `/v1/health` is the dependency-free keep-warm ping;
     `/v1/health/ready` additionally probes Firestore (503 if unreachable) and
-    reports parcel-intel presence/freshness flags.
+    reports parcel-intel presence/freshness flags. It also reports the
+    generation-bound prospective monitor as `current`, `stale`, or
+    `unavailable`; the weekly evidence pointer has an eight-day maximum
+    observation lag so a stopped monitor cannot silently look current.
   - Authenticated parcel workflow alerts compare each watched lead's saved
     baseline with the current generation. The contract is computed on request,
     user scoped, and never exposed anonymously. It reports decision-relevant

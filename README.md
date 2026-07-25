@@ -395,6 +395,14 @@ After the first scheduled backup exists, require a recent restorable backup:
 During the first 26 hours after creating schedules, operators may use
 `--allow-collecting` to accept healthy configuration while the first backup is
 pending. That flag does not accept configuration drift or an overdue backup.
+The daily
+[recovery-verification.yml](.github/workflows/recovery-verification.yml)
+workflow runs the same check through a repository- and `master`-restricted
+keyless identity. It retains the JSON evidence for 90 days and reconciles a
+deduplicated GitHub production incident on scheduled failure and recovery.
+Its custom Google Cloud role can read only database settings, backup schedule
+and backup metadata, and bucket policy metadata; it cannot read Firestore
+documents or GCS objects.
 See [docs/deploy_gcp.md](docs/deploy_gcp.md) for billing, restore-drill, and
 post-restore TTL/security requirements.
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,8 +18,9 @@ except ModuleNotFoundError:  # Direct execution: python scripts/<file>.py
         JsonCommand,
     )
 
-SCHEMA = "citylens/runtime-iam-verification@v1"
+SCHEMA = "citylens/runtime-iam-verification@v2"
 LEGACY_ACCOUNT_NAMES = ("citylens-api-sa", "citylens-worker-sa")
+DATASTORE_USER_ROLE = "roles/datastore.user"
 
 
 def _format_time(value: datetime) -> str:
@@ -46,6 +48,42 @@ def _roles_for_member(
         for binding in policy.get("bindings") or []
         if member in set(binding.get("members") or [])
     }
+
+
+def _bindings_for_member(
+    policy: dict[str, Any],
+    member: str,
+    role: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": str(binding.get("role")),
+            "condition": (
+                {
+                    "title": str((binding.get("condition") or {}).get("title") or ""),
+                    "description": str(
+                        (binding.get("condition") or {}).get("description") or ""
+                    ),
+                    "expression": str(
+                        (binding.get("condition") or {}).get("expression") or ""
+                    ),
+                }
+                if binding.get("condition")
+                else None
+            ),
+        }
+        for binding in policy.get("bindings") or []
+        if binding.get("role") == role
+        and member in set(binding.get("members") or [])
+    ]
+
+
+def _canonical_condition_expression(value: str) -> str:
+    return re.sub(r"\s+", "", value)
+
+
+def _default_database_condition(project: str) -> str:
+    return f'resource.name == "projects/{project}/databases/(default)"'
 
 
 def _service_account_email(name: str, project: str) -> str:
@@ -164,9 +202,21 @@ def verify(
             f"serviceAccount:{worker_email}",
         ),
     }
+    datastore_user_bindings = {
+        "api": _bindings_for_member(
+            project_policy,
+            f"serviceAccount:{api_email}",
+            DATASTORE_USER_ROLE,
+        ),
+        "worker": _bindings_for_member(
+            project_policy,
+            f"serviceAccount:{worker_email}",
+            DATASTORE_USER_ROLE,
+        ),
+    }
     required_project_roles = {
-        "api": {"roles/datastore.user", "roles/run.developer"},
-        "worker": {"roles/datastore.user"},
+        "api": {"roles/run.developer"},
+        "worker": set(),
     }
     for key, required in required_project_roles.items():
         missing = required - current_project_roles[key]
@@ -175,6 +225,34 @@ def verify(
                 f"{key} runtime identity lacks project role(s): "
                 f"{', '.join(sorted(missing))}"
             )
+    expected_condition = _default_database_condition(project)
+    canonical_expected_condition = _canonical_condition_expression(
+        expected_condition
+    )
+    for key, bindings in datastore_user_bindings.items():
+        if len(bindings) != 1:
+            failures.append(
+                f"{key} runtime identity has {len(bindings)} "
+                f"{DATASTORE_USER_ROLE} binding(s), expected exactly one"
+            )
+        for binding in bindings:
+            condition = binding["condition"]
+            if condition is None:
+                failures.append(
+                    f"{key} runtime identity has unconditional "
+                    f"{DATASTORE_USER_ROLE}; expected restriction to (default)"
+                )
+                continue
+            expression = str(condition["expression"])
+            if (
+                _canonical_condition_expression(expression)
+                != canonical_expected_condition
+            ):
+                failures.append(
+                    f"{key} runtime identity has unexpected "
+                    f"{DATASTORE_USER_ROLE} condition {expression!r}; "
+                    f"expected {expected_condition!r}"
+                )
     if "roles/datastore.viewer" in current_project_roles["worker"]:
         failures.append(
             "worker runtime identity still has redundant "
@@ -279,11 +357,13 @@ def verify(
                 "expected": api_email,
                 "actual": actual_runtime["api"],
                 "project_roles": sorted(current_project_roles["api"]),
+                "datastore_user_bindings": datastore_user_bindings["api"],
             },
             "worker": {
                 "expected": worker_email,
                 "actual": actual_runtime["worker"],
                 "project_roles": sorted(current_project_roles["worker"]),
+                "datastore_user_bindings": datastore_user_bindings["worker"],
             },
         },
         "legacy_identities": legacy_results,

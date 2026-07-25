@@ -12,6 +12,13 @@ API = f"citylens-api@{PROJECT}.iam.gserviceaccount.com"
 WORKER = f"citylens-worker@{PROJECT}.iam.gserviceaccount.com"
 LEGACY_API = f"citylens-api-sa@{PROJECT}.iam.gserviceaccount.com"
 LEGACY_WORKER = f"citylens-worker-sa@{PROJECT}.iam.gserviceaccount.com"
+DATABASE_CONDITION = {
+    "title": "citylens-default-database-only",
+    "description": "Restrict CityLens runtime data access to production",
+    "expression": (
+        'resource.name == "projects/citylens-001/databases/(default)"'
+    ),
+}
 
 
 def _policy(bindings: dict[str, list[str]]) -> dict[str, Any]:
@@ -24,15 +31,24 @@ def _policy(bindings: dict[str, list[str]]) -> dict[str, Any]:
 
 
 def _responses() -> list[Any]:
-    project_policy = _policy(
-        {
-            "roles/datastore.user": [
-                f"serviceAccount:{API}",
-                f"serviceAccount:{WORKER}",
-            ],
-            "roles/run.developer": [f"serviceAccount:{API}"],
-        }
-    )
+    project_policy = {
+        "bindings": [
+            {
+                "role": "roles/datastore.user",
+                "members": [
+                    f"serviceAccount:{API}",
+                    f"serviceAccount:{WORKER}",
+                ],
+                "condition": {**DATABASE_CONDITION},
+            },
+            {
+                "role": "roles/run.developer",
+                "members": [
+                    f"serviceAccount:{API}",
+                ],
+            },
+        ]
+    }
     bucket_policy = _policy(
         {
             "roles/storage.objectViewer": [f"serviceAccount:{API}"],
@@ -120,6 +136,12 @@ def test_runtime_identity_contract_passes_without_keys_or_legacy_grants() -> Non
     assert result["failures"] == []
     assert result["runtime_identities"]["api"]["actual"] == API
     assert result["runtime_identities"]["worker"]["actual"] == WORKER
+    assert result["runtime_identities"]["api"]["datastore_user_bindings"] == [
+        {
+            "role": "roles/datastore.user",
+            "condition": DATABASE_CONDITION,
+        }
+    ]
     assert all(
         row["disabled"] is True
         for row in result["legacy_identities"]
@@ -186,5 +208,55 @@ def test_runtime_identity_contract_fails_closed_on_privilege_drift() -> None:
     )
     assert any(
         "user-managed key" in failure
+        for failure in result["failures"]
+    )
+
+
+def test_runtime_identity_contract_rejects_unconditional_data_access() -> None:
+    responses = _responses()
+    responses[2]["bindings"][0].pop("condition")
+
+    result = _verify(responses)
+
+    assert result["healthy"] is False
+    assert any(
+        "unconditional roles/datastore.user" in failure
+        for failure in result["failures"]
+    )
+
+
+def test_runtime_identity_contract_rejects_wrong_database_condition() -> None:
+    responses = _responses()
+    responses[2]["bindings"][0]["condition"]["expression"] = (
+        'resource.name == "projects/citylens-001/databases/recovery-drill"'
+    )
+
+    result = _verify(responses)
+
+    assert result["healthy"] is False
+    assert any(
+        "unexpected roles/datastore.user condition" in failure
+        for failure in result["failures"]
+    )
+
+
+def test_runtime_identity_contract_rejects_duplicate_data_bindings() -> None:
+    responses = _responses()
+    responses[2]["bindings"].append(
+        {
+            "role": "roles/datastore.user",
+            "members": [f"serviceAccount:{API}"],
+            "condition": {
+                **DATABASE_CONDITION,
+                "title": "duplicate",
+            },
+        }
+    )
+
+    result = _verify(responses)
+
+    assert result["healthy"] is False
+    assert any(
+        "api runtime identity has 2 roles/datastore.user binding(s)" in failure
         for failure in result["failures"]
     )

@@ -325,8 +325,13 @@ requires the official MTA station source SLA,
 complete per-borough transit enrichment, anonymous transit redaction, and an
 audit statement that transit is diligence-only. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours and stores
-the machine-readable report. Investigate scheduled failures before the feed
-crosses the API's 45-day stale threshold.
+the machine-readable report. A scheduled failure creates or updates one
+deduplicated production incident in the engine repository, and the next
+successful scheduled run closes it with a recovery comment. Manual dispatches
+remain diagnostic unless an operator explicitly enables the
+`manage_incident` input to reconcile the production issue. Investigate
+scheduled failures before the feed crosses the API's 45-day stale threshold
+or the prospective monitor crosses its eight-day observation-lag limit.
 
 The same verifier requires API and web HSTS, clickjacking protection, MIME
 sniffing protection, explicit referrer policy, disabled unused browser

@@ -35,6 +35,8 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "events": {
                     "parcel_opened": 3,
                     "decision_audit_opened": 2,
+                    "underwriting_opened": 2,
+                    "underwriting_assumptions_changed": 1,
                     "saved_view_applied": 2,
                     "saved_view_created": 1,
                     "workflow_created": 1,
@@ -44,6 +46,11 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "parcel_opened:ranking": 1,
                     "decision_audit_opened:decision_posture": 1,
                     "decision_audit_opened:audit_tab": 1,
+                    "underwriting_opened:underwrite_tab": 2,
+                    (
+                        "underwriting_assumptions_changed:"
+                        "base_assumptions"
+                    ): 1,
                     "saved_view_applied:saved_views": 2,
                     "saved_view_created:saved_views": 1,
                     "workflow_created:header": 1,
@@ -56,12 +63,19 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "events": {
                     "parcel_opened": 1,
                     "decision_audit_opened": 1,
+                    "underwriting_opened": 1,
+                    "underwriting_assumptions_changed": 1,
                     "saved_view_applied": 1,
                     "workflow_updated": 2,
                 },
                 "sources": {
                     "parcel_opened:direct": 1,
                     "decision_audit_opened:audit_tab": 1,
+                    "underwriting_opened:underwrite_tab": 1,
+                    (
+                        "underwriting_assumptions_changed:"
+                        "base_assumptions"
+                    ): 1,
                     "saved_view_applied:saved_views": 1,
                     "workflow_updated:workflow": 2,
                 },
@@ -130,12 +144,14 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 14
+    assert report["total_events"] == 19
     assert report["events"] == {
         "decision_audit_opened": 3,
         "parcel_opened": 4,
         "saved_view_applied": 3,
         "saved_view_created": 1,
+        "underwriting_assumptions_changed": 2,
+        "underwriting_opened": 3,
         "workflow_created": 1,
         "workflow_updated": 2,
     }
@@ -161,9 +177,38 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
             ),
         },
     }
+    assert report["underwriting_engagement"] == {
+        "opened": 3,
+        "open_users": 2,
+        "first_adjustments": 2,
+        "adjustment_users": 2,
+        "entry_points": {
+            "underwrite_tab": 3,
+            "base_assumptions": 2,
+        },
+        "directional_adjustment_to_open_ratio": 0.666667,
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_opens": 10,
+            "minimum_open_users": 3,
+            "minimum_first_adjustments": 5,
+            "minimum_adjustment_users": 3,
+            "opens_remaining": 7,
+            "open_users_remaining": 1,
+            "first_adjustments_remaining": 3,
+            "adjustment_users_remaining": 1,
+            "claim": (
+                "Directional underwriting engagement only; opens and "
+                "first adjustments are best-effort aggregate counters, "
+                "not unique parcels, assumption values, saved scenarios, "
+                "valuations, transactions, lead quality, or model "
+                "accuracy."
+            ),
+        },
+    }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v5"
+    assert report["schema_version"] == "citylens/product-adoption-report@v6"
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,
@@ -230,6 +275,18 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["decision_audit_engagement"]["parcel_open_to_audit_rate"] is None
     assert (
         report["decision_audit_engagement"]["evidence_gate"]["status"]
+        == "collecting"
+    )
+    assert report["underwriting_engagement"]["opened"] == 0
+    assert report["underwriting_engagement"]["first_adjustments"] == 0
+    assert (
+        report["underwriting_engagement"][
+            "directional_adjustment_to_open_ratio"
+        ]
+        is None
+    )
+    assert (
+        report["underwriting_engagement"]["evidence_gate"]["status"]
         == "collecting"
     )
     assert report["workflow_inventory"]["records"] == 0
@@ -311,6 +368,46 @@ def test_decision_audit_gate_requires_opens_across_multiple_users() -> None:
     assert engagement["evidence_gate"]["status"] == "ready"
     assert engagement["evidence_gate"]["opens_remaining"] == 0
     assert engagement["evidence_gate"]["users_remaining"] == 0
+
+
+def test_underwriting_gate_requires_opens_and_adjustments_across_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {
+                    "underwriting_opened": 1,
+                    "underwriting_assumptions_changed": 1,
+                },
+                "sources": {
+                    "underwriting_opened:underwrite_tab": 1,
+                    (
+                        "underwriting_assumptions_changed:"
+                        "base_assumptions"
+                    ): 1,
+                },
+            }
+            for index in range(10)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["underwriting_engagement"]
+    assert engagement["opened"] == 10
+    assert engagement["open_users"] == 3
+    assert engagement["first_adjustments"] == 10
+    assert engagement["adjustment_users"] == 3
+    assert engagement["entry_points"] == {
+        "underwrite_tab": 10,
+        "base_assumptions": 10,
+    }
+    assert engagement["directional_adjustment_to_open_ratio"] == 1.0
+    assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["evidence_gate"]["opens_remaining"] == 0
+    assert engagement["evidence_gate"]["open_users_remaining"] == 0
+    assert engagement["evidence_gate"]["first_adjustments_remaining"] == 0
+    assert engagement["evidence_gate"]["adjustment_users_remaining"] == 0
 
 
 def test_workflow_inventory_query_reads_only_archive_state_and_user_parent() -> None:

@@ -76,6 +76,8 @@ jobs:
           inventory = report["workflow_inventory"]
           saved_views = report["saved_view_inventory"]
           reuse = report["saved_view_reuse"]
+          audit = report["decision_audit_engagement"]
+          underwriting = report["underwriting_engagement"]
           pilot = report["pilot_intake"]
           icon = "✅" if gate["status"] == "ready" else "🟡"
           print(f"## {icon} CityLens adoption evidence")
@@ -98,6 +100,17 @@ jobs:
               f"- Saved-view applies: `{reuse['applied']}` across "
               f"`{reuse['apply_users']}` user(s) "
               f"(`{reuse['evidence_gate']['status']}`)"
+          )
+          print(
+              f"- Decision-audit opens: `{audit['opened']}` across "
+              f"`{audit['users']}` user(s) "
+              f"(`{audit['evidence_gate']['status']}`)"
+          )
+          print(
+              f"- Underwriting: `{underwriting['opened']}` opens and "
+              f"`{underwriting['first_adjustments']}` first adjustment(s) "
+              f"across `{underwriting['adjustment_users']}` adjusting "
+              f"user(s) (`{underwriting['evidence_gate']['status']}`)"
           )
           print(
               f"- Pilot requests: `{pilot['records']}` total, "
@@ -126,6 +139,10 @@ jobs:
           )
           gate = report["activation_evidence_gate"]
           reuse_gate = report["saved_view_reuse"]["evidence_gate"]
+          audit_gate = report["decision_audit_engagement"]["evidence_gate"]
+          underwriting_gate = report["underwriting_engagement"][
+              "evidence_gate"
+          ]
           pilot = report["pilot_intake"]
           if gate["status"] != "ready":
               print(
@@ -138,6 +155,23 @@ jobs:
                   "::warning title=Saved-view reuse evidence is collecting::"
                   f"{reuse_gate['applies_remaining']} apply event(s) and "
                   f"{reuse_gate['users_remaining']} user(s) remain."
+              )
+          if audit_gate["status"] != "ready":
+              print(
+                  "::warning title=Decision-audit engagement is collecting::"
+                  f"{audit_gate['opens_remaining']} open event(s) and "
+                  f"{audit_gate['users_remaining']} user(s) remain."
+              )
+          if underwriting_gate["status"] != "ready":
+              print(
+                  "::warning title=Underwriting engagement is collecting::"
+                  f"{underwriting_gate['opens_remaining']} open event(s), "
+                  f"{underwriting_gate['open_users_remaining']} opening "
+                  "user(s), "
+                  f"{underwriting_gate['first_adjustments_remaining']} first "
+                  "adjustment event(s), and "
+                  f"{underwriting_gate['adjustment_users_remaining']} "
+                  "adjusting user(s) remain."
               )
           if pilot["new_requests_waiting"]:
               print(

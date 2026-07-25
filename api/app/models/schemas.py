@@ -911,6 +911,8 @@ ParcelProductEventName = Literal[
     "parcel_opened",
     "saved_view_applied",
     "decision_audit_opened",
+    "underwriting_opened",
+    "underwriting_assumptions_changed",
 ]
 
 ParcelProductEventSource = Literal[
@@ -922,12 +924,16 @@ ParcelProductEventSource = Literal[
     "saved_views",
     "decision_posture",
     "audit_tab",
+    "underwrite_tab",
+    "base_assumptions",
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "parcel_opened": {"direct", "map", "ranking", "action_queue", "watchlist"},
     "saved_view_applied": {"saved_views"},
     "decision_audit_opened": {"decision_posture", "audit_tab"},
+    "underwriting_opened": {"underwrite_tab"},
+    "underwriting_assumptions_changed": {"base_assumptions"},
 }
 
 
@@ -936,7 +942,8 @@ class ParcelProductEventCreate(BaseModel):
 
     Workflow and saved-view mutation counters are derived transactionally by
     the API from canonical writes. Only parcel opens, decision-audit opens,
-    and saved-view applies remain client-reported.
+    underwriting opens/first adjustments, and saved-view applies remain
+    client-reported.
     """
 
     model_config = ConfigDict(extra="forbid")

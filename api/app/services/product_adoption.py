@@ -75,6 +75,8 @@ def build_product_adoption_report(
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
     decision_audit_users: set[str] = set()
+    underwriting_open_users: set[str] = set()
+    underwriting_adjustment_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -106,6 +108,10 @@ def build_product_adoption_report(
                 saved_view_apply_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
+            if row_events.get("underwriting_opened", 0) > 0:
+                underwriting_open_users.add(user_id)
+            if row_events.get("underwriting_assumptions_changed", 0) > 0:
+                underwriting_adjustment_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -169,11 +175,26 @@ def build_product_adoption_report(
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
     decision_audit_opens = events.get("decision_audit_opened", 0)
+    underwriting_opens = events.get("underwriting_opened", 0)
+    underwriting_adjustments = events.get(
+        "underwriting_assumptions_changed", 0
+    )
     minimum_decision_audit_opens = 10
     minimum_decision_audit_users = 3
     decision_audit_engagement_ready = (
         decision_audit_opens >= minimum_decision_audit_opens
         and len(decision_audit_users) >= minimum_decision_audit_users
+    )
+    minimum_underwriting_opens = 10
+    minimum_underwriting_open_users = 3
+    minimum_underwriting_adjustments = 5
+    minimum_underwriting_adjustment_users = 3
+    underwriting_engagement_ready = (
+        underwriting_opens >= minimum_underwriting_opens
+        and len(underwriting_open_users) >= minimum_underwriting_open_users
+        and underwriting_adjustments >= minimum_underwriting_adjustments
+        and len(underwriting_adjustment_users)
+        >= minimum_underwriting_adjustment_users
     )
     minimum_saved_view_applies = 10
     minimum_saved_view_apply_users = 3
@@ -186,9 +207,9 @@ def build_product_adoption_report(
             "Parcel opens are directional client-side counters; workflow "
             "lifecycle and saved-view mutation counts are derived "
             "transactionally from canonical mutations. Saved-view applies "
-            "and decision-audit opens are directional client-side counters. "
-            "None is model accuracy, completed diligence, or a unique-parcel "
-            "count."
+            "and decision-audit/underwriting interactions are directional "
+            "client-side counters. None is model accuracy, completed "
+            "diligence, a valuation, or a unique-parcel count."
         )
     ]
     if not events:
@@ -211,13 +232,24 @@ def build_product_adoption_report(
             f"{decision_audit_opens}/{minimum_decision_audit_opens} opens across "
             f"{len(decision_audit_users)}/{minimum_decision_audit_users} users."
         )
+    if not underwriting_engagement_ready:
+        warnings.append(
+            "Underwriting engagement evidence is still collecting: "
+            f"{underwriting_opens}/{minimum_underwriting_opens} opens across "
+            f"{len(underwriting_open_users)}/"
+            f"{minimum_underwriting_open_users} users and "
+            f"{underwriting_adjustments}/{minimum_underwriting_adjustments} "
+            "first-adjustment events across "
+            f"{len(underwriting_adjustment_users)}/"
+            f"{minimum_underwriting_adjustment_users} users."
+        )
     if pilot_statuses.get("new", 0):
         warnings.append(
             f"{pilot_statuses['new']} pilot request(s) are waiting for review."
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v5",
+        "schema_version": "citylens/product-adoption-report@v6",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -272,6 +304,61 @@ def build_product_adoption_report(
                     "Directional evidence-audit engagement only; opens are "
                     "best-effort aggregate counters, not unique parcels, "
                     "completed diligence, lead quality, or model accuracy."
+                ),
+            },
+        },
+        "underwriting_engagement": {
+            "opened": underwriting_opens,
+            "open_users": len(underwriting_open_users),
+            "first_adjustments": underwriting_adjustments,
+            "adjustment_users": len(underwriting_adjustment_users),
+            "entry_points": {
+                "underwrite_tab": sources.get(
+                    "underwriting_opened:underwrite_tab", 0
+                ),
+                "base_assumptions": sources.get(
+                    "underwriting_assumptions_changed:base_assumptions", 0
+                ),
+            },
+            "directional_adjustment_to_open_ratio": (
+                round(underwriting_adjustments / underwriting_opens, 6)
+                if underwriting_opens > 0
+                else None
+            ),
+            "evidence_gate": {
+                "status": (
+                    "ready" if underwriting_engagement_ready else "collecting"
+                ),
+                "minimum_opens": minimum_underwriting_opens,
+                "minimum_open_users": minimum_underwriting_open_users,
+                "minimum_first_adjustments": minimum_underwriting_adjustments,
+                "minimum_adjustment_users": (
+                    minimum_underwriting_adjustment_users
+                ),
+                "opens_remaining": max(
+                    0, minimum_underwriting_opens - underwriting_opens
+                ),
+                "open_users_remaining": max(
+                    0,
+                    minimum_underwriting_open_users
+                    - len(underwriting_open_users),
+                ),
+                "first_adjustments_remaining": max(
+                    0,
+                    minimum_underwriting_adjustments
+                    - underwriting_adjustments,
+                ),
+                "adjustment_users_remaining": max(
+                    0,
+                    minimum_underwriting_adjustment_users
+                    - len(underwriting_adjustment_users),
+                ),
+                "claim": (
+                    "Directional underwriting engagement only; opens and "
+                    "first adjustments are best-effort aggregate counters, "
+                    "not unique parcels, assumption values, saved scenarios, "
+                    "valuations, transactions, lead quality, or model "
+                    "accuracy."
                 ),
             },
         },

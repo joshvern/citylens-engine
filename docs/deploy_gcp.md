@@ -516,6 +516,33 @@ failures open or update one GitHub incident, successful recovery closes it,
 and every run retains the JSON report for 90 days. Manual runs are read-only
 and do not mutate the incident unless `manage_incident` is selected.
 
+### 10.3) Runtime identity verification
+
+The production service and job must use the canonical `citylens-api` and
+`citylens-worker` service accounts. Do not reuse the quarantined historical
+`citylens-api-sa` or `citylens-worker-sa` identities. Verify the complete
+runtime and IAM boundary:
+
+```bash
+./.venv/bin/python scripts/verify_runtime_iam.py \
+  --project "${PROJECT_ID}" \
+  --region "${CITYLENS_REGION}" \
+  --bucket "${CITYLENS_BUCKET}"
+```
+
+The command requires read access to Cloud Run service/job configuration,
+project IAM, bucket IAM, service-account policy, and service-account key
+metadata. It never modifies IAM. It requires:
+
+- the API service to run as `citylens-api` with Datastore user, Cloud Run
+  developer, artifact object-viewer, and self token-creator access
+- the worker job to run as `citylens-worker` with Datastore user and artifact
+  object-admin access
+- no user-managed keys on either current runtime identity
+- both legacy `*-sa` identities disabled, keyless, and absent from project,
+  bucket, and self-impersonation bindings
+- no redundant `roles/datastore.viewer` grant on the worker
+
 Run a restore drill only into a new named database. Never overwrite or delete
 the production `(default)` database:
 

@@ -38,6 +38,7 @@ jobs:
           scripts/configure_production_recovery.py
           scripts/verify_production_monitoring.py
           scripts/verify_production_recovery.py
+          scripts/verify_runtime_iam.py
 
       - name: Lint worker
         run: ./.venv/bin/python -m ruff check worker/services worker/worker.py worker/test_*.py

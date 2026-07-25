@@ -405,6 +405,22 @@ metadata permissions; it cannot read Firestore documents or GCS objects.
 See [docs/deploy_gcp.md](docs/deploy_gcp.md) for billing, restore-drill, and
 post-restore TTL/security requirements.
 
+Verify that the deployed API and worker use the canonical keyless runtime
+identities, have no user-managed keys, and that quarantined legacy identities
+cannot retain project, bucket, or self-impersonation grants:
+
+```bash
+./.venv/bin/python scripts/verify_runtime_iam.py \
+  --project citylens-001 \
+  --region us-central1 \
+  --bucket citylens-001-artifacts
+```
+
+The verifier is read-only and fails closed on runtime-account substitution,
+missing required roles, redundant worker Firestore viewer access, any
+user-managed service-account key, or a re-enabled/re-authorized legacy
+identity.
+
 ## Product adoption report
 
 After deploying the product-event endpoint and enabling Firestore TTL, operators

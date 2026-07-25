@@ -208,6 +208,31 @@ def validate_web_copy(html: str) -> list[str]:
     return failures
 
 
+def validate_pilot_probe_response(
+    status: int,
+    headers: dict[str, str],
+) -> list[str]:
+    """Accept validation rejection or an already-enforced public rate limit.
+
+    The smoke probe deliberately submits an empty body and must never create a
+    pilot request. Repeated verifier runs can exhaust the endpoint's small
+    public token bucket, so HTTP 429 is an equally safe terminal response.
+    """
+
+    failures: list[str] = []
+    _expect(
+        status in {422, 429},
+        f"pilot requests: invalid anonymous submission returned {status}",
+        failures,
+    )
+    _expect(
+        "no-store" in headers.get("cache-control", "").lower(),
+        "pilot requests: rejection response is cacheable",
+        failures,
+    )
+    return failures
+
+
 def validate_security_headers(
     headers: dict[str, str],
     *,
@@ -2092,17 +2117,11 @@ def run_checks(
         pilot_request_result.elapsed_seconds,
         3,
     )
-    _expect(
-        pilot_request_result.status == 422,
-        "pilot requests: invalid anonymous submission returned "
-        f"{pilot_request_result.status}",
-        failures,
-    )
-    _expect(
-        "no-store"
-        in pilot_request_result.headers.get("cache-control", "").lower(),
-        "pilot requests: validation response is cacheable",
-        failures,
+    failures.extend(
+        validate_pilot_probe_response(
+            pilot_request_result.status,
+            pilot_request_result.headers,
+        )
     )
 
     methodology_result = _request(

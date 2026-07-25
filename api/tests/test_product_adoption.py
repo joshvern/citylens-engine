@@ -34,6 +34,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-24",
                 "events": {
                     "parcel_opened": 3,
+                    "decision_audit_opened": 2,
                     "saved_view_applied": 2,
                     "saved_view_created": 1,
                     "workflow_created": 1,
@@ -41,6 +42,8 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "sources": {
                     "parcel_opened:map": 2,
                     "parcel_opened:ranking": 1,
+                    "decision_audit_opened:decision_posture": 1,
+                    "decision_audit_opened:audit_tab": 1,
                     "saved_view_applied:saved_views": 2,
                     "saved_view_created:saved_views": 1,
                     "workflow_created:header": 1,
@@ -52,11 +55,13 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-23",
                 "events": {
                     "parcel_opened": 1,
+                    "decision_audit_opened": 1,
                     "saved_view_applied": 1,
                     "workflow_updated": 2,
                 },
                 "sources": {
                     "parcel_opened:direct": 1,
+                    "decision_audit_opened:audit_tab": 1,
                     "saved_view_applied:saved_views": 1,
                     "workflow_updated:workflow": 2,
                 },
@@ -125,8 +130,9 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 11
+    assert report["total_events"] == 14
     assert report["events"] == {
+        "decision_audit_opened": 3,
         "parcel_opened": 4,
         "saved_view_applied": 3,
         "saved_view_created": 1,
@@ -134,9 +140,30 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "workflow_updated": 2,
     }
     assert report["parcel_open_to_workflow_create_rate"] == 0.25
+    assert report["decision_audit_engagement"] == {
+        "opened": 3,
+        "users": 2,
+        "entry_points": {
+            "decision_posture": 1,
+            "audit_tab": 2,
+        },
+        "parcel_open_to_audit_rate": 0.75,
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_opens": 10,
+            "minimum_users": 3,
+            "opens_remaining": 7,
+            "users_remaining": 1,
+            "claim": (
+                "Directional evidence-audit engagement only; opens are "
+                "best-effort aggregate counters, not unique parcels, "
+                "completed diligence, lead quality, or model accuracy."
+            ),
+        },
+    }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v4"
+    assert report["schema_version"] == "citylens/product-adoption-report@v5"
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,
@@ -199,6 +226,12 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["active_users"] == 0
     assert report["total_events"] == 0
     assert report["parcel_open_to_workflow_create_rate"] is None
+    assert report["decision_audit_engagement"]["opened"] == 0
+    assert report["decision_audit_engagement"]["parcel_open_to_audit_rate"] is None
+    assert (
+        report["decision_audit_engagement"]["evidence_gate"]["status"]
+        == "collecting"
+    )
     assert report["workflow_inventory"]["records"] == 0
     assert report["saved_view_inventory"]["records"] == 0
     assert report["pilot_intake"]["records"] == 0
@@ -241,6 +274,43 @@ def test_saved_view_reuse_gate_requires_applies_across_multiple_users() -> None:
     assert gate["status"] == "ready"
     assert gate["applies_remaining"] == 0
     assert gate["users_remaining"] == 0
+
+
+def test_decision_audit_gate_requires_opens_across_multiple_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {
+                    "parcel_opened": 1,
+                    "decision_audit_opened": 1,
+                },
+                "sources": {
+                    "parcel_opened:ranking": 1,
+                    (
+                        "decision_audit_opened:decision_posture"
+                        if index % 2 == 0
+                        else "decision_audit_opened:audit_tab"
+                    ): 1,
+                },
+            }
+            for index in range(10)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["decision_audit_engagement"]
+    assert engagement["opened"] == 10
+    assert engagement["users"] == 3
+    assert engagement["entry_points"] == {
+        "decision_posture": 5,
+        "audit_tab": 5,
+    }
+    assert engagement["parcel_open_to_audit_rate"] == 1.0
+    assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["evidence_gate"]["opens_remaining"] == 0
+    assert engagement["evidence_gate"]["users_remaining"] == 0
 
 
 def test_workflow_inventory_query_reads_only_archive_state_and_user_parent() -> None:

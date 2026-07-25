@@ -74,6 +74,7 @@ def build_product_adoption_report(
     rejected_rows = 0
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
+    decision_audit_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -103,6 +104,8 @@ def build_product_adoption_report(
                 saved_view_event_users.add(user_id)
             if row_events.get("saved_view_applied", 0) > 0:
                 saved_view_apply_users.add(user_id)
+            if row_events.get("decision_audit_opened", 0) > 0:
+                decision_audit_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -165,6 +168,13 @@ def build_product_adoption_report(
     parcel_opens = events.get("parcel_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
+    decision_audit_opens = events.get("decision_audit_opened", 0)
+    minimum_decision_audit_opens = 10
+    minimum_decision_audit_users = 3
+    decision_audit_engagement_ready = (
+        decision_audit_opens >= minimum_decision_audit_opens
+        and len(decision_audit_users) >= minimum_decision_audit_users
+    )
     minimum_saved_view_applies = 10
     minimum_saved_view_apply_users = 3
     saved_view_reuse_ready = (
@@ -176,8 +186,9 @@ def build_product_adoption_report(
             "Parcel opens are directional client-side counters; workflow "
             "lifecycle and saved-view mutation counts are derived "
             "transactionally from canonical mutations. Saved-view applies "
-            "are directional client-side counters. None is model accuracy "
-            "or a unique-parcel count."
+            "and decision-audit opens are directional client-side counters. "
+            "None is model accuracy, completed diligence, or a unique-parcel "
+            "count."
         )
     ]
     if not events:
@@ -194,13 +205,19 @@ def build_product_adoption_report(
             f"{saved_view_applies}/{minimum_saved_view_applies} applies across "
             f"{len(saved_view_apply_users)}/{minimum_saved_view_apply_users} users."
         )
+    if not decision_audit_engagement_ready:
+        warnings.append(
+            "Decision-audit engagement evidence is still collecting: "
+            f"{decision_audit_opens}/{minimum_decision_audit_opens} opens across "
+            f"{len(decision_audit_users)}/{minimum_decision_audit_users} users."
+        )
     if pilot_statuses.get("new", 0):
         warnings.append(
             f"{pilot_statuses['new']} pilot request(s) are waiting for review."
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v4",
+        "schema_version": "citylens/product-adoption-report@v5",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -219,6 +236,45 @@ def build_product_adoption_report(
             if parcel_opens > 0
             else None
         ),
+        "decision_audit_engagement": {
+            "opened": decision_audit_opens,
+            "users": len(decision_audit_users),
+            "entry_points": {
+                "decision_posture": sources.get(
+                    "decision_audit_opened:decision_posture", 0
+                ),
+                "audit_tab": sources.get(
+                    "decision_audit_opened:audit_tab", 0
+                ),
+            },
+            "parcel_open_to_audit_rate": (
+                round(decision_audit_opens / parcel_opens, 6)
+                if parcel_opens > 0
+                else None
+            ),
+            "evidence_gate": {
+                "status": (
+                    "ready"
+                    if decision_audit_engagement_ready
+                    else "collecting"
+                ),
+                "minimum_opens": minimum_decision_audit_opens,
+                "minimum_users": minimum_decision_audit_users,
+                "opens_remaining": max(
+                    0, minimum_decision_audit_opens - decision_audit_opens
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_decision_audit_users
+                    - len(decision_audit_users),
+                ),
+                "claim": (
+                    "Directional evidence-audit engagement only; opens are "
+                    "best-effort aggregate counters, not unique parcels, "
+                    "completed diligence, lead quality, or model accuracy."
+                ),
+            },
+        },
         "excluded_or_invalid_rows": rejected_rows,
         "workflow_inventory": {
             "records": workflow_records,

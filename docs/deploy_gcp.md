@@ -484,6 +484,37 @@ the first 26 hours after initial schedule creation only, add
 configuration drift, an overdue first backup, a stale backup, or an expired
 backup.
 
+The repository's daily
+`recovery-verification.yml` workflow runs this verifier independently of an
+operator workstation. Configure these repository variables:
+
+```text
+CITYLENS_GCP_PROJECT=citylens-001
+CITYLENS_GCP_REGION=us-central1
+CITYLENS_ARTIFACT_BUCKET=citylens-001-artifacts
+GCP_RECOVERY_WORKLOAD_IDENTITY_PROVIDER=<provider resource name>
+GCP_RECOVERY_VERIFIER_SERVICE_ACCOUNT=<read-only verifier service account>
+```
+
+The workload identity provider must restrict tokens to
+`joshvern/citylens-engine` on `refs/heads/master`. Grant its service account a
+custom role containing only:
+
+```text
+datastore.databases.get
+datastore.backupSchedules.get
+datastore.backupSchedules.list
+datastore.backups.get
+datastore.backups.list
+storage.buckets.get
+```
+
+The workflow always passes `--allow-collecting`, but that flag remains bounded
+inside the verifier: after 26 hours without a first backup it fails. Scheduled
+failures open or update one GitHub incident, successful recovery closes it,
+and every run retains the JSON report for 90 days. Manual runs are read-only
+and do not mutate the incident unless `manage_incident` is selected.
+
 Run a restore drill only into a new named database. Never overwrite or delete
 the production `(default)` database:
 

@@ -402,6 +402,11 @@ def test_index_exposes_only_active_generation_prospective_status(
     monkeypatch,
 ) -> None:
     _set_required_env(monkeypatch)
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+    )
     generation = "20260723T230308737433Z-aaaaaaaaaaaa"
     fake = _make_atomic_fake_gcs(
         ["brooklyn"],
@@ -428,17 +433,40 @@ def test_index_exposes_only_active_generation_prospective_status(
     assert '"bbl"' not in serialized
     assert "matched_filings" not in serialized
     assert "object_name" not in serialized
+    assert body["prospective_validation_health"] == {
+        "status": "current",
+        "reason": "current",
+        "observation_lag_days": 1,
+        "max_observation_lag_days": 8,
+        "next_monitor_due_on": "2026-07-31",
+        "oldest_official_source_updated_at": (
+            "2026-07-23T20:00:00Z"
+        ),
+    }
 
 
 @pytest.mark.parametrize(
     "failure",
-    ["generation", "private_field", "maturity_telemetry"],
+    [
+        "generation",
+        "private_field",
+        "maturity_telemetry",
+        "future_source",
+        "future_issue",
+        "naive_source",
+        "observation_identity",
+    ],
 )
 def test_index_hides_untrusted_prospective_status(
     monkeypatch,
     failure: str,
 ) -> None:
     _set_required_env(monkeypatch)
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+    )
     generation = "20260723T230308737433Z-aaaaaaaaaaaa"
     fake = _make_atomic_fake_gcs(
         ["brooklyn"],
@@ -452,8 +480,40 @@ def test_index_hides_untrusted_prospective_status(
         status["cohort_id"] = status["source_generation"]
     elif failure == "private_field":
         status["matched_filings"] = [{"bbl": "3000000001"}]
-    else:
+    elif failure == "maturity_telemetry":
         status["elapsed_days"] = 364
+    elif failure == "future_source":
+        status["official_sources"][0]["rows_updated_at"] = (
+            "2026-07-25T00:00:00+00:00"
+        )
+    elif failure == "future_issue":
+        status.update(
+            {
+                "issued_at": "2026-07-25T23:03:08.737433+00:00",
+                "observation_starts_on": "2026-07-26",
+                "observed_through": "2026-07-25",
+                "matures_at": "2027-07-25T23:03:08.737433+00:00",
+            }
+        )
+        status["report_reference"]["observation_id"] = (
+            "20260725-aaaaaaaaaaaa"
+        )
+        status["report_reference"]["object_name"] = (
+            "parcel-intel/v1/prospective-cohorts/"
+            f"{generation}/reports/20260725-aaaaaaaaaaaa.json"
+        )
+    elif failure == "naive_source":
+        status["official_sources"][0]["rows_updated_at"] = (
+            "2026-07-23T21:00:00"
+        )
+    else:
+        status["report_reference"]["observation_id"] = (
+            "20260722-aaaaaaaaaaaa"
+        )
+        status["report_reference"]["object_name"] = (
+            "parcel-intel/v1/prospective-cohorts/"
+            f"{generation}/reports/20260722-aaaaaaaaaaaa.json"
+        )
     fake._store["parcel-intel/v1/prospective-validation.json"] = (
         json.dumps(status).encode("utf-8")
     )
@@ -462,7 +522,49 @@ def test_index_hides_untrusted_prospective_status(
     response = TestClient(app).get("/v1/parcel-intel/index")
 
     assert response.status_code == 200
-    assert response.json()["prospective_validation"] is None
+    body = response.json()
+    assert body["prospective_validation"] is None
+    assert body["prospective_validation_health"]["status"] == "unavailable"
+    assert (
+        body["prospective_validation_health"]["reason"]
+        == "status_missing_or_invalid"
+    )
+
+
+def test_index_marks_overdue_prospective_monitor_stale(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 8, 2, 12, tzinfo=timezone.utc),
+    )
+    generation = "20260723T230308737433Z-aaaaaaaaaaaa"
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        generation=generation,
+    )
+    fake._store["parcel-intel/v1/prospective-validation.json"] = (
+        json.dumps(_prospective_status(generation)).encode("utf-8")
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prospective_validation"] is not None
+    assert body["prospective_validation_health"] == {
+        "status": "stale",
+        "reason": "observation_lag_exceeded",
+        "observation_lag_days": 10,
+        "max_observation_lag_days": 8,
+        "next_monitor_due_on": "2026-07-31",
+        "oldest_official_source_updated_at": (
+            "2026-07-23T20:00:00Z"
+        ),
+    }
 
 
 def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:

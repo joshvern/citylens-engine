@@ -152,6 +152,19 @@ def _prospective_validation() -> dict:
     }
 
 
+def _prospective_validation_health() -> dict:
+    return {
+        "status": "current",
+        "reason": "current",
+        "observation_lag_days": 1,
+        "max_observation_lag_days": 8,
+        "next_monitor_due_on": "2026-07-31",
+        "oldest_official_source_updated_at": (
+            "2026-07-23T20:00:00+00:00"
+        ),
+    }
+
+
 def _index() -> dict:
     data_sources = {
         key: {
@@ -183,6 +196,9 @@ def _index() -> dict:
         "age_days": 1.0,
         "stale": False,
         "prospective_validation": _prospective_validation(),
+        "prospective_validation_health": (
+            _prospective_validation_health()
+        ),
         "data_sources": data_sources,
         "boroughs": [
             {"slug": slug, "display_name": slug.title(), "count": 1000}
@@ -388,6 +404,8 @@ def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None
         validate_prospective_validation(
             _prospective_validation(),
             feed_generation=generation,
+            health=_prospective_validation_health(),
+            now=datetime(2026, 7, 24, tzinfo=timezone.utc),
         )
         == []
     )
@@ -398,6 +416,8 @@ def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None
     failures = validate_prospective_validation(
         bad,
         feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
     assert any("premature metrics" in failure for failure in failures)
@@ -415,9 +435,57 @@ def test_prospective_validation_rejects_inconsistent_maturity_telemetry() -> Non
     failures = validate_prospective_validation(
         bad,
         feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
     assert "index: prospective maturity telemetry is inconsistent" in failures
+
+
+def test_prospective_validation_rejects_ambiguous_time_and_identity() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    bad = deepcopy(_prospective_validation())
+    bad["official_sources"][0]["rows_updated_at"] = (
+        "2026-07-23T21:00:00"
+    )
+    bad["report_reference"]["observation_id"] = (
+        "20260722-aaaaaaaaaaaa"
+    )
+
+    failures = validate_prospective_validation(
+        bad,
+        feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    assert (
+        "index: prospective official DOB source timestamps are invalid"
+        in failures
+    )
+    assert "index: prospective report reference is invalid" in failures
+
+
+def test_prospective_validation_rejects_stale_monitor_health() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    health = _prospective_validation_health()
+    health.update(
+        {
+            "status": "stale",
+            "reason": "observation_lag_exceeded",
+            "observation_lag_days": 10,
+        }
+    )
+
+    failures = validate_prospective_validation(
+        _prospective_validation(),
+        feed_generation=generation,
+        health=health,
+        now=datetime(2026, 8, 2, tzinfo=timezone.utc),
+    )
+
+    assert "index: prospective validation monitor is stale" in failures
+    assert not any("freshness telemetry" in failure for failure in failures)
 
 
 def test_index_validator_rejects_land_use_source_reconciliation_leakage() -> None:

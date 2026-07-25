@@ -622,6 +622,18 @@ class ParcelProspectiveValidationStatus(BaseModel):
     def validate_maturity_contract(
         self,
     ) -> ParcelProspectiveValidationStatus:
+        if (
+            self.issued_at.utcoffset() is None
+            or self.matures_at.utcoffset() is None
+            or any(
+                source.rows_updated_at.utcoffset() is None
+                for source in self.official_sources
+            )
+        ):
+            raise PydanticCustomError(
+                "prospective_timezone",
+                "prospective timestamps must be timezone-aware",
+            )
         if self.cohort_id != self.source_generation:
             raise PydanticCustomError(
                 "prospective_generation_mismatch",
@@ -764,10 +776,77 @@ class ParcelProspectiveValidationStatus(BaseModel):
             f"/{self.cohort_id}/reports/"
             f"{self.report_reference.observation_id}.json"
         )
-        if not self.report_reference.object_name.endswith(expected_suffix):
+        if (
+            not self.report_reference.object_name.endswith(
+                expected_suffix
+            )
+            or not self.report_reference.observation_id.startswith(
+                self.observed_through.strftime("%Y%m%d") + "-"
+            )
+        ):
             raise PydanticCustomError(
                 "prospective_report_reference",
-                "report object does not match cohort and observation",
+                "report identity does not match cohort and observation date",
+            )
+        return self
+
+
+class ParcelProspectiveValidationHealth(BaseModel):
+    """API-derived freshness state for the weekly prospective monitor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["current", "stale", "unavailable"]
+    reason: Literal[
+        "current",
+        "observation_lag_exceeded",
+        "status_missing_or_invalid",
+    ]
+    observation_lag_days: Optional[int] = Field(default=None, ge=0)
+    max_observation_lag_days: Literal[8] = 8
+    next_monitor_due_on: Optional[date] = None
+    oldest_official_source_updated_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def validate_freshness_contract(
+        self,
+    ) -> ParcelProspectiveValidationHealth:
+        if self.status == "unavailable":
+            if (
+                self.reason != "status_missing_or_invalid"
+                or self.observation_lag_days is not None
+                or self.next_monitor_due_on is not None
+                or self.oldest_official_source_updated_at is not None
+            ):
+                raise PydanticCustomError(
+                    "prospective_health_unavailable",
+                    "unavailable health must not imply source freshness",
+                )
+            return self
+        if (
+            self.observation_lag_days is None
+            or self.next_monitor_due_on is None
+            or self.oldest_official_source_updated_at is None
+        ):
+            raise PydanticCustomError(
+                "prospective_health_incomplete",
+                "available health requires lag, due date, and source timestamp",
+            )
+        expected_status = (
+            "stale"
+            if self.observation_lag_days
+            > self.max_observation_lag_days
+            else "current"
+        )
+        expected_reason = (
+            "observation_lag_exceeded"
+            if expected_status == "stale"
+            else "current"
+        )
+        if self.status != expected_status or self.reason != expected_reason:
+            raise PydanticCustomError(
+                "prospective_health_consistency",
+                "health status and observation lag disagree",
             )
         return self
 
@@ -784,6 +863,12 @@ class ParcelIntelIndex(BaseModel):
     prospective_validation: Optional[
         ParcelProspectiveValidationStatus
     ] = None
+    prospective_validation_health: ParcelProspectiveValidationHealth = Field(
+        default_factory=lambda: ParcelProspectiveValidationHealth(
+            status="unavailable",
+            reason="status_missing_or_invalid",
+        )
+    )
     # Freshness telemetry, derived from `generated_at` at request time.
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None

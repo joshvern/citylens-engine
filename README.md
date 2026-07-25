@@ -95,7 +95,11 @@ Current pinned release tag:
   keeps immature final precision null, and exposes only aggregate hit-rate
   evidence, maturity dates, official DOB source dates, and a digest-bound
   private-report reference. Invalid, stale-generation, or parcel-bearing
-  status payloads are discarded rather than served.
+  status payloads are discarded rather than served. The API separately derives
+  `prospective_validation_health` from the accepted observation date. The
+  weekly monitor remains `current` through an eight-day lag, becomes `stale`
+  after that deadline, and is `unavailable` when the pointer is missing or
+  invalid. Future or timezone-ambiguous source evidence is rejected.
 - Parcel Intelligence accepts the `published_sweep@v5` contract: separate
   historical-model, borough-acquisition, and citywide-acquisition ranks;
   explicit eligibility/exclusion evidence; owner provenance; current-project
@@ -278,6 +282,7 @@ generation objects, and the web route:
 ```
 
 It fails on stale/missing feeds (including every required source SLA),
+an unavailable or overdue prospective-validation monitor,
 quality-gate regressions, missing or failed
 generation-diff evidence, input-feature drift, score-replay mismatch,
 unreviewed drift overrides, model-provenance drift,

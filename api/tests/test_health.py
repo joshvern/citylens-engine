@@ -84,6 +84,9 @@ def test_ready_ok_with_fresh_parcel_intel() -> None:
     assert body["parcel_intel"]["present"] is True
     assert body["parcel_intel"]["stale"] is False
     assert body["parcel_intel"]["age_days"] is not None
+    assert body["parcel_intel"]["prospective_validation"]["status"] == (
+        "unavailable"
+    )
     assert store.pings == 1
 
 
@@ -115,7 +118,19 @@ def test_ready_200_degraded_when_parcel_intel_missing() -> None:
     body = resp.json()
     assert body["ok"] is True
     assert body["firestore"] is True
-    assert body["parcel_intel"] == {"present": False, "age_days": None, "stale": False}
+    assert body["parcel_intel"] == {
+        "present": False,
+        "age_days": None,
+        "stale": False,
+        "prospective_validation": {
+            "status": "unavailable",
+            "reason": "status_missing_or_invalid",
+            "observation_lag_days": None,
+            "max_observation_lag_days": 8,
+            "next_monitor_due_on": None,
+            "oldest_official_source_updated_at": None,
+        },
+    }
 
 
 def test_ready_200_degraded_when_manifest_corrupt() -> None:

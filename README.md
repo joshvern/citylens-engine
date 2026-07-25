@@ -400,9 +400,8 @@ The daily
 workflow runs the same check through a repository- and `master`-restricted
 keyless identity. It retains the JSON evidence for 90 days and reconciles a
 deduplicated GitHub production incident on scheduled failure and recovery.
-Its custom Google Cloud role can read only database settings, backup schedule
-and backup metadata, and bucket policy metadata; it cannot read Firestore
-documents or GCS objects.
+Its custom Google Cloud role has only seven database, backup, and bucket
+metadata permissions; it cannot read Firestore documents or GCS objects.
 See [docs/deploy_gcp.md](docs/deploy_gcp.md) for billing, restore-drill, and
 post-restore TTL/security requirements.
 

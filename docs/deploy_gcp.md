@@ -502,6 +502,7 @@ custom role containing only:
 
 ```text
 datastore.databases.get
+datastore.databases.getMetadata
 datastore.backupSchedules.get
 datastore.backupSchedules.list
 datastore.backups.get

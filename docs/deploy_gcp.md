@@ -432,6 +432,92 @@ Review display names and resource IDs before every delete. Re-running the
 configuration command with `--apply` recreates missing managed resources, but
 does not recreate notification channels.
 
+### 10.2) Production data recovery
+
+Firestore application state is not reconstructable from the public parcel
+feed. The production baseline therefore requires:
+
+- database delete protection
+- seven-day point-in-time recovery
+- one daily backup schedule with 14-day retention
+- one Sunday backup schedule with 14-week retention
+
+The GCS artifact bucket must retain public access prevention, uniform
+bucket-level access, and at least seven days of soft delete. CityLens artifacts
+use immutable generation/object names plus an atomic active pointer, so object
+versioning is not added as a redundant unbounded storage layer.
+
+PITR data, backup storage, restore, and clone operations are billable Firestore
+features. Check current database size and the Google Cloud billing account
+before applying, and keep a budget alert around the project. Backup creation
+does not consume application reads/writes or affect live database performance.
+
+Preview and apply the idempotent baseline:
+
+```bash
+./.venv/bin/python scripts/configure_production_recovery.py \
+  --project "${PROJECT_ID}" \
+  --bucket "${CITYLENS_BUCKET}"
+
+./.venv/bin/python scripts/configure_production_recovery.py \
+  --project "${PROJECT_ID}" \
+  --bucket "${CITYLENS_BUCKET}" \
+  --apply
+```
+
+The command never deletes a backup, schedule, object, bucket, or database. It
+fails closed on duplicate schedules and only raises protections or repairs the
+two bounded retention schedules.
+
+Verify configuration and backup freshness:
+
+```bash
+./.venv/bin/python scripts/verify_production_recovery.py \
+  --project "${PROJECT_ID}" \
+  --bucket "${CITYLENS_BUCKET}" \
+  --location "${CITYLENS_REGION}"
+```
+
+The strict verifier requires a `READY` backup no more than 36 hours old. During
+the first 26 hours after initial schedule creation only, add
+`--allow-collecting`; this permits a `collecting` result but never accepts
+configuration drift, an overdue first backup, a stale backup, or an expired
+backup.
+
+Run a restore drill only into a new named database. Never overwrite or delete
+the production `(default)` database:
+
+```bash
+BACKUP="$(
+  gcloud firestore backups list \
+    --project "${PROJECT_ID}" \
+    --location "${CITYLENS_REGION}" \
+    --filter="state=READY AND database='projects/${PROJECT_ID}/databases/(default)'" \
+    --sort-by='~snapshotTime' \
+    --limit=1 \
+    --format='value(name)'
+)"
+
+DRILL_DATABASE="recovery-drill-$(date -u +%Y%m%d)"
+
+gcloud firestore databases restore \
+  --project "${PROJECT_ID}" \
+  --source-backup "${BACKUP}" \
+  --destination-database "${DRILL_DATABASE}"
+```
+
+Verify the restored database independently before removing it:
+
+- confirm required collections and representative documents exist
+- confirm IAM denies application traffic until explicitly authorized
+- reapply and verify TTL field policies before any production cutover
+- record the backup ID, snapshot time, operation ID, duration, and reviewer
+- delete only the named drill database after the review is complete
+
+Firestore backups include data and index configuration, but not TTL policies
+or Firebase Security Rules. A restore is therefore evidence of data
+recoverability, not by itself a complete application cutover.
+
 The same verifier requires API and web HSTS, clickjacking protection, MIME
 sniffing protection, explicit referrer policy, disabled unused browser
 capabilities, and the narrow enforced CSP baseline. It also rejects

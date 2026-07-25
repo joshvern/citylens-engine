@@ -543,6 +543,40 @@ metadata. It never modifies IAM. It requires:
   bucket, and self-impersonation bindings
 - no redundant `roles/datastore.viewer` grant on the worker
 
+### 10.4) Production operations dashboard
+
+The managed Cloud Monitoring dashboard is intentionally derived from native
+production metrics and the existing alert policies. Preview, validate, and
+apply it:
+
+```bash
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project "${PROJECT_ID}"
+
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project "${PROJECT_ID}" \
+  --validate-only
+
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project "${PROJECT_ID}" \
+  --apply
+```
+
+The command is dry-run by default, fails closed on duplicate managed
+dashboards, uses etags for updates, and detects drift across:
+
+- API request rate grouped by response class
+- API p95 request latency and active instance count
+- worker completed executions grouped by result
+- Firestore read, write, and delete operation rates
+- current production incidents and filtered API/worker error logs
+- independent API and web uptime pass fractions
+
+The dashboard does not replace alert delivery, scheduled verification, or
+retained reports. It is an operator view over those signals. Do not infer a
+notification destination from the dashboard; attach only an explicitly
+verified Monitoring channel.
+
 Run a restore drill only into a new named database. Never overwrite or delete
 the production `(default)` database:
 

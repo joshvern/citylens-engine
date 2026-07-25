@@ -421,6 +421,27 @@ missing required roles, redundant worker Firestore viewer access, any
 user-managed service-account key, or a re-enabled/re-authorized legacy
 identity.
 
+Create the managed production operations dashboard only after previewing and
+API-validating the exact definition:
+
+```bash
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project citylens-001
+
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project citylens-001 \
+  --validate-only
+
+./.venv/bin/python scripts/configure_production_dashboard.py \
+  --project citylens-001 \
+  --apply
+```
+
+The dashboard combines incidents, filtered API/worker errors, API request
+rate and p95 latency, instance count, worker execution results, Firestore
+document operations, and both independent uptime signals. Re-running the
+command is idempotent and reports dashboard drift before changing it.
+
 ## Product adoption report
 
 After deploying the product-event endpoint and enabling Firestore TTL, operators

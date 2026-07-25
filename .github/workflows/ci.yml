@@ -34,6 +34,7 @@ jobs:
         run: >-
           ./.venv/bin/python -m ruff check
           api/app api/tests
+          scripts/configure_production_dashboard.py
           scripts/configure_production_monitoring.py
           scripts/configure_production_recovery.py
           scripts/verify_production_monitoring.py

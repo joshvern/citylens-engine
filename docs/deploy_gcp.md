@@ -333,6 +333,105 @@ remain diagnostic unless an operator explicitly enables the
 scheduled failures before the feed crosses the API's 45-day stale threshold
 or the prospective monitor crosses its eight-day observation-lag limit.
 
+### 10.1) Independent Google Cloud uptime monitoring
+
+The GitHub production smoke is comprehensive, but it is not the only
+availability signal. CityLens also manages two public Google Cloud uptime
+checks and two alert policies:
+
+- API readiness and prospective-evidence freshness
+- Parcel Intelligence web availability
+- regional failure from at least two Google probe locations
+- TLS certificate expiration within 15 days
+
+The operator needs `monitoring.uptimeCheckConfigs.*` and
+`monitoring.alertPolicies.*` permissions; `roles/monitoring.editor` is the
+standard project role that contains the required mutations. Ensure the API is
+enabled:
+
+```bash
+gcloud services enable monitoring.googleapis.com \
+  --project "${PROJECT_ID}"
+```
+
+Preview the exact idempotent plan:
+
+```bash
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project "${PROJECT_ID}"
+```
+
+Apply only after reviewing the plan:
+
+```bash
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project "${PROJECT_ID}" \
+  --apply
+```
+
+The command fails closed on duplicate display names and immutable target drift.
+It updates mutable contract drift, preserves existing notification channels,
+and never deletes resources. It checks the API for HTTP 200 plus the exact
+`"status":"current"` marker; therefore stale prospective evidence triggers the
+same independent failure signal as an unavailable API.
+
+List notification channels before choosing one:
+
+```bash
+gcloud beta monitoring channels list \
+  --project "${PROJECT_ID}" \
+  --format='table(name,displayName,type,enabled)'
+```
+
+Create and verify a channel in Cloud Monitoring, then attach its fully
+qualified resource name:
+
+```bash
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project "${PROJECT_ID}" \
+  --notification-channel \
+  "projects/${PROJECT_ID}/notificationChannels/<CHANNEL_ID>" \
+  --apply
+```
+
+An enabled policy with no channel still opens Cloud Monitoring incidents but
+does not deliver a page. Channel ownership and destination verification are an
+operator decision; do not guess them in automation.
+
+Verify fresh multi-region observations after at least one five-minute probe
+cycle:
+
+```bash
+./.venv/bin/python scripts/verify_production_monitoring.py \
+  --project "${PROJECT_ID}"
+```
+
+The verifier is read-only and fails on missing checks, fewer than three fresh
+regions, stale observations, or any latest regional failure.
+
+Rollback is deliberately manual. Delete alert policies before their uptime
+checks so no policy is left pointing at a missing metric:
+
+```bash
+gcloud monitoring policies list \
+  --project "${PROJECT_ID}" \
+  --format='table(name,displayName,enabled)'
+
+gcloud monitoring policies delete <POLICY_ID> \
+  --project "${PROJECT_ID}"
+
+gcloud monitoring uptime list-configs \
+  --project "${PROJECT_ID}" \
+  --format='table(name,displayName)'
+
+gcloud monitoring uptime delete <CHECK_ID> \
+  --project "${PROJECT_ID}"
+```
+
+Review display names and resource IDs before every delete. Re-running the
+configuration command with `--apply` recreates missing managed resources, but
+does not recreate notification channels.
+
 The same verifier requires API and web HSTS, clickjacking protection, MIME
 sniffing protection, explicit referrer policy, disabled unused browser
 capabilities, and the narrow enforced CSP baseline. It also rejects

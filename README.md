@@ -306,6 +306,58 @@ create or close incidents unless the operator explicitly enables the
 `manage_incident` dispatch input. A failure is an incident signal; do not
 weaken a contract assertion merely to make the scheduled check green.
 
+## Independent Cloud Monitoring
+
+Google Cloud uptime checks provide an external availability signal that does
+not depend on GitHub Actions. The managed contract covers:
+
+- `https://api.citylens.dev/v1/health/ready`: HTTPS, valid TLS, HTTP 200, and
+  the content marker `"status":"current"` so an overdue prospective monitor is
+  treated as a failure.
+- `https://www.citylens.dev/parcel-intel`: HTTPS, valid TLS, HTTP 200, and the
+  Parcel Intelligence product heading.
+- Six Google probe regions on a five-minute cadence.
+- An alert after at least two regions fail, plus a TLS-expiry alert at 15 days.
+
+The configuration command is read-only unless `--apply` is passed:
+
+```bash
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project citylens-001
+
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project citylens-001 \
+  --apply
+```
+
+Existing notification channels are preserved. Attach a verified channel
+additively by passing its full Cloud Monitoring resource name:
+
+```bash
+./.venv/bin/python scripts/configure_production_monitoring.py \
+  --project citylens-001 \
+  --notification-channel \
+  projects/citylens-001/notificationChannels/<CHANNEL_ID> \
+  --apply
+```
+
+Policies without a notification channel still create incidents in Cloud
+Monitoring, but they do not page an operator. Do not attach an unverified
+address or webhook merely to make the channel list non-empty.
+
+After applying, prove that Google is actually collecting healthy observations
+from multiple locations:
+
+```bash
+./.venv/bin/python scripts/verify_production_monitoring.py \
+  --project citylens-001
+```
+
+The verifier fails if a managed check is missing, fewer than three locations
+report within 20 minutes, any latest observation fails, or any observation is
+too old. See [docs/deploy_gcp.md](docs/deploy_gcp.md) for required permissions,
+channel setup, and rollback.
+
 ## Product adoption report
 
 After deploying the product-event endpoint and enabling Firestore TTL, operators

@@ -60,7 +60,7 @@ def _http_json(method: str, url: str, *, api_key: str, body: dict | None = None,
     except HTTPError as e:
         try:
             err_body = e.read().decode("utf-8")
-        except Exception:
+        except (OSError, UnicodeError):
             err_body = ""
         raise RuntimeError(f"HTTP {e.code} calling {url}: {err_body or e.reason}") from e
     except URLError as e:
@@ -123,7 +123,7 @@ def _probe_url(url: str, *, timeout_s: float = 30.0) -> None:
     except HTTPError as e:
         try:
             err_body = e.read().decode("utf-8")
-        except Exception:
+        except (OSError, UnicodeError):
             err_body = ""
         raise RuntimeError(f"HTTP {e.code} fetching artifact {url}: {err_body or e.reason}") from e
     except URLError as e:
@@ -139,7 +139,7 @@ def _fetch_json_url(url: str, *, timeout_s: float = 30.0) -> Any:
     except HTTPError as e:
         try:
             err_body = e.read().decode("utf-8")
-        except Exception:
+        except (OSError, UnicodeError):
             err_body = ""
         raise RuntimeError(f"HTTP {e.code} fetching artifact {url}: {err_body or e.reason}") from e
     except URLError as e:
@@ -148,16 +148,25 @@ def _fetch_json_url(url: str, *, timeout_s: float = 30.0) -> Any:
 
 def _validate_summary_json(summary: Any, *, run_id: str) -> None:
     if not isinstance(summary, dict):
-        raise RuntimeError(f"run_summary.json for run_id={run_id} did not return a JSON object")
+        raise TypeError(
+            f"run_summary.json for run_id={run_id} did not return a JSON object"
+        )
     if not isinstance(summary.get("qa"), dict):
-        raise RuntimeError(f"run_summary.json for run_id={run_id} is missing a qa object")
+        raise TypeError(
+            f"run_summary.json for run_id={run_id} is missing a qa object"
+        )
     if not isinstance(summary.get("performance"), dict):
-        raise RuntimeError(f"run_summary.json for run_id={run_id} is missing a performance object")
+        raise TypeError(
+            f"run_summary.json for run_id={run_id} is missing a performance object"
+        )
 
 
 def _validate_completed_run(run: Any, *, run_id: str) -> None:
     if not isinstance(run, dict):
-        raise RuntimeError(f"Expected dict run response for run_id={run_id}, got {type(run).__name__}")
+        raise TypeError(
+            f"Expected dict run response for run_id={run_id}, "
+            f"got {type(run).__name__}"
+        )
 
     artifacts = _normalize_artifacts(run.get("artifacts"))
     missing = [name for name in REQUIRED_ARTIFACTS if name not in artifacts]
@@ -181,7 +190,7 @@ def _validate_completed_run(run: Any, *, run_id: str) -> None:
 def _load_addresses(path: Path) -> list[DemoAddress]:
     raw = _read_json(path)
     if not isinstance(raw, list):
-        raise RuntimeError("demo_addresses.json must be a JSON list")
+        raise TypeError("demo_addresses.json must be a JSON list")
 
     out: list[DemoAddress] = []
     for item in raw:
@@ -299,7 +308,7 @@ def main(argv: list[str]) -> int:
                 time.sleep(float(args.poll_interval_seconds))
 
             _validate_completed_run(run, run_id=run_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Keep evaluating the batch so deploy logs show every bad demo,
             # but do not publish a partial demo_runs.json.
             print(f"  SKIP {demo.label}: {exc}", file=sys.stderr)

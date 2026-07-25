@@ -2,7 +2,13 @@ name: ci
 
 on:
   push:
+    branches:
+      - master
   pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -25,7 +31,11 @@ jobs:
         run: uv sync --all-packages --all-extras --frozen
 
       - name: Lint API
-        run: ./.venv/bin/python -m ruff check api/app api/tests
+        run: >-
+          ./.venv/bin/python -m ruff check
+          api/app api/tests
+          scripts/configure_production_monitoring.py
+          scripts/verify_production_monitoring.py
 
       - name: Lint worker
         run: ./.venv/bin/python -m ruff check worker/services worker/worker.py worker/test_*.py

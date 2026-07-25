@@ -81,13 +81,18 @@ owns the browser UI.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
     and saved-view mutation counters are updated in the same transaction as
-    their canonical mutations; parcel opens, decision-audit opens, and
-    saved-view applies remain directional client counters. Decision-audit
-    events identify only the posture or tab entry point. A daily keyless GitHub
-    workflow combines the retained counters with field-projected aggregate
+    their canonical mutations; parcel opens, decision-audit opens,
+    underwriting opens/first adjustments, and saved-view applies remain
+    directional client counters. Decision-audit events identify only the
+    posture or tab entry point. Underwriting events identify only the
+    Underwrite tab or first base-assumption adjustment and never contain a
+    parcel, input value, range, or result. A daily keyless GitHub workflow
+    combines the retained counters with field-projected aggregate
     `parcel_workflow` and `parcel_saved_searches` inventory. It labels the
     decision-audit engagement gate `collecting` until at least 10 opens exist
-    across at least three users, and labels the activation gate
+    across at least three users; labels the underwriting engagement gate
+    `collecting` until at least 10 opens and five first adjustments exist,
+    with each behavior spanning at least three users; and labels the activation gate
     `collecting` until at least 30 workflow records exist across at least three
     users, and the saved-view-reuse gate `collecting` until at least 10 applies
     exist across at least three users. No user, parcel, saved-view name, search

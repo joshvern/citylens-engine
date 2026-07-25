@@ -287,6 +287,34 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "decision_audit_opened",
         "source": "decision_posture",
     }
+    underwriting_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "underwriting_opened",
+            "source": "underwrite_tab",
+        },
+    )
+    assert underwriting_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "underwriting_opened",
+        "source": "underwrite_tab",
+    }
+    underwriting_changed = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "underwriting_assumptions_changed",
+            "source": "base_assumptions",
+        },
+    )
+    assert underwriting_changed.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "underwriting_assumptions_changed",
+        "source": "base_assumptions",
+    }
     mismatched = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -305,6 +333,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched_audit_source.status_code == 422
+    mismatched_underwriting_source = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "underwriting_assumptions_changed",
+            "source": "underwrite_tab",
+        },
+    )
+    assert mismatched_underwriting_source.status_code == 422
     identifying = client.post(
         "/v1/parcel-intel/product-events",
         json={

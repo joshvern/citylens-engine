@@ -282,6 +282,271 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def validate_prospective_validation(
+    status: Any,
+    *,
+    feed_generation: Any,
+) -> list[str]:
+    """Adversarially verify the parcel-free live-cohort public contract."""
+    failures: list[str] = []
+    _expect(
+        isinstance(status, dict),
+        "index: prospective validation status is missing",
+        failures,
+    )
+    if not isinstance(status, dict):
+        return failures
+    _expect(
+        status.get("schema")
+        == "citylens-parcel-intel/prospective-validation-status@v1",
+        "index: prospective validation schema is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(feed_generation, str)
+        and status.get("cohort_id") == feed_generation
+        and status.get("source_generation") == feed_generation,
+        "index: prospective validation does not match the active feed",
+        failures,
+    )
+    _expect(
+        status.get("label_definition") == "dob_nb_job_filing",
+        "index: prospective validation target is invalid",
+        failures,
+    )
+    measurement_status = status.get("measurement_status")
+    _expect(
+        measurement_status
+        in {"awaiting_post_issue_data", "collecting", "mature"},
+        "index: prospective measurement status is invalid",
+        failures,
+    )
+    issued_at = _parse_timestamp(status.get("issued_at"))
+    matures_at = _parse_timestamp(status.get("matures_at"))
+    try:
+        observation_start = datetime.fromisoformat(
+            str(status.get("observation_starts_on"))
+        ).date()
+        observed_through = datetime.fromisoformat(
+            str(status.get("observed_through"))
+        ).date()
+    except ValueError:
+        observation_start = None
+        observed_through = None
+    _expect(
+        issued_at is not None
+        and matures_at is not None
+        and (matures_at - issued_at).days == 365,
+        "index: prospective maturity horizon is invalid",
+        failures,
+    )
+    _expect(
+        issued_at is not None
+        and observation_start is not None
+        and observation_start.toordinal() == issued_at.date().toordinal() + 1,
+        "index: prospective observation start is invalid",
+        failures,
+    )
+    if measurement_status == "awaiting_post_issue_data":
+        _expect(
+            observed_through is not None
+            and observation_start is not None
+            and observed_through < observation_start,
+            "index: awaiting prospective status has an invalid source date",
+            failures,
+        )
+    elif measurement_status == "collecting":
+        _expect(
+            observed_through is not None
+            and observation_start is not None
+            and matures_at is not None
+            and observation_start <= observed_through < matures_at.date(),
+            "index: collecting prospective status has an invalid source date",
+            failures,
+        )
+    elif measurement_status == "mature":
+        _expect(
+            observed_through is not None
+            and matures_at is not None
+            and observed_through >= matures_at.date(),
+            "index: mature prospective status is premature",
+            failures,
+        )
+    expected_elapsed_days = None
+    if issued_at is not None and observed_through is not None:
+        expected_elapsed_days = min(
+            365,
+            max(0, (observed_through - issued_at.date()).days),
+        )
+    elapsed_days = status.get("elapsed_days")
+    maturity_fraction = status.get("maturity_fraction")
+    _expect(
+        expected_elapsed_days is not None
+        and elapsed_days == expected_elapsed_days
+        and isinstance(maturity_fraction, (int, float))
+        and not isinstance(maturity_fraction, bool)
+        and abs(maturity_fraction - expected_elapsed_days / 365) <= 1e-12,
+        "index: prospective maturity telemetry is inconsistent",
+        failures,
+    )
+
+    metrics = status.get("metrics")
+    _expect(
+        isinstance(metrics, dict)
+        and set(metrics) == {"top_100", "top_1000"},
+        "index: prospective metrics are incomplete",
+        failures,
+    )
+    for name, expected_count in (("top_100", 100), ("top_1000", 1000)):
+        metric = metrics.get(name) if isinstance(metrics, dict) else None
+        _expect(
+            isinstance(metric, dict)
+            and metric.get("eligible_parcels") == expected_count,
+            f"index: prospective {name} population is invalid",
+            failures,
+        )
+        if not isinstance(metric, dict):
+            continue
+        hits = metric.get("observed_nb_filing_hits")
+        lower_bound = metric.get("observed_precision_lower_bound")
+        final_precision = metric.get("final_precision")
+        final_interval = metric.get("final_precision_95ci")
+        if measurement_status == "awaiting_post_issue_data":
+            _expect(
+                hits is None
+                and lower_bound is None
+                and final_precision is None
+                and final_interval is None,
+                f"index: prospective {name} exposes premature metrics",
+                failures,
+            )
+        elif measurement_status == "collecting":
+            _expect(
+                isinstance(hits, int)
+                and not isinstance(hits, bool)
+                and 0 <= hits <= expected_count
+                and isinstance(lower_bound, (int, float))
+                and not isinstance(lower_bound, bool)
+                and abs(lower_bound - hits / expected_count) <= 1e-12
+                and final_precision is None
+                and final_interval is None,
+                f"index: prospective {name} lower bound is invalid",
+                failures,
+            )
+        elif measurement_status == "mature":
+            _expect(
+                isinstance(hits, int)
+                and not isinstance(hits, bool)
+                and 0 <= hits <= expected_count
+                and isinstance(lower_bound, (int, float))
+                and not isinstance(lower_bound, bool)
+                and abs(lower_bound - hits / expected_count) <= 1e-12
+                and isinstance(final_precision, (int, float))
+                and not isinstance(final_precision, bool)
+                and abs(final_precision - lower_bound) <= 1e-12
+                and isinstance(final_interval, list)
+                and len(final_interval) == 2,
+                f"index: prospective {name} final metric is incomplete",
+                failures,
+            )
+            _expect(
+                isinstance(final_interval, list)
+                and len(final_interval) == 2
+                and all(
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and 0 <= value <= 1
+                    for value in final_interval
+                )
+                and isinstance(final_precision, (int, float))
+                and final_interval[0]
+                <= final_precision
+                <= final_interval[1],
+                f"index: prospective {name} confidence interval is invalid",
+                failures,
+            )
+
+    historical = status.get("historical_benchmark")
+    _expect(
+        isinstance(historical, dict)
+        and historical.get("not_current_cohort_accuracy") is True,
+        "index: historical and live validation scopes are conflated",
+        failures,
+    )
+    sources = status.get("official_sources")
+    _expect(
+        isinstance(sources, list)
+        and len(sources) == 2
+        and {item.get("dataset_id") for item in sources if isinstance(item, dict)}
+        == {"ic3t-wcy2", "w9ak-ipjd"},
+        "index: prospective official DOB sources are incomplete",
+        failures,
+    )
+    _expect(
+        isinstance(sources, list)
+        and all(
+            isinstance(item, dict)
+            and _parse_timestamp(item.get("rows_updated_at")) is not None
+            for item in sources
+        ),
+        "index: prospective official DOB source timestamps are invalid",
+        failures,
+    )
+    report_reference = status.get("report_reference")
+    observation_id = (
+        report_reference.get("observation_id")
+        if isinstance(report_reference, dict)
+        else None
+    )
+    report_sha256 = (
+        report_reference.get("sha256")
+        if isinstance(report_reference, dict)
+        else None
+    )
+    _expect(
+        isinstance(report_reference, dict)
+        and isinstance(observation_id, str)
+        and len(observation_id) == 21
+        and observation_id[8] == "-"
+        and observation_id[:8].isdigit()
+        and all(character in "0123456789abcdef" for character in observation_id[9:])
+        and isinstance(report_sha256, str)
+        and len(report_sha256) == 64
+        and all(character in "0123456789abcdef" for character in report_sha256),
+        "index: prospective report reference is invalid",
+        failures,
+    )
+
+    forbidden = {
+        "address",
+        "bbl",
+        "email",
+        "matched_filings",
+        "owner",
+        "owner_name",
+        "phone",
+        "rank",
+        "score",
+        "score_calibrated",
+    }
+
+    def scan(value: Any, path: tuple[Any, ...] = ()) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if str(key).lower() in forbidden:
+                    failures.append(
+                        "index: prospective validation exposed private "
+                        f"field {'.'.join(map(str, path + (key,)))}"
+                    )
+                scan(item, path + (key,))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                scan(item, path + (index,))
+
+    scan(status)
+    return failures
+
+
 def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     _expect(
@@ -1186,6 +1451,12 @@ def validate_index(
         },
         "index: model ranking policy is invalid",
         failures,
+    )
+    failures.extend(
+        validate_prospective_validation(
+            index.get("prospective_validation"),
+            feed_generation=index.get("feed_generation"),
+        )
     )
     return failures
 

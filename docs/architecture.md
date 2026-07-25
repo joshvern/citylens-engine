@@ -42,6 +42,13 @@ owns the browser UI.
     count; readers validate all of these and retain a legacy-flat fallback.
     Generation-keyed caches prevent an in-flight old reader from repopulating a
     new generation's cache.
+  - The public index may include one
+    `prospective-validation-status@v1` projection produced by the independent
+    weekly ranking monitor. The API validates the complete maturity contract,
+    requires the status source generation to equal the active feed, rejects
+    unknown/private fields, and strips the private GCS object name before
+    serialization. A missing or invalid status is explicit `null`; historical
+    metrics never substitute for live-cohort evidence.
   - New manifests carry `generation_diff` evidence from the publisher:
     inventory turnover, top-rank retention, rank movement, score PSI, source
     vintages, model identity, cohorts, required-field coverage, full 142-column

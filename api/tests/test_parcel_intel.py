@@ -314,6 +314,67 @@ def _fresh_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _prospective_status(
+    generation: str,
+    *,
+    source_generation: str | None = None,
+) -> dict:
+    observation_id = "20260723-aaaaaaaaaaaa"
+    return {
+        "schema": (
+            "citylens-parcel-intel/prospective-validation-status@v1"
+        ),
+        "cohort_id": generation,
+        "source_generation": source_generation or generation,
+        "label_definition": "dob_nb_job_filing",
+        "measurement_status": "awaiting_post_issue_data",
+        "issued_at": "2026-07-23T23:03:08.737433+00:00",
+        "observation_starts_on": "2026-07-24",
+        "observed_through": "2026-07-23",
+        "matures_at": "2027-07-23T23:03:08.737433+00:00",
+        "elapsed_days": 0,
+        "maturity_fraction": 0.0,
+        "metrics": {
+            name: {
+                "eligible_parcels": count,
+                "observed_nb_filing_hits": None,
+                "observed_precision_lower_bound": None,
+                "final_precision": None,
+                "final_precision_95ci": None,
+            }
+            for name, count in (("top_100", 100), ("top_1000", 1000))
+        },
+        "historical_benchmark": {
+            "scope": "rolling_origin_latest_out_of_time",
+            "evaluation_window": "2025-2025",
+            "precision_at_100": 0.34,
+            "precision_at_1000": 0.104,
+            "not_current_cohort_accuracy": True,
+        },
+        "official_sources": [
+            {
+                "dataset_id": "ic3t-wcy2",
+                "rows_updated_at": "2026-07-23T21:00:00+00:00",
+            },
+            {
+                "dataset_id": "w9ak-ipjd",
+                "rows_updated_at": "2026-07-23T20:00:00+00:00",
+            },
+        ],
+        "report_reference": {
+            "observation_id": observation_id,
+            "object_name": (
+                "parcel-intel/v1/prospective-cohorts/"
+                f"{generation}/reports/{observation_id}.json"
+            ),
+            "sha256": "a" * 64,
+        },
+        "interpretation": (
+            "Immature metrics are lower bounds and do not measure seller intent."
+        ),
+    }
+
+
 def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     _set_required_env(monkeypatch)
     fake = _make_fake_gcs(["brooklyn", "manhattan"])
@@ -335,6 +396,73 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     # Cache header is the gating metric for whether Vercel/CDN edge-caches.
     assert "cache-control" in r.headers
     assert "s-maxage=600" in r.headers["cache-control"]
+
+
+def test_index_exposes_only_active_generation_prospective_status(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    generation = "20260723T230308737433Z-aaaaaaaaaaaa"
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        generation=generation,
+    )
+    fake._store["parcel-intel/v1/prospective-validation.json"] = (
+        json.dumps(_prospective_status(generation)).encode("utf-8")
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["feed_generation"] == generation
+    assert (
+        body["prospective_validation"]["measurement_status"]
+        == "awaiting_post_issue_data"
+    )
+    assert body["prospective_validation"]["metrics"]["top_100"][
+        "final_precision"
+    ] is None
+    serialized = json.dumps(body["prospective_validation"])
+    assert '"bbl"' not in serialized
+    assert "matched_filings" not in serialized
+    assert "object_name" not in serialized
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["generation", "private_field", "maturity_telemetry"],
+)
+def test_index_hides_untrusted_prospective_status(
+    monkeypatch,
+    failure: str,
+) -> None:
+    _set_required_env(monkeypatch)
+    generation = "20260723T230308737433Z-aaaaaaaaaaaa"
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        generation=generation,
+    )
+    status = _prospective_status(generation)
+    if failure == "generation":
+        status["source_generation"] = (
+            "20260723T230308737433Z-bbbbbbbbbbbb"
+        )
+        status["cohort_id"] = status["source_generation"]
+    elif failure == "private_field":
+        status["matched_filings"] = [{"bbl": "3000000001"}]
+    else:
+        status["elapsed_days"] = 364
+    fake._store["parcel-intel/v1/prospective-validation.json"] = (
+        json.dumps(status).encode("utf-8")
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 200
+    assert response.json()["prospective_validation"] is None
 
 
 def test_parcel_intel_sweep_returns_top_n_rows(monkeypatch) -> None:

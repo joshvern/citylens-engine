@@ -88,6 +88,14 @@ Current pinned release tag:
   CSV/export and compatibility. Public inventory is capped at 25 rows per
   borough with premium fields stripped; authenticated users can load 1,000
   rows per borough. Large JSON responses are gzip-compressed.
+- The public index carries a strict, parcel-free
+  `prospective-validation-status@v1` only when its source generation matches
+  the active atomic feed. It separates the live cohort's
+  awaiting/collecting/mature state from historical forward-test metrics,
+  keeps immature final precision null, and exposes only aggregate hit-rate
+  evidence, maturity dates, official DOB source dates, and a digest-bound
+  private-report reference. Invalid, stale-generation, or parcel-bearing
+  status payloads are discarded rather than served.
 - Parcel Intelligence accepts the `published_sweep@v5` contract: separate
   historical-model, borough-acquisition, and citywide-acquisition ranks;
   explicit eligibility/exclusion evidence; owner provenance; current-project

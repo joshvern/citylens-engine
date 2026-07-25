@@ -7,6 +7,7 @@ from scripts.verify_production import (
     evaluate_source_slas,
     validate_index,
     validate_map,
+    validate_pilot_probe_response,
     validate_prospective_validation,
     validate_public_decision_audit,
     validate_security_headers,
@@ -88,6 +89,19 @@ def test_web_copy_validator_checks_map_first_product_semantics() -> None:
     )
     assert failures == [
         "web: missing expected copy: Citywide opportunity explorer"
+    ]
+
+
+def test_pilot_probe_accepts_validation_or_rate_limit_but_not_success() -> None:
+    headers = {"cache-control": "private, no-store"}
+    assert validate_pilot_probe_response(422, headers) == []
+    assert validate_pilot_probe_response(429, headers) == []
+
+    assert validate_pilot_probe_response(200, headers) == [
+        "pilot requests: invalid anonymous submission returned 200"
+    ]
+    assert validate_pilot_probe_response(422, {}) == [
+        "pilot requests: rejection response is cacheable"
     ]
 
 

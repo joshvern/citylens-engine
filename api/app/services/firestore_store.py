@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .parcel_workflow_actions import (
     workflow_is_terminal,
@@ -44,6 +45,7 @@ USER_API_KEY_PREFIX = "clk_live_"
 USER_API_KEY_BYTES = 32
 PRODUCT_EVENT_RETENTION_DAYS = 90
 PRODUCT_EVENT_DAILY_LIMIT = 1_000
+PILOT_REQUEST_RETENTION_DAYS = 365
 
 
 def _hash_api_key(plaintext: str) -> str:
@@ -107,6 +109,7 @@ class FirestoreStore:
         auth_identities_collection: str = "auth_identities",
         usage_months_collection: str = "usage_months",
         api_keys_index_collection: str = "api_keys_by_hash",
+        pilot_requests_collection: str = "pilot_requests",
         client: firestore.Client | None = None,
     ) -> None:
         self.client = client or firestore.Client(project=project_id)
@@ -115,6 +118,7 @@ class FirestoreStore:
         self.auth_identities_collection = auth_identities_collection
         self.usage_months_collection = usage_months_collection
         self.api_keys_index_collection = api_keys_index_collection
+        self.pilot_requests_collection = pilot_requests_collection
 
     # ---------- Health ----------
 
@@ -123,6 +127,123 @@ class FirestoreStore:
         users collection. Raises on any transport/auth failure — callers
         (e.g. /v1/health/ready) decide how to surface that."""
         list(self.client.collection(self.users_collection).limit(1).stream())
+
+    # ---------- Pilot requests ----------
+
+    def create_pilot_request(
+        self,
+        *,
+        request_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create one durable, idempotent pilot request.
+
+        ``request_id`` is derived from an opaque client idempotency key rather
+        than contact information, so the document ID does not disclose or
+        enable dictionary attacks against an email address.
+        """
+
+        ref = self.client.collection(self.pilot_requests_collection).document(
+            request_id
+        )
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any]:
+            snap = ref.get(transaction=transaction)
+            if snap.exists:
+                return snap.to_dict() or {}
+            now = utcnow()
+            doc = {
+                **payload,
+                "request_id": request_id,
+                "status": "new",
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": now
+                + timedelta(days=PILOT_REQUEST_RETENTION_DAYS),
+            }
+            transaction.set(ref, doc)
+            return doc
+
+        def _op() -> dict[str, Any]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def list_pilot_requests(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        def _op() -> list[dict[str, Any]]:
+            collection = self.client.collection(self.pilot_requests_collection)
+            if status is None:
+                snapshots = (
+                    collection.order_by(
+                        "created_at",
+                        direction=firestore.Query.DESCENDING,
+                    )
+                    .limit(limit)
+                    .stream()
+                )
+            else:
+                # A single-field equality query avoids a composite-index
+                # dependency. Sort the bounded result in memory.
+                snapshots = (
+                    collection.where(
+                        filter=FieldFilter("status", "==", status)
+                    )
+                    .limit(limit)
+                    .stream()
+                )
+            rows = [snap.to_dict() or {} for snap in snapshots]
+            rows.sort(
+                key=lambda row: row.get("created_at") or datetime.min.replace(
+                    tzinfo=timezone.utc
+                ),
+                reverse=True,
+            )
+            return rows[:limit]
+
+        return retry_transient(_op)
+
+    def update_pilot_request_status(
+        self,
+        *,
+        request_id: str,
+        status: str,
+        admin_user_id: str,
+    ) -> dict[str, Any] | None:
+        ref = self.client.collection(self.pilot_requests_collection).document(
+            request_id
+        )
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any] | None:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return None
+            existing = snap.to_dict() or {}
+            if existing.get("status") == status:
+                return existing
+            now = utcnow()
+            updated = {
+                **existing,
+                "status": status,
+                "updated_at": now,
+                "status_updated_at": now,
+                "status_updated_by": admin_user_id,
+            }
+            transaction.set(ref, updated)
+            return updated
+
+        def _op() -> dict[str, Any] | None:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
 
     # ---------- Identity ----------
 

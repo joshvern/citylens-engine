@@ -41,6 +41,20 @@ CityLens has three different credentials. They protect different things and neve
 - Admin plan: unlimited.
 - Counters live in `usage_months/{app_user_id}_{YYYY-MM}` and are incremented inside a Firestore transaction at run create time. If the Cloud Run job trigger fails, the counter is decremented.
 
+## Public pilot intake
+
+- `POST /v1/pilot-requests` is intentionally unauthenticated so a prospective
+  design partner can request access before creating an account.
+- The contract requires explicit consent and an opaque idempotency key, bounds
+  every field, rejects unknown properties, uses a honeypot, and is throttled
+  by source IP without persisting that IP.
+- Stored records contain the contact fields the prospect submitted, but no IP,
+  user-agent, referrer, browser fingerprint, or analytics identifier.
+- Queue listing and controlled status changes require an admin identity and
+  return `private, no-store`.
+- `expires_at` is set to 365 days and must have Firestore TTL enabled for the
+  `pilot_requests` collection group.
+
 ## Mock auth (local/test only)
 
 - `CITYLENS_AUTH_PROVIDER=mock` requires `CITYLENS_ALLOW_MOCK_AUTH=true` to take effect. Without the explicit allow flag, the verifier returns 503.
@@ -54,7 +68,8 @@ CityLens has three different credentials. They protect different things and neve
 ## IAM
 
 - API service account needs permission to:
-  - read/write Firestore documents (`users`, `auth_identities`, `runs`, `usage_months`)
+  - read/write Firestore documents (`users`, `auth_identities`, `runs`,
+    `usage_months`, `pilot_requests`)
   - trigger Cloud Run Job executions
   - (optional) sign URLs / read GCS metadata
 - Worker service account needs permission to:

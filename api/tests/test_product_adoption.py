@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import get_args
 
 import pytest
 from scripts.report_product_adoption import (
+    _read_pilot_request_rows,
     _read_saved_view_rows,
     _read_workflow_rows,
 )
 
-from app.services.product_adoption import build_product_adoption_report
+from app.models.schemas import PilotPlan, PilotRequestStatus
+from app.services.product_adoption import (
+    PILOT_PLAN_VALUES,
+    PILOT_REQUEST_STATUS_VALUES,
+    build_product_adoption_report,
+)
+
+
+def test_pilot_report_enums_match_the_public_admin_contract() -> None:
+    assert PILOT_REQUEST_STATUS_VALUES == frozenset(
+        get_args(PilotRequestStatus)
+    )
+    assert PILOT_PLAN_VALUES == frozenset(get_args(PilotPlan))
 
 
 def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
@@ -76,6 +90,30 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "schema_version": "citylens/parcel-saved-search@v1",
             },
         ],
+        pilot_request_rows=[
+            {
+                "status": "new",
+                "plan": "acquisitions",
+                "created_at": datetime(
+                    2026, 7, 24, 11, 0, tzinfo=timezone.utc
+                ),
+                "work_email": "private@example.com",
+            },
+            {
+                "status": "contacted",
+                "plan": "concierge",
+                "created_at": datetime(
+                    2026, 6, 1, 11, 0, tzinfo=timezone.utc
+                ),
+            },
+            {
+                "status": "invented",
+                "plan": "concierge",
+                "created_at": datetime(
+                    2026, 7, 24, 11, 0, tzinfo=timezone.utc
+                ),
+            },
+        ],
         as_of=datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc),
         days=30,
     )
@@ -98,7 +136,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["parcel_open_to_workflow_create_rate"] == 0.25
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v3"
+    assert report["schema_version"] == "citylens/product-adoption-report@v4"
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,
@@ -118,6 +156,19 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["saved_view_reuse"]["event_users"] == 2
     assert report["saved_view_reuse"]["apply_users"] == 2
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"
+    assert report["pilot_intake"] == {
+        "records": 2,
+        "recent_requests": 1,
+        "status_counts": {"contacted": 1, "new": 1},
+        "plan_counts": {"acquisitions": 1, "concierge": 1},
+        "new_requests_waiting": 1,
+        "excluded_or_invalid_rows": 1,
+        "privacy_scope": (
+            "Aggregate counts only; excludes names, emails, companies, "
+            "roles, boroughs, workflow summaries, request IDs, and "
+            "network metadata."
+        ),
+    }
     assert report["activation_evidence_gate"] == {
         "status": "collecting",
         "minimum_workflow_records": 30,
@@ -136,6 +187,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     rendered = json.dumps(report)
     assert "private-user" not in rendered
     assert "3020960069" not in rendered
+    assert "private@example.com" not in rendered
 
 
 def test_report_handles_empty_window_without_false_rate() -> None:
@@ -149,6 +201,7 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["parcel_open_to_workflow_create_rate"] is None
     assert report["workflow_inventory"]["records"] == 0
     assert report["saved_view_inventory"]["records"] == 0
+    assert report["pilot_intake"]["records"] == 0
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"
     assert report["activation_evidence_gate"]["status"] == "collecting"
     assert any("No qualifying" in warning for warning in report["warnings"])
@@ -305,6 +358,64 @@ def test_saved_view_inventory_query_reads_only_schema_and_user_parent() -> None:
     assert "must never enter" not in rendered
     assert "confidential owner" not in rendered
     assert "PRIVATE OWNER" not in rendered
+
+
+def test_pilot_intake_query_reads_only_aggregate_fields() -> None:
+    class FakeSnapshot:
+        @staticmethod
+        def to_dict() -> dict[str, object]:
+            return {
+                "status": "new",
+                "plan": "acquisitions",
+                "created_at": datetime(
+                    2026, 7, 24, 12, 0, tzinfo=timezone.utc
+                ),
+                "name": "Private Person",
+                "work_email": "private@example.com",
+                "company": "PRIVATE COMPANY",
+                "workflow_summary": "must never enter the report",
+            }
+
+    class FakeQuery:
+        def __init__(self) -> None:
+            self.field_paths: list[str] | None = None
+
+        def select(self, field_paths: list[str]) -> "FakeQuery":
+            self.field_paths = field_paths
+            return self
+
+        @staticmethod
+        def stream() -> list[FakeSnapshot]:
+            return [FakeSnapshot()]
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.query = FakeQuery()
+            self.collection_id: str | None = None
+
+        def collection(self, collection_id: str) -> FakeQuery:
+            self.collection_id = collection_id
+            return self.query
+
+    client = FakeClient()
+    rows = _read_pilot_request_rows(client)  # type: ignore[arg-type]
+
+    assert client.collection_id == "pilot_requests"
+    assert client.query.field_paths == ["status", "plan", "created_at"]
+    assert rows == [
+        {
+            "status": "new",
+            "plan": "acquisitions",
+            "created_at": datetime(
+                2026, 7, 24, 12, 0, tzinfo=timezone.utc
+            ),
+        }
+    ]
+    rendered = json.dumps(rows, default=str)
+    assert "Private Person" not in rendered
+    assert "private@example.com" not in rendered
+    assert "PRIVATE COMPANY" not in rendered
+    assert "must never enter" not in rendered
 
 
 @pytest.mark.parametrize("days", [0, 91])

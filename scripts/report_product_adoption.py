@@ -80,6 +80,27 @@ def _read_saved_view_rows(client: firestore.Client) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_pilot_request_rows(
+    client: firestore.Client,
+) -> list[dict[str, Any]]:
+    """Read only non-identifying fields needed for intake operations."""
+
+    rows: list[dict[str, Any]] = []
+    query = client.collection("pilot_requests").select(
+        ["status", "plan", "created_at"]
+    )
+    for snapshot in query.stream():
+        row = snapshot.to_dict() or {}
+        rows.append(
+            {
+                "status": row.get("status"),
+                "plan": row.get("plan"),
+                "created_at": row.get("created_at"),
+            }
+        )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=_default_project())
@@ -94,6 +115,7 @@ def main() -> int:
         _read_rows(client),
         workflow_rows=_read_workflow_rows(client),
         saved_view_rows=_read_saved_view_rows(client),
+        pilot_request_rows=_read_pilot_request_rows(client),
         days=args.days,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True)

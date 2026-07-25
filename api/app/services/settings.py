@@ -86,6 +86,7 @@ class Settings:
     auth_identities_collection: str = "auth_identities"
     usage_months_collection: str = "usage_months"
     api_keys_index_collection: str = "api_keys_by_hash"
+    pilot_requests_collection: str = "pilot_requests"
 
     sign_urls: bool = False
     sign_url_ttl_seconds: int = 300
@@ -137,6 +138,9 @@ def get_settings() -> Settings:
         usage_months_collection=os.getenv("CITYLENS_USAGE_MONTHS_COLLECTION", "usage_months"),
         api_keys_index_collection=os.getenv(
             "CITYLENS_API_KEYS_INDEX_COLLECTION", "api_keys_by_hash"
+        ),
+        pilot_requests_collection=os.getenv(
+            "CITYLENS_PILOT_REQUESTS_COLLECTION", "pilot_requests"
         ),
         sign_urls=_env_bool("CITYLENS_SIGN_URLS", False),
         sign_url_ttl_seconds=_env_int("CITYLENS_SIGN_URL_TTL_SECONDS", 300),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
@@ -59,6 +60,118 @@ class DemoRunFeatured(BaseModel):
     baseline_year: int
     segmentation_backend: str
     outputs: list[str] = Field(default_factory=list)
+
+
+PilotPlan = Literal["acquisitions", "concierge"]
+PilotRequestStatus = Literal[
+    "new",
+    "contacted",
+    "qualified",
+    "declined",
+    "converted",
+    "spam",
+]
+PilotBorough = Literal[
+    "manhattan",
+    "brooklyn",
+    "queens",
+    "bronx",
+    "staten_island",
+]
+
+
+class PilotRequestCreate(BaseModel):
+    """Bounded public design-partner request.
+
+    The honeypot is accepted by the schema but excluded from persistence.
+    Network metadata is intentionally absent from this contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["citylens/pilot-request@v1"]
+    plan: PilotPlan
+    name: str = Field(..., min_length=2, max_length=100)
+    work_email: str = Field(..., min_length=5, max_length=254)
+    company: str = Field(..., min_length=2, max_length=120)
+    role: str = Field(default="", max_length=100)
+    team_size: Literal["1", "2-5", "6-20", "21+"]
+    target_boroughs: list[PilotBorough] = Field(
+        ..., min_length=1, max_length=5
+    )
+    workflow_summary: str = Field(..., min_length=20, max_length=1_200)
+    consent: Literal[True]
+    website: str = Field(default="", max_length=200, exclude=True)
+
+    @model_validator(mode="after")
+    def normalize_contact_fields(self) -> "PilotRequestCreate":
+        self.name = " ".join(self.name.split())
+        self.work_email = self.work_email.strip().lower()
+        self.company = " ".join(self.company.split())
+        self.role = " ".join(self.role.split())
+        self.workflow_summary = " ".join(self.workflow_summary.split())
+        self.website = self.website.strip()
+        self.target_boroughs = list(dict.fromkeys(self.target_boroughs))
+        if len(self.name) < 2:
+            raise PydanticCustomError(
+                "invalid_pilot_name",
+                "name must contain at least two non-whitespace characters",
+            )
+        if len(self.company) < 2:
+            raise PydanticCustomError(
+                "invalid_pilot_company",
+                "company must contain at least two non-whitespace characters",
+            )
+        if len(self.workflow_summary) < 20:
+            raise PydanticCustomError(
+                "invalid_pilot_workflow_summary",
+                "workflow_summary must contain at least 20 non-whitespace characters",
+            )
+        if not re.fullmatch(
+            r"[^@\s]+@[^@\s]+\.[^@\s]+",
+            self.work_email,
+        ):
+            raise PydanticCustomError(
+                "invalid_pilot_email",
+                "work_email must be a valid email address",
+            )
+        return self
+
+
+class PilotRequestReceipt(BaseModel):
+    schema_version: Literal["citylens/pilot-request-receipt@v1"]
+    request_id: str
+    status: Literal["received"]
+    created_at: datetime
+
+
+class PilotRequestAdminRecord(BaseModel):
+    schema_version: Literal["citylens/pilot-request@v1"]
+    request_id: str
+    status: PilotRequestStatus
+    plan: PilotPlan
+    name: str
+    work_email: str
+    company: str
+    role: str = ""
+    team_size: Literal["1", "2-5", "6-20", "21+"]
+    target_boroughs: list[PilotBorough]
+    workflow_summary: str
+    consent: Literal[True]
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime
+
+
+class PilotRequestAdminList(BaseModel):
+    items: list[PilotRequestAdminRecord] = Field(default_factory=list)
+
+
+class PilotRequestStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["citylens/pilot-request-status@v1"]
+    status: PilotRequestStatus
 
 
 # --- Parcel Intelligence (per-borough redev candidate ranking) ---

@@ -56,3 +56,14 @@ def demo_rate_limit(request: Request) -> None:
     # Basic, in-memory rate limiting per instance.
     # ~60 requests/min with a small burst.
     enforce_token_bucket(key=f"demo:{ip}", capacity=30, refill_per_second=1.0)
+
+
+def pilot_request_rate_limit(request: Request) -> None:
+    ip = _client_ip(request)
+    # Public conversion endpoint: allow a short retry burst, then roughly one
+    # additional submission every 20 minutes per API instance.
+    enforce_token_bucket(
+        key=f"pilot-request:{ip}",
+        capacity=3,
+        refill_per_second=1 / 1_200,
+    )

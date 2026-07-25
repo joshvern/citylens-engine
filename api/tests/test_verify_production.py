@@ -11,6 +11,7 @@ from scripts.verify_production import (
     validate_public_decision_audit,
     validate_security_headers,
     validate_sweep,
+    validate_web_copy,
     validate_workflow_methodology,
 )
 
@@ -70,6 +71,24 @@ def test_security_header_validator_covers_api_and_browser_contracts() -> None:
     assert any("HSTS" in failure for failure in failures)
     assert any("frame-ancestors" in failure for failure in failures)
     assert any("X-Powered-By" in failure for failure in failures)
+
+
+def test_web_copy_validator_checks_map_first_product_semantics() -> None:
+    html = """
+    <h1>Find the sites worth pursuing this week</h1>
+    <div>Published evidence</div>
+    <div>Citywide opportunity explorer</div>
+    <p>Filter the five-borough market</p>
+    <input placeholder="Address, BBL, owner, or zoning">
+    """
+    assert validate_web_copy(html) == []
+
+    failures = validate_web_copy(
+        html.replace("Citywide opportunity explorer", "Generic dashboard")
+    )
+    assert failures == [
+        "web: missing expected copy: Citywide opportunity explorer"
+    ]
 
 
 def _quality_row() -> dict:

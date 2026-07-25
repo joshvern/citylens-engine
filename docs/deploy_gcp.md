@@ -578,7 +578,39 @@ notification destination from the dashboard; attach only an explicitly
 verified Monitoring channel.
 
 Run a restore drill only into a new named database. Never overwrite or delete
-the production `(default)` database:
+the production `(default)` database.
+
+Before restoring, prove that the API and worker do not have an unconditional
+project-level `roles/datastore.user` binding:
+
+```bash
+gcloud projects get-iam-policy "${PROJECT_ID}" \
+  --flatten='bindings[].members' \
+  --filter="bindings.role=roles/datastore.user AND \
+bindings.members:(serviceAccount:citylens-api@${PROJECT_ID}.iam.gserviceaccount.com \
+OR serviceAccount:citylens-worker@${PROJECT_ID}.iam.gserviceaccount.com)" \
+  --format='table(bindings.role,bindings.members,bindings.condition)'
+```
+
+**Stop if either row has no condition.** Firestore requires the backup and
+restored database to be in the same project. An unconditional project binding
+therefore grants the application identity access to the drill database too.
+First migrate each runtime binding to the documented per-database IAM
+condition:
+
+```text
+resource.name == "projects/PROJECT_ID/databases/(default)"
+```
+
+Add and validate the conditional binding before removing the unconditional
+binding. Then run the complete public production verifier and runtime-IAM
+verifier. Do not continue unless live traffic remains healthy and the runtime
+verifier explicitly proves both identities are restricted to `(default)`.
+Console behavior is not acceptance evidence because Firestore's per-database
+IAM conditions are enforced by REST/client-library access, not by the Google
+Cloud console's database view.
+
+Only after that preflight passes:
 
 ```bash
 BACKUP="$(
@@ -602,7 +634,8 @@ gcloud firestore databases restore \
 Verify the restored database independently before removing it:
 
 - confirm required collections and representative documents exist
-- confirm IAM denies application traffic until explicitly authorized
+- use the API and worker identities to prove reads from the named database are
+  denied while `(default)` production reads remain healthy
 - reapply and verify TTL field policies before any production cutover
 - record the backup ID, snapshot time, operation ID, duration, and reviewer
 - delete only the named drill database after the review is complete

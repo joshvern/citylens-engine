@@ -370,6 +370,12 @@ from source feeds:
 - enforced private access and at least seven days of soft delete on the GCS
   artifact bucket
 
+The named-database restore drill has a mandatory IAM preflight. Do not restore
+while either runtime identity has an unconditional project-level
+`roles/datastore.user` binding: it would inherit access to the drill database.
+The deployment guide requires tested per-database conditions scoped to
+`(default)` before a restore can count as isolated recovery evidence.
+
 The configuration command is read-only by default:
 
 ```bash

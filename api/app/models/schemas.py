@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -534,14 +535,255 @@ class ParcelIntelBorough(BaseModel):
     top_score: Optional[float] = None
 
 
+class ParcelProspectiveValidationMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eligible_parcels: int = Field(ge=1, le=1000)
+    observed_nb_filing_hits: Optional[int] = Field(default=None, ge=0)
+    observed_precision_lower_bound: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    final_precision: Optional[float] = Field(default=None, ge=0, le=1)
+    final_precision_95ci: Optional[tuple[float, float]] = None
+
+
+class ParcelProspectiveValidationMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    top_100: ParcelProspectiveValidationMetric
+    top_1000: ParcelProspectiveValidationMetric
+
+
+class ParcelProspectiveHistoricalBenchmark(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Optional[str] = None
+    evaluation_window: Optional[str] = None
+    precision_at_100: Optional[float] = Field(default=None, ge=0, le=1)
+    precision_at_1000: Optional[float] = Field(default=None, ge=0, le=1)
+    not_current_cohort_accuracy: Literal[True]
+
+
+class ParcelProspectiveOfficialSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: Literal["ic3t-wcy2", "w9ak-ipjd"]
+    rows_updated_at: datetime
+
+
+class ParcelProspectiveReportReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation_id: str = Field(pattern=r"^[0-9]{8}-[0-9a-f]{12}$")
+    # Required to validate the private producer pointer, but never serialized
+    # through the public API.
+    object_name: str = Field(min_length=1, max_length=512, exclude=True)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ParcelProspectiveValidationStatus(BaseModel):
+    """Public-safe maturity state for one exact production ranking cohort."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: Literal[
+        "citylens-parcel-intel/prospective-validation-status@v1"
+    ] = Field(alias="schema")
+    cohort_id: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    source_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    label_definition: Literal["dob_nb_job_filing"]
+    measurement_status: Literal[
+        "awaiting_post_issue_data",
+        "collecting",
+        "mature",
+    ]
+    issued_at: datetime
+    observation_starts_on: date
+    observed_through: date
+    matures_at: datetime
+    elapsed_days: int = Field(ge=0, le=365)
+    maturity_fraction: float = Field(ge=0, le=1)
+    metrics: ParcelProspectiveValidationMetrics
+    historical_benchmark: ParcelProspectiveHistoricalBenchmark
+    official_sources: list[ParcelProspectiveOfficialSource] = Field(
+        min_length=2,
+        max_length=2,
+    )
+    report_reference: ParcelProspectiveReportReference
+    interpretation: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_maturity_contract(
+        self,
+    ) -> ParcelProspectiveValidationStatus:
+        if self.cohort_id != self.source_generation:
+            raise PydanticCustomError(
+                "prospective_generation_mismatch",
+                "cohort_id and source_generation must match",
+            )
+        if self.observation_starts_on != self.issued_at.date() + timedelta(
+            days=1
+        ):
+            raise PydanticCustomError(
+                "prospective_observation_start",
+                "observation must start after cohort issuance",
+            )
+        if self.matures_at != self.issued_at + timedelta(days=365):
+            raise PydanticCustomError(
+                "prospective_maturity_horizon",
+                "prospective cohort must use the fixed 365-day horizon",
+            )
+        if (
+            self.measurement_status == "awaiting_post_issue_data"
+            and self.observed_through >= self.observation_starts_on
+        ):
+            raise PydanticCustomError(
+                "prospective_status_date",
+                "awaiting status requires a pre-observation source date",
+            )
+        if (
+            self.measurement_status == "collecting"
+            and not (
+                self.observation_starts_on
+                <= self.observed_through
+                < self.matures_at.date()
+            )
+        ):
+            raise PydanticCustomError(
+                "prospective_status_date",
+                "collecting status date is outside the observation window",
+            )
+        if (
+            self.measurement_status == "mature"
+            and self.observed_through < self.matures_at.date()
+        ):
+            raise PydanticCustomError(
+                "prospective_status_date",
+                "mature status requires the complete observation horizon",
+            )
+        expected_elapsed_days = min(
+            365,
+            max(0, (self.observed_through - self.issued_at.date()).days),
+        )
+        if self.elapsed_days != expected_elapsed_days or not math.isclose(
+            self.maturity_fraction,
+            expected_elapsed_days / 365,
+            abs_tol=1e-12,
+        ):
+            raise PydanticCustomError(
+                "prospective_maturity_telemetry",
+                "elapsed days and maturity fraction disagree with source dates",
+            )
+        expected_counts = {"top_100": 100, "top_1000": 1000}
+        for name, expected in expected_counts.items():
+            metric = getattr(self.metrics, name)
+            if metric.eligible_parcels != expected:
+                raise PydanticCustomError(
+                    "prospective_metric_population",
+                    f"{name} eligible_parcels must equal {expected}",
+                )
+            if self.measurement_status == "awaiting_post_issue_data":
+                if (
+                    metric.observed_nb_filing_hits is not None
+                    or metric.observed_precision_lower_bound is not None
+                ):
+                    raise PydanticCustomError(
+                        "prospective_premature_observation",
+                        "pre-observation metrics must remain null",
+                    )
+            elif (
+                metric.observed_nb_filing_hits is None
+                or metric.observed_precision_lower_bound is None
+            ):
+                raise PydanticCustomError(
+                    "prospective_missing_observation",
+                    "started cohorts require observed lower-bound metrics",
+                )
+            elif (
+                metric.observed_nb_filing_hits > expected
+                or not math.isclose(
+                    metric.observed_precision_lower_bound,
+                    metric.observed_nb_filing_hits / expected,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise PydanticCustomError(
+                    "prospective_metric_consistency",
+                    "observed hits and precision lower bound disagree",
+                )
+            if self.measurement_status != "mature":
+                if (
+                    metric.final_precision is not None
+                    or metric.final_precision_95ci is not None
+                ):
+                    raise PydanticCustomError(
+                        "prospective_premature_final",
+                        "immature final metrics must remain null",
+                    )
+            elif (
+                metric.final_precision is None
+                or metric.final_precision_95ci is None
+            ):
+                raise PydanticCustomError(
+                    "prospective_missing_final",
+                    "mature cohorts require final precision and interval",
+                )
+            elif (
+                not math.isclose(
+                    metric.final_precision,
+                    metric.observed_precision_lower_bound or 0.0,
+                    abs_tol=1e-12,
+                )
+                or not 0 <= metric.final_precision_95ci[0] <= 1
+                or not 0 <= metric.final_precision_95ci[1] <= 1
+                or not (
+                    metric.final_precision_95ci[0]
+                    <= metric.final_precision
+                    <= metric.final_precision_95ci[1]
+                )
+            ):
+                raise PydanticCustomError(
+                    "prospective_final_consistency",
+                    "final precision and confidence interval disagree",
+                )
+        if {item.dataset_id for item in self.official_sources} != {
+            "ic3t-wcy2",
+            "w9ak-ipjd",
+        }:
+            raise PydanticCustomError(
+                "prospective_official_sources",
+                "both official DOB datasets are required",
+            )
+        expected_suffix = (
+            f"/{self.cohort_id}/reports/"
+            f"{self.report_reference.observation_id}.json"
+        )
+        if not self.report_reference.object_name.endswith(expected_suffix):
+            raise PydanticCustomError(
+                "prospective_report_reference",
+                "report object does not match cohort and observation",
+            )
+        return self
+
+
 class ParcelIntelIndex(BaseModel):
     boroughs: list[ParcelIntelBorough] = Field(default_factory=list)
     generated_at: Optional[datetime] = None
+    feed_generation: Optional[str] = None
     model_metadata: dict[str, Any] = Field(default_factory=dict)
     data_sources: dict[str, Any] = Field(default_factory=dict)
     quality_gate: dict[str, Any] = Field(default_factory=dict)
     generation_diff: dict[str, Any] = Field(default_factory=dict)
     inference_replay: dict[str, Any] = Field(default_factory=dict)
+    prospective_validation: Optional[
+        ParcelProspectiveValidationStatus
+    ] = None
     # Freshness telemetry, derived from `generated_at` at request time.
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None

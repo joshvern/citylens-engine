@@ -47,6 +47,7 @@ from ..models.schemas import (
     ParcelIntelParcelResponse,
     ParcelIntelRow,
     ParcelIntelSweepResponse,
+    ParcelProspectiveValidationStatus,
 )
 from ..services.auth import maybe_auth
 from ..services.auth_context import AuthContext
@@ -91,6 +92,9 @@ _BBL_BOROUGH = {
 }
 
 _GCS_PREFIX = "parcel-intel/v1"
+_PROSPECTIVE_STATUS_OBJECT = (
+    f"{_GCS_PREFIX}/prospective-validation.json"
+)
 _ATOMIC_PUBLICATION_SCHEMA = "citylens-parcel-intel/atomic-publication@v1"
 _GENERATION_RE = re.compile(
     r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
@@ -273,6 +277,10 @@ class ParcelIntelRegistry:
 
     def index(self, gcs: GcsArtifacts) -> ParcelIntelIndex:
         manifest = self._refresh_manifest(gcs)
+        prospective_validation = self._prospective_validation(
+            gcs,
+            manifest,
+        )
         boroughs = [
             ParcelIntelBorough(
                 slug=b["slug"],
@@ -297,14 +305,63 @@ class ParcelIntelRegistry:
         return ParcelIntelIndex(
             boroughs=boroughs,
             generated_at=generated_at,
+            feed_generation=manifest.get("artifact_generation"),
             model_metadata=manifest.get("model_metadata") or {},
             data_sources=manifest.get("data_sources") or {},
             quality_gate=manifest.get("quality_gate") or {},
             generation_diff=manifest.get("generation_diff") or {},
             inference_replay=manifest.get("inference_replay") or {},
+            prospective_validation=prospective_validation,
             age_days=age_days,
             stale=stale,
         )
+
+    def _prospective_validation(
+        self,
+        gcs: GcsArtifacts,
+        manifest: dict[str, Any],
+    ) -> ParcelProspectiveValidationStatus | None:
+        """Load only a strict, parcel-free status for the active generation."""
+        active_generation = manifest.get("artifact_generation")
+        if not isinstance(active_generation, str):
+            return None
+        try:
+            body, content_type = gcs.download_bytes(
+                object_name=_PROSPECTIVE_STATUS_OBJECT
+            )
+        except FileNotFoundError:
+            log.warning(
+                "parcel-intel prospective validation status is not published"
+            )
+            return None
+        if content_type not in {None, "application/json"}:
+            log.error(
+                "parcel-intel prospective validation has invalid content type: %s",
+                content_type,
+            )
+            return None
+        try:
+            payload = json.loads(body)
+            status = ParcelProspectiveValidationStatus.model_validate(payload)
+        except (
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            ValidationError,
+        ) as exc:
+            log.error(
+                "parcel-intel prospective validation is invalid: %s",
+                exc,
+            )
+            return None
+        if status.source_generation != active_generation:
+            log.warning(
+                "parcel-intel prospective validation is for generation %s, "
+                "but active feed is %s",
+                status.source_generation,
+                active_generation,
+            )
+            return None
+        return status
 
     def borough(
         self, gcs: GcsArtifacts, slug: str

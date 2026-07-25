@@ -7,6 +7,7 @@ from scripts.verify_production import (
     evaluate_source_slas,
     validate_index,
     validate_map,
+    validate_prospective_validation,
     validate_public_decision_audit,
     validate_security_headers,
     validate_sweep,
@@ -93,6 +94,64 @@ def _quality_row() -> dict:
     }
 
 
+def _prospective_validation() -> dict:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    observation_id = "20260723-aaaaaaaaaaaa"
+    return {
+        "schema": (
+            "citylens-parcel-intel/prospective-validation-status@v1"
+        ),
+        "cohort_id": generation,
+        "source_generation": generation,
+        "label_definition": "dob_nb_job_filing",
+        "measurement_status": "awaiting_post_issue_data",
+        "issued_at": "2026-07-23T00:00:00+00:00",
+        "observation_starts_on": "2026-07-24",
+        "observed_through": "2026-07-23",
+        "matures_at": "2027-07-23T00:00:00+00:00",
+        "elapsed_days": 0,
+        "maturity_fraction": 0.0,
+        "metrics": {
+            name: {
+                "eligible_parcels": count,
+                "observed_nb_filing_hits": None,
+                "observed_precision_lower_bound": None,
+                "final_precision": None,
+                "final_precision_95ci": None,
+            }
+            for name, count in (("top_100", 100), ("top_1000", 1000))
+        },
+        "historical_benchmark": {
+            "scope": "rolling_origin_latest_out_of_time",
+            "evaluation_window": "2025-2025",
+            "precision_at_100": 0.34,
+            "precision_at_1000": 0.104,
+            "not_current_cohort_accuracy": True,
+        },
+        "official_sources": [
+            {
+                "dataset_id": "ic3t-wcy2",
+                "rows_updated_at": "2026-07-23T21:00:00+00:00",
+            },
+            {
+                "dataset_id": "w9ak-ipjd",
+                "rows_updated_at": "2026-07-23T20:00:00+00:00",
+            },
+        ],
+        "report_reference": {
+            "observation_id": observation_id,
+            "object_name": (
+                "parcel-intel/v1/prospective-cohorts/"
+                f"{generation}/reports/{observation_id}.json"
+            ),
+            "sha256": "a" * 64,
+        },
+        "interpretation": (
+            "Immature metrics are lower bounds and do not measure seller intent."
+        ),
+    }
+
+
 def _index() -> dict:
     data_sources = {
         key: {
@@ -118,8 +177,12 @@ def _index() -> dict:
     }
     return {
         "generated_at": "2026-07-23T00:00:00Z",
+        "feed_generation": (
+            "20260723T000000000000Z-aaaaaaaaaaaa"
+        ),
         "age_days": 1.0,
         "stale": False,
+        "prospective_validation": _prospective_validation(),
         "data_sources": data_sources,
         "boroughs": [
             {"slug": slug, "display_name": slug.title(), "count": 1000}
@@ -317,6 +380,44 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("days old" in failure for failure in failures)
     assert "index: queens project_leakage_count is not zero" in failures
     assert any("prospective 2026 validation flag" in failure for failure in failures)
+
+
+def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    assert (
+        validate_prospective_validation(
+            _prospective_validation(),
+            feed_generation=generation,
+        )
+        == []
+    )
+
+    bad = deepcopy(_prospective_validation())
+    bad["matched_filings"] = [{"bbl": "3020960069", "rank": 1}]
+    bad["metrics"]["top_100"]["final_precision"] = 0.0
+    failures = validate_prospective_validation(
+        bad,
+        feed_generation=generation,
+    )
+
+    assert any("premature metrics" in failure for failure in failures)
+    assert any("matched_filings" in failure for failure in failures)
+    assert any(".bbl" in failure for failure in failures)
+    assert any(".rank" in failure for failure in failures)
+
+
+def test_prospective_validation_rejects_inconsistent_maturity_telemetry() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    bad = deepcopy(_prospective_validation())
+    bad["elapsed_days"] = 365
+    bad["maturity_fraction"] = 1.0
+
+    failures = validate_prospective_validation(
+        bad,
+        feed_generation=generation,
+    )
+
+    assert "index: prospective maturity telemetry is inconsistent" in failures
 
 
 def test_index_validator_rejects_land_use_source_reconciliation_leakage() -> None:

@@ -358,6 +358,46 @@ report within 20 minutes, any latest observation fails, or any observation is
 too old. See [docs/deploy_gcp.md](docs/deploy_gcp.md) for required permissions,
 channel setup, and rollback.
 
+## Production data recovery
+
+The production recovery baseline protects the state that cannot be rebuilt
+from source feeds:
+
+- Firestore database delete protection
+- seven-day Firestore point-in-time recovery
+- daily Firestore backups retained for 14 days
+- Sunday Firestore backups retained for 14 weeks
+- enforced private access and at least seven days of soft delete on the GCS
+  artifact bucket
+
+The configuration command is read-only by default:
+
+```bash
+./.venv/bin/python scripts/configure_production_recovery.py \
+  --project citylens-001 \
+  --bucket citylens-001-artifacts
+
+./.venv/bin/python scripts/configure_production_recovery.py \
+  --project citylens-001 \
+  --bucket citylens-001-artifacts \
+  --apply
+```
+
+After the first scheduled backup exists, require a recent restorable backup:
+
+```bash
+./.venv/bin/python scripts/verify_production_recovery.py \
+  --project citylens-001 \
+  --bucket citylens-001-artifacts \
+  --location us-central1
+```
+
+During the first 26 hours after creating schedules, operators may use
+`--allow-collecting` to accept healthy configuration while the first backup is
+pending. That flag does not accept configuration drift or an overdue backup.
+See [docs/deploy_gcp.md](docs/deploy_gcp.md) for billing, restore-drill, and
+post-restore TTL/security requirements.
+
 ## Product adoption report
 
 After deploying the product-event endpoint and enabling Firestore TTL, operators

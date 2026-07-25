@@ -205,9 +205,11 @@ Current pinned release tag:
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
-  parcel-open and saved-view-apply sources and rejects workflow lifecycle
-  claims, parcel IDs, addresses, owners, URLs, notes, tags, assignees,
-  contacts, and arbitrary properties. Workflow and saved-view lifecycle
+  parcel-open, decision-audit-open, and saved-view-apply sources and rejects
+  workflow lifecycle claims, parcel IDs, addresses, owners, URLs, notes, tags,
+  assignees, contacts, and arbitrary properties. Decision-audit opens identify
+  only whether the user entered through the overview posture or the Audit tab.
+  Workflow and saved-view lifecycle
   counters are instead derived by the API inside the same Firestore
   transaction as the canonical mutation. Effective no-op retries do not add
   events or counters. Firestore stores one aggregate counter document per
@@ -469,12 +471,13 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v4 report contains only window totals, event/source counts, active-user and
+The v5 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
-a directional parcel-open to workflow-create ratio, separate activation and
-saved-view-reuse evidence gates, and aggregate pilot-intake plan/status counts.
-Parcel opens and saved-view applies are best-effort client-side directional
-counters. Workflow lifecycle and saved-view create/update/delete counts are
+directional parcel-open to decision-audit and workflow-create ratios, separate
+decision-audit, activation, and saved-view-reuse evidence gates, and aggregate
+pilot-intake plan/status counts. Parcel opens, decision-audit opens, and
+saved-view applies are best-effort client-side directional counters. Workflow
+lifecycle and saved-view create/update/delete counts are
 transactionally derived from their canonical server mutations, so a dropped
 follow-up browser request cannot erase a real save and an unchanged retry
 cannot inflate the counters. The workflow

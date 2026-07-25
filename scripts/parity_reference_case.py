@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from shapely.errors import GEOSException
 from shapely.geometry import MultiPoint, shape
 from shapely.ops import unary_union
 
@@ -18,10 +19,10 @@ WORKER_ROOT = PROJECT_ROOT / "worker"
 if str(WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKER_ROOT))
 
-from services.imagery_inputs import ensure_work_dir_inputs  # noqa: E402
-from services.nysgis import NYSGISAPI  # noqa: E402
-from services.pipeline_runner import run as run_pipeline  # noqa: E402
-from services.settings import Settings  # noqa: E402
+from services.imagery_inputs import ensure_work_dir_inputs
+from services.nysgis import NYSGISAPI
+from services.pipeline_runner import run as run_pipeline
+from services.settings import Settings
 
 FIXED_REFERENCE_ADDRESS = "100 E 21st St Brooklyn, NY 11226"
 
@@ -103,7 +104,7 @@ def _load_geojson_features(
             continue
         try:
             features.append((_feature_kind(feature, default_kind), shape(geom)))
-        except Exception:
+        except (KeyError, TypeError, ValueError, GEOSException):
             continue
     return features
 
@@ -116,7 +117,7 @@ def _union_geometry(features: list[tuple[str, Any]], *, kind: str | None = None)
         return None
     try:
         return unary_union(geoms)
-    except Exception:
+    except GEOSException:
         return None
 
 
@@ -259,7 +260,7 @@ def _run_modular_case(
             gcs_client=gcs_client,
             bucket="null",
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return {}, {
             "ok": False,
             "error_code": "INPUT_PREP_FAILED",
@@ -296,13 +297,13 @@ def _run_modular_case(
             gcs=gcs,
             settings=settings,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         # The harness must still emit a report if the modular execution cannot complete.
         summary_path = run_dir / "run_summary.json"
         if summary_path.exists():
             try:
                 summary = _load_json(summary_path)
-            except Exception:
+            except (OSError, TypeError, ValueError):
                 summary = {}
         else:
             summary = {}
@@ -331,7 +332,7 @@ def build_parity_report(
 
     run_dir = work_dir / f"modular-{_slug(normalized_address)}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    manifest, summary = _run_modular_case(
+    _manifest, summary = _run_modular_case(
         normalized_address, run_dir, gcs_client=gcs_client
     )
 

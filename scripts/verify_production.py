@@ -1637,6 +1637,12 @@ def _validate_public_row(row: dict[str, Any], label: str) -> list[str]:
         failures,
     )
     _expect(
+        row.get("address_source")
+        in {"nyc_pad", "nyc_pluto", "model_sweep"},
+        f"{label}: address source provenance is missing or invalid",
+        failures,
+    )
+    _expect(
         row.get("opportunity_category") not in {"active_project", "completed_project"},
         f"{label}: active/completed project leaked into eligible leads",
         failures,
@@ -1809,6 +1815,7 @@ def validate_public_decision_audit(
     }
     required_keys = {
         "historical_model",
+        "address_identity",
         "acquisition_eligibility",
         "current_project_clearance",
         "property_facts",
@@ -1837,6 +1844,7 @@ def validate_public_decision_audit(
         )
 
     historical = by_key.get("historical_model", {})
+    address_identity = by_key.get("address_identity", {})
     eligibility = by_key.get("acquisition_eligibility", {})
     diligence = by_key.get("current_diligence", {})
     transit = by_key.get("transit_access", {})
@@ -1848,6 +1856,20 @@ def validate_public_decision_audit(
         "parcel detail: historical model role is ambiguous",
         failures,
     )
+    _expect(
+        address_identity.get("layer") == "source_freshness"
+        and address_identity.get("affects_model_rank") is False
+        and address_identity.get("affects_acquisition_eligibility") is False,
+        "parcel detail: address enrichment role is ambiguous",
+        failures,
+    )
+    if payload.get("address_source") == "nyc_pad":
+        _expect(
+            address_identity.get("status") == "verified"
+            and "PAD" in str(address_identity.get("source") or ""),
+            "parcel detail: PAD address provenance is not verified",
+            failures,
+        )
     _expect(
         eligibility.get("layer") == "eligibility_gate"
         and eligibility.get("affects_model_rank") is False

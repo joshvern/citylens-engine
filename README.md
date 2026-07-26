@@ -106,7 +106,8 @@ Current pinned release tag:
   invalid. Future or timezone-ambiguous source evidence is rejected.
 - Parcel Intelligence accepts the `published_sweep@v5` contract: separate
   historical-model, borough-acquisition, and citywide-acquisition ranks;
-  explicit eligibility/exclusion evidence; owner provenance; current-project
+  explicit eligibility/exclusion evidence; BBL-matched PLUTO/PAD address
+  provenance; owner provenance; current-project
   context; historical NYC DOF final lien-sale diligence; current DOB
   Safety/OATH/HPD violation snapshots; adopted-2007 and preliminary-2015
   PLUTO/FEMA 1% annual-chance floodplain tax-lot screens; current PLUTO

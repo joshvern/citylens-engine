@@ -9,6 +9,7 @@ def _row(**overrides) -> ParcelIntelRow:
         "bbl": "3020960069",
         "borough": "brooklyn",
         "address": "100 E 21 STREET",
+        "address_source": "nyc_pad",
         "acquisition_eligible": True,
         "acquisition_status": "eligible",
         "property_facts_current": True,
@@ -76,6 +77,10 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     )
     checks = {check.key: check for check in audit.checks}
     assert checks["historical_model"].affects_model_rank is True
+    assert checks["address_identity"].status == "verified"
+    assert "matched to this BBL" in checks["address_identity"].summary
+    assert checks["address_identity"].affects_model_rank is False
+    assert checks["address_identity"].affects_acquisition_eligibility is False
     assert checks["acquisition_eligibility"].affects_acquisition_eligibility is True
     assert checks["current_diligence"].affects_model_rank is False
     assert checks["current_diligence"].affects_acquisition_eligibility is False

@@ -16,6 +16,11 @@ on:
         required: false
         default: https://www.citylens.dev
         type: string
+      browser_api_base:
+        description: Browser-facing API proxy origin to verify with auth
+        required: false
+        default: https://www.citylens.dev
+        type: string
       max_age_days:
         description: Maximum acceptable parcel-feed age
         required: false
@@ -61,6 +66,7 @@ jobs:
             --output production-verification.json
 
       - name: Verify authenticated Parcel Intelligence inventory
+        if: always()
         env:
           API_BASE: ${{ inputs.api_base || 'https://api.citylens.dev' }}
           CITYLENS_PARCEL_SMOKE_KEY: ${{ secrets.CITYLENS_PARCEL_SMOKE_KEY }}
@@ -68,6 +74,16 @@ jobs:
           python scripts/verify_authenticated_inventory.py \
             --api-base "${API_BASE}" \
             --output authenticated-production-verification.json
+
+      - name: Verify browser-facing authenticated Parcel Intelligence inventory
+        if: always()
+        env:
+          BROWSER_API_BASE: ${{ inputs.browser_api_base || 'https://www.citylens.dev' }}
+          CITYLENS_PARCEL_SMOKE_KEY: ${{ secrets.CITYLENS_PARCEL_SMOKE_KEY }}
+        run: |
+          python scripts/verify_authenticated_inventory.py \
+            --api-base "${BROWSER_API_BASE}" \
+            --output browser-authenticated-production-verification.json
 
       - name: Publish verification summary
         if: always()
@@ -89,11 +105,16 @@ jobs:
           authenticated = read_report(
               "authenticated-production-verification.json"
           )
+          browser_authenticated = read_report(
+              "browser-authenticated-production-verification.json"
+          )
           passed = bool(
               report
               and report.get("passed")
               and authenticated
               and authenticated.get("passed")
+              and browser_authenticated
+              and browser_authenticated.get("passed")
           )
           icon = "✅" if passed else "❌"
           print(f"## {icon} CityLens production verification")
@@ -105,6 +126,10 @@ jobs:
           print(
               f"- Authenticated inventory: "
               f"`{'passed' if authenticated and authenticated.get('passed') else 'failed'}`"
+          )
+          print(
+              f"- Browser-facing authenticated inventory: "
+              f"`{'passed' if browser_authenticated and browser_authenticated.get('passed') else 'failed'}`"
           )
           print(
               f"- Feed generation: "
@@ -156,6 +181,15 @@ jobs:
                   f"authenticated: {failure}"
                   for failure in authenticated.get("failures") or []
               )
+          if browser_authenticated is None:
+              failures.append(
+                  "browser-authenticated verifier did not write a valid report"
+              )
+          else:
+              failures.extend(
+                  f"browser-authenticated: {failure}"
+                  for failure in browser_authenticated.get("failures") or []
+              )
           if failures:
               print()
               print("### Failures")
@@ -171,6 +205,7 @@ jobs:
           path: |
             production-verification.json
             authenticated-production-verification.json
+            browser-authenticated-production-verification.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -212,6 +247,9 @@ jobs:
             const authenticated = readReport(
               "authenticated-production-verification.json",
             );
+            const browserAuthenticated = readReport(
+              "browser-authenticated-production-verification.json",
+            );
             const rawFailures = [
               ...(Array.isArray(report.failures)
                 ? report.failures.map((value) => `public: ${value}`)
@@ -221,6 +259,11 @@ jobs:
                     (value) => `authenticated: ${value}`,
                   )
                 : []),
+              ...(Array.isArray(browserAuthenticated.failures)
+                ? browserAuthenticated.failures.map(
+                    (value) => `browser-authenticated: ${value}`,
+                  )
+                : []),
             ];
             if (!report.schema_version) {
               rawFailures.push("public verifier did not write a valid report");
@@ -228,6 +271,11 @@ jobs:
             if (!authenticated.schema_version) {
               rawFailures.push(
                 "authenticated verifier did not write a valid report",
+              );
+            }
+            if (!browserAuthenticated.schema_version) {
+              rawFailures.push(
+                "browser-authenticated verifier did not write a valid report",
               );
             }
             const failures = rawFailures.length > 0

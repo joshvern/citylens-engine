@@ -80,6 +80,7 @@ def _row(bbl: str, **overrides) -> dict:
     base = {
         "bbl": bbl,
         "address": "TEST",
+        "address_source": "nyc_pluto",
         "borough": "BK",
         "score_calibrated": 0.9,
         "score_calibrated_p10": None,
@@ -1000,6 +1001,13 @@ def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
 
     public = client.get("/v1/parcel-intel/parcel/3020000001")
     assert public.status_code == 200, public.text
+    assert public.json()["address_source"] == "nyc_pluto"
+    audit_checks = {
+        check["key"]: check
+        for check in public.json()["decision_audit"]["checks"]
+    }
+    assert audit_checks["address_identity"]["source"] == "NYC PLUTO"
+    assert audit_checks["address_identity"]["affects_model_rank"] is False
     assert public.json()["owner_name"] is None
     assert public.json()["owner_name_source"] is None
     assert public.json()["owner_type"] is None

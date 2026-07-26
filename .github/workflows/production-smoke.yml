@@ -66,6 +66,7 @@ jobs:
             --output production-verification.json
 
       - name: Verify authenticated Parcel Intelligence inventory
+        if: always()
         env:
           API_BASE: ${{ inputs.api_base || 'https://api.citylens.dev' }}
           CITYLENS_PARCEL_SMOKE_KEY: ${{ secrets.CITYLENS_PARCEL_SMOKE_KEY }}
@@ -75,6 +76,7 @@ jobs:
             --output authenticated-production-verification.json
 
       - name: Verify browser-facing authenticated Parcel Intelligence inventory
+        if: always()
         env:
           BROWSER_API_BASE: ${{ inputs.browser_api_base || 'https://www.citylens.dev' }}
           CITYLENS_PARCEL_SMOKE_KEY: ${{ secrets.CITYLENS_PARCEL_SMOKE_KEY }}

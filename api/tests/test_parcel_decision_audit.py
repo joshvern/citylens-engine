@@ -77,6 +77,11 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     )
     checks = {check.key: check for check in audit.checks}
     assert checks["historical_model"].affects_model_rank is True
+    assert (
+        checks["historical_model"].source
+        == "CityLens rolling-origin validation using NYC PLUTO and DOB filings"
+    )
+    assert checks["historical_model"].as_of == "2025"
     assert checks["address_identity"].status == "verified"
     assert "matched to this BBL" in checks["address_identity"].summary
     assert checks["address_identity"].affects_model_rank is False
@@ -97,6 +102,22 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
         "MIH applicability" in item for item in audit.readiness.review_items
     )
     assert "purchase recommendation" in audit.readiness.disclaimer
+
+
+def test_decision_audit_formats_multi_year_model_window_for_people() -> None:
+    manifest = _manifest()
+    manifest["model_metadata"]["label_window"] = "2018-2025"
+
+    audit = build_parcel_decision_audit(
+        _row(),
+        manifest,
+        premium_access=True,
+    )
+
+    historical = next(
+        check for check in audit.checks if check.key == "historical_model"
+    )
+    assert historical.as_of == "2018–2025"
 
 
 def test_public_decision_audit_does_not_summarize_private_signals() -> None:

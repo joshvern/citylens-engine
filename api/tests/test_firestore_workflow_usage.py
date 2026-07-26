@@ -107,7 +107,7 @@ def test_workflow_lifecycle_usage_is_transactional_and_idempotent(
     usage = client.documents[usage_path]
     assert created["event_count"] == 1
     assert usage["events"] == {"workflow_created": 1}
-    assert usage["sources"] == {"workflow_created:workflow": 1}
+    assert usage["sources"] == {"workflow_created:parcel": 1}
     assert not {"bbl", "address", "owner", "notes", "tags"}.intersection(usage)
 
     # A transport retry of the same effective mutation updates no lifecycle
@@ -147,6 +147,72 @@ def test_workflow_lifecycle_usage_is_transactional_and_idempotent(
         bbl="3020960069",
     )
     assert client.documents[usage_path]["events"]["workflow_archived"] == 1
+
+
+def test_comparison_advance_is_atomic_and_attributed_without_identifiers(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    payload = {
+        "borough": "brooklyn",
+        "stage": "reviewing",
+        "decision_reason": "pursuing",
+        "next_action": "Verify title.",
+        "outcome": "unknown",
+        "snapshot": {"citywide_rank": 12},
+    }
+
+    created, status = store.advance_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload=payload,
+    )
+    assert status == "created"
+    assert created["next_action"] == "Verify title."
+    usage_path = (
+        "users",
+        "private-user",
+        "product_usage_days",
+        "2026-07-24",
+    )
+    usage = client.documents[usage_path]
+    assert usage["events"] == {"workflow_created": 1}
+    assert usage["sources"] == {"workflow_created:comparison": 1}
+    assert not {"bbl", "address", "next_action", "snapshot"}.intersection(usage)
+
+    existing, status = store.advance_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload={**payload, "next_action": "Do not overwrite."},
+    )
+    assert status == "existing"
+    assert existing["next_action"] == "Verify title."
+    assert client.documents[usage_path]["events"] == {"workflow_created": 1}
+
+    assert store.delete_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+    )
+    restored, status = store.advance_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload={**payload, "next_action": "Review again."},
+    )
+    assert status == "restored"
+    assert restored["next_action"] == "Review again."
+    assert client.documents[usage_path]["events"]["workflow_created"] == 2
+    assert (
+        client.documents[usage_path]["sources"]["workflow_created:comparison"]
+        == 2
+    )
 
 
 def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(

@@ -185,6 +185,12 @@ Current pinned release tag:
   reminder identity for a bounded interval or restore it. The server binds a
   snooze to the lead's current action, due date, assignee, stage, and outcome;
   editing any of those fields resurfaces the changed commitment immediately.
+  `POST /v1/parcel-intel/workflow/{bbl}/advance` is the bounded
+  comparison-to-workflow handoff. It accepts only borough, a concrete next
+  action, and an optional due date; the server owns the reviewing stage,
+  pursuing disposition, watch state, and canonical save-time snapshot. The
+  Firestore transaction creates or restores the lead but returns an existing
+  active record unchanged, so a comparison cannot overwrite private work.
   Repeat requests are transactionally deduplicated, and terminal records clear
   stale reminders and leave the action queue automatically. These are private
   in-product reminders, not email or webhook delivery. The authenticated
@@ -230,6 +236,9 @@ Current pinned release tag:
   authoritative workflow creates; neither the ratio nor the gate is model
   accuracy, unique-parcel conversion, lead quality, seller intent, or a
   substitute for canonical workflow records.
+  Comparison-origin workflow creates are transactionally attributed as a
+  coarse source count and have a separate handoff gate. That count contains no
+  parcel identifier, next action, due date, value, or note.
 - Public design-partner intake uses
   `POST /v1/pilot-requests` with the bounded
   `citylens/pilot-request@v1` contract and an opaque `Idempotency-Key`.
@@ -480,10 +489,11 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v7 report contains only window totals, event/source counts, active-user and
+The v8 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
-ratios, separate comparison, decision-audit, underwriting-engagement,
+ratios, a canonical comparison-to-workflow handoff ratio, separate comparison
+engagement and handoff, decision-audit, underwriting-engagement,
 activation, and saved-view-reuse evidence gates, and aggregate pilot-intake
 plan/status counts. Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, and saved-view applies are best-effort

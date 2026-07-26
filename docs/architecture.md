@@ -98,7 +98,11 @@ owns the browser UI.
     combines the retained counters with field-projected aggregate
     `parcel_workflow` and `parcel_saved_searches` inventory. It labels the
     comparison and decision-audit engagement gates `collecting` until at least
-    10 opens exist across at least three users; labels the underwriting
+    10 opens exist across at least three users. A separate
+    comparison-to-workflow handoff gate requires five canonical workflow
+    creates across at least three users. Those creates are atomically sourced
+    by the bounded comparison-advance mutation and contain no parcel, action,
+    due-date, or value data in the aggregate ledger. The underwriting
     engagement gate
     `collecting` until at least 10 opens and five first adjustments exist,
     with each behavior spanning at least three users; and labels the activation gate

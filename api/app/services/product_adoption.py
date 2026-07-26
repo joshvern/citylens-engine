@@ -76,6 +76,7 @@ def build_product_adoption_report(
     saved_view_apply_users: set[str] = set()
     decision_audit_users: set[str] = set()
     comparison_users: set[str] = set()
+    comparison_workflow_users: set[str] = set()
     underwriting_open_users: set[str] = set()
     underwriting_adjustment_users: set[str] = set()
 
@@ -111,6 +112,8 @@ def build_product_adoption_report(
                 decision_audit_users.add(user_id)
             if row_events.get("comparison_opened", 0) > 0:
                 comparison_users.add(user_id)
+            if row_sources.get("workflow_created:comparison", 0) > 0:
+                comparison_workflow_users.add(user_id)
             if row_events.get("underwriting_opened", 0) > 0:
                 underwriting_open_users.add(user_id)
             if row_events.get("underwriting_assumptions_changed", 0) > 0:
@@ -179,6 +182,9 @@ def build_product_adoption_report(
     saved_view_applies = events.get("saved_view_applied", 0)
     decision_audit_opens = events.get("decision_audit_opened", 0)
     comparison_opens = events.get("comparison_opened", 0)
+    comparison_workflow_creates = sources.get(
+        "workflow_created:comparison", 0
+    )
     underwriting_opens = events.get("underwriting_opened", 0)
     underwriting_adjustments = events.get(
         "underwriting_assumptions_changed", 0
@@ -194,6 +200,13 @@ def build_product_adoption_report(
     comparison_engagement_ready = (
         comparison_opens >= minimum_comparison_opens
         and len(comparison_users) >= minimum_comparison_users
+    )
+    minimum_comparison_workflow_creates = 5
+    minimum_comparison_workflow_users = 3
+    comparison_handoff_ready = (
+        comparison_workflow_creates >= minimum_comparison_workflow_creates
+        and len(comparison_workflow_users)
+        >= minimum_comparison_workflow_users
     )
     minimum_underwriting_opens = 10
     minimum_underwriting_open_users = 3
@@ -249,6 +262,14 @@ def build_product_adoption_report(
             f"{comparison_opens}/{minimum_comparison_opens} opens across "
             f"{len(comparison_users)}/{minimum_comparison_users} users."
         )
+    if not comparison_handoff_ready:
+        warnings.append(
+            "Comparison-to-workflow evidence is still collecting: "
+            f"{comparison_workflow_creates}/"
+            f"{minimum_comparison_workflow_creates} canonical advances across "
+            f"{len(comparison_workflow_users)}/"
+            f"{minimum_comparison_workflow_users} users."
+        )
     if not underwriting_engagement_ready:
         warnings.append(
             "Underwriting engagement evidence is still collecting: "
@@ -266,7 +287,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v7",
+        "schema_version": "citylens/product-adoption-report@v8",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -327,6 +348,8 @@ def build_product_adoption_report(
         "comparison_engagement": {
             "opened": comparison_opens,
             "users": len(comparison_users),
+            "workflow_creates": comparison_workflow_creates,
+            "workflow_users": len(comparison_workflow_users),
             "entry_points": {
                 "comparison": sources.get(
                     "comparison_opened:comparison", 0
@@ -335,6 +358,11 @@ def build_product_adoption_report(
             "parcel_open_to_comparison_rate": (
                 round(comparison_opens / parcel_opens, 6)
                 if parcel_opens > 0
+                else None
+            ),
+            "comparison_to_workflow_create_rate": (
+                round(comparison_workflow_creates / comparison_opens, 6)
+                if comparison_opens > 0
                 else None
             ),
             "evidence_gate": {
@@ -354,6 +382,32 @@ def build_product_adoption_report(
                     "are best-effort aggregate counters with no parcel IDs or "
                     "values, not unique shortlists, completed diligence, "
                     "lead quality, or model accuracy."
+                ),
+            },
+            "handoff_gate": {
+                "status": (
+                    "ready" if comparison_handoff_ready else "collecting"
+                ),
+                "minimum_workflow_creates": (
+                    minimum_comparison_workflow_creates
+                ),
+                "minimum_users": minimum_comparison_workflow_users,
+                "workflow_creates_remaining": max(
+                    0,
+                    minimum_comparison_workflow_creates
+                    - comparison_workflow_creates,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_comparison_workflow_users
+                    - len(comparison_workflow_users),
+                ),
+                "claim": (
+                    "Canonical comparison-to-workflow handoffs only; the "
+                    "numerator is transactionally derived and contains no "
+                    "parcel IDs, actions, due dates, values, or notes. The "
+                    "directional rate is not lead quality, seller intent, or "
+                    "model accuracy."
                 ),
             },
         },

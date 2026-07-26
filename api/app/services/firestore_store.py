@@ -573,11 +573,46 @@ class FirestoreStore:
         bbl: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        item, _ = self._write_parcel_workflow(
+            app_user_id=app_user_id,
+            bbl=bbl,
+            payload=payload,
+            preserve_active=False,
+            entry_source="parcel",
+        )
+        return item
+
+    def advance_parcel_workflow(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        """Create or restore a compared lead without overwriting active work."""
+
+        return self._write_parcel_workflow(
+            app_user_id=app_user_id,
+            bbl=bbl,
+            payload=payload,
+            preserve_active=True,
+            entry_source="comparison",
+        )
+
+    def _write_parcel_workflow(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        payload: dict[str, Any],
+        preserve_active: bool,
+        entry_source: str,
+    ) -> tuple[dict[str, Any], str]:
         ref = self._parcel_workflow_col(app_user_id).document(bbl)
         event_id = uuid.uuid4().hex
 
         @firestore.transactional  # type: ignore[misc]
-        def _txn(transaction) -> dict[str, Any]:
+        def _txn(transaction) -> tuple[dict[str, Any], str]:
             now = utcnow()
             usage_ref = (
                 self.client.collection(self.users_collection)
@@ -592,6 +627,9 @@ class FirestoreStore:
             existing_usage = (
                 (usage_snap.to_dict() or {}) if usage_snap.exists else {}
             )
+            was_archived = existing.get("archived_at") is not None
+            if preserve_active and snap.exists and not was_archived:
+                return existing, "existing"
             effective_payload = _workflow_effective_payload(
                 existing=existing,
                 incoming=payload,
@@ -605,7 +643,6 @@ class FirestoreStore:
                 for key, value in effective_payload.items()
                 if existing.get(key) != value
             )
-            was_archived = existing.get("archived_at") is not None
             event_type = (
                 "created" if not snap.exists else "restored" if was_archived else "updated"
             )
@@ -655,14 +692,18 @@ class FirestoreStore:
                         if event_type in {"created", "restored"}
                         else "workflow_updated"
                     ),
-                    source="workflow",
+                    source=(
+                        entry_source
+                        if event_type in {"created", "restored"}
+                        else "workflow"
+                    ),
                     occurred_at=now,
                 )
                 if usage_payload is not None:
                     transaction.set(usage_ref, usage_payload)
-            return doc
+            return doc, event_type
 
-        def _op() -> dict[str, Any]:
+        def _op() -> tuple[dict[str, Any], str]:
             transaction = self.client.transaction()
             return _txn(transaction)
 

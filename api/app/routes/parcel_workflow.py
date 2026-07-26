@@ -10,6 +10,8 @@ from ..models.schemas import (
     ParcelSavedSearch,
     ParcelSavedSearchUpdate,
     ParcelWorkflowActions,
+    ParcelWorkflowAdvanceRequest,
+    ParcelWorkflowAdvanceResponse,
     ParcelWorkflowAlerts,
     ParcelWorkflowAnalytics,
     ParcelWorkflowAnalyticsMethodology,
@@ -276,6 +278,70 @@ def upsert_workflow(
     return store.upsert_parcel_workflow(
         app_user_id=auth.app_user_id, bbl=bbl, payload=payload
     )
+
+
+@router.post(
+    "/parcel-intel/workflow/{bbl}/advance",
+    response_model=ParcelWorkflowAdvanceResponse,
+)
+def advance_workflow_from_comparison(
+    bbl: str,
+    body: ParcelWorkflowAdvanceRequest,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> dict:
+    """Advance one compared parcel without overwriting active workflow state."""
+
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    if body.borough != _BOROUGH_BY_BBL_PREFIX[bbl[0]]:
+        raise HTTPException(status_code=422, detail="BBL does not match borough")
+
+    existing = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+    )
+    if existing is not None and existing.get("archived_at") is None:
+        return {"status": "existing", "item": existing}
+
+    payload = {
+        "borough": body.borough,
+        "stage": "reviewing",
+        "notes": "",
+        "tags": [],
+        "assignee": None,
+        "watching": True,
+        "decision_reason": "pursuing",
+        "next_action": body.next_action.strip(),
+        "next_action_due_date": body.next_action_due_date,
+        "outcome": "unknown",
+    }
+    try:
+        payload = normalize_workflow_action_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if existing is not None and isinstance(existing.get("snapshot"), dict):
+        payload["snapshot"] = existing["snapshot"]
+    else:
+        row, manifest = registry.parcel(gcs, bbl)
+        payload["snapshot"] = _canonical_workflow_snapshot(
+            row=row,
+            manifest=manifest,
+        )
+
+    item, mutation_status = store.advance_parcel_workflow(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+        payload=payload,
+    )
+    return {"status": mutation_status, "item": item}
 
 
 @router.post(

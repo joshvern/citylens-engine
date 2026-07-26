@@ -390,6 +390,9 @@ def build_product_adoption_report(
                 "comparison": sources.get(
                     "comparison_opened:comparison", 0
                 ),
+                "decision_peers": sources.get(
+                    "comparison_opened:decision_peers", 0
+                ),
             },
             "parcel_open_to_comparison_rate": (
                 round(comparison_opens / parcel_opens, 6)

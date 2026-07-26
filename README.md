@@ -264,6 +264,9 @@ Current pinned release tag:
   workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
   values or results, notes, tags, assignees, contacts, and arbitrary
   properties. Comparison opens contain no shortlist identities or values.
+  `decision_peers` is accepted only as a coarse parcel-open or
+  comparison-open entry point; it carries no subject/peer identifiers,
+  similarity value, match reason, rank, or parcel fact.
   Screen-audit events contain no criterion, threshold, query, result count,
   parcel, owner, or relaxed value. Saved-screen comparison events contain no
   saved-view identity, filter, count, overlap, union, or compared value.
@@ -378,8 +381,9 @@ environmental, MIH, transit, or imagery signals.
 same public verifier plus `scripts/verify_authenticated_inventory.py` every
 six hours and on demand. The authenticated check proves that production
 returns exactly 5,000 unique parcels (1,000 per borough), preserves owner
-context, serves a full selected-parcel decision audit, compresses the map
-payload, and marks both reads `private, no-store`. The workflow publishes a
+context, requires all 5,000 map rows to carry plausible NYC coordinates,
+serves a full selected-parcel decision audit, compresses the map payload, and
+marks both reads `private, no-store`. The workflow publishes a
 job summary and retains both sanitized JSON reports for 30 days; neither
 report contains the smoke credential, owner names, or parcel identifiers.
 Scheduled failures create or update one
@@ -555,7 +559,8 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
 The v11 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
-ratios, a canonical comparison-to-workflow handoff ratio, separate comparison
+ratios, a canonical comparison-to-workflow handoff ratio, comparison entry
+points for manual shortlist and decision-peer launches, separate comparison
 engagement and handoff, decision-audit, underwriting-engagement,
 source-bound evidence-review, aggregate evidence-issue, activation, and
 saved-view-reuse evidence gates,

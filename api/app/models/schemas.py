@@ -963,6 +963,7 @@ ParcelProductEventSource = Literal[
     "base_assumptions",
     "screen_summary",
     "screen_audit",
+    "decision_peers",
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
@@ -973,8 +974,9 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
         "action_queue",
         "watchlist",
         "comparison",
+        "decision_peers",
     },
-    "comparison_opened": {"comparison"},
+    "comparison_opened": {"comparison", "decision_peers"},
     "saved_view_applied": {"saved_views"},
     "decision_audit_opened": {"decision_posture", "audit_tab"},
     "underwriting_opened": {"underwrite_tab"},

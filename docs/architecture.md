@@ -93,6 +93,13 @@ owns the browser UI.
     entries as stale instead of silently carrying them onto new evidence.
     These markers mean “version considered,” never “risk resolved” or
     “diligence cleared,” and are excluded from prospective outcome exports.
+    The authenticated workflow-alert response groups stale review markers by
+    parcel and compares their exact status/source/as-of/generation identity
+    with the current premium decision audit. It includes active reviewed
+    records even when `watching=false`, but never archived records. The
+    service prioritizes material source/status changes above source-date and
+    generation-only changes so routine refreshes do not masquerade as new
+    acquisition conclusions.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
     and saved-view mutation counters are updated in the same transaction as

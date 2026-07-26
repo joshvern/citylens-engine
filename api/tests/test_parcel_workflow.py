@@ -70,6 +70,21 @@ class FakeWorkflowStore:
         doc["event_count"] = len(events)
         return doc
 
+    def advance_parcel_workflow(
+        self, *, app_user_id: str, bbl: str, payload: dict
+    ) -> tuple[dict, str]:
+        existing = self.items.get(bbl)
+        if existing is not None and existing.get("archived_at") is None:
+            return existing, "existing"
+        mutation_status = "restored" if existing is not None else "created"
+        doc = self.upsert_parcel_workflow(
+            app_user_id=app_user_id,
+            bbl=bbl,
+            payload=payload,
+        )
+        doc["archived_at"] = None
+        return doc, mutation_status
+
     def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
         if bbl not in self.items or self.items[bbl].get("archived_at") is not None:
             return False
@@ -233,6 +248,85 @@ def test_workflow_crud(auth_override) -> None:
     assert removed.status_code == 204
     assert client.get("/v1/parcel-intel/workflow").json() == []
     assert client.get("/v1/parcel-intel/workflow/3020960069").json() is None
+
+
+def test_comparison_handoff_creates_restores_and_preserves_active_work(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="comparison-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    created = client.post(
+        "/v1/parcel-intel/workflow/3020960069/advance",
+        json={
+            "borough": "brooklyn",
+            "next_action": "  Verify current title and ownership records.  ",
+            "next_action_due_date": "2026-08-01",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.headers["cache-control"] == "private, no-store"
+    assert created.json()["status"] == "created"
+    assert created.json()["item"]["stage"] == "reviewing"
+    assert created.json()["item"]["decision_reason"] == "pursuing"
+    assert created.json()["item"]["next_action"] == (
+        "Verify current title and ownership records."
+    )
+    assert created.json()["item"]["watching"] is True
+
+    existing = client.post(
+        "/v1/parcel-intel/workflow/3020960069/advance",
+        json={
+            "borough": "brooklyn",
+            "next_action": "This must not replace active work.",
+        },
+    )
+    assert existing.status_code == 200, existing.text
+    assert existing.json()["status"] == "existing"
+    assert existing.json()["item"]["next_action"] == (
+        "Verify current title and ownership records."
+    )
+
+    store.items["3020960069"]["archived_at"] = datetime.now(timezone.utc)
+    restored = client.post(
+        "/v1/parcel-intel/workflow/3020960069/advance",
+        json={
+            "borough": "brooklyn",
+            "next_action": "Recheck the parcel after comparison.",
+        },
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["status"] == "restored"
+    assert restored.json()["item"]["next_action"] == (
+        "Recheck the parcel after comparison."
+    )
+
+
+def test_comparison_handoff_rejects_mismatched_or_unbounded_input(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="comparison-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    mismatch = client.post(
+        "/v1/parcel-intel/workflow/3020960069/advance",
+        json={"borough": "queens", "next_action": "Verify title."},
+    )
+    assert mismatch.status_code == 422
+
+    identifying_extra = client.post(
+        "/v1/parcel-intel/workflow/3020960069/advance",
+        json={
+            "borough": "brooklyn",
+            "next_action": "Verify title.",
+            "notes": "Do not accept arbitrary private workflow text here.",
+        },
+    )
+    assert identifying_extra.status_code == 422
 
 
 def test_product_event_contract_is_value_minimized(auth_override) -> None:

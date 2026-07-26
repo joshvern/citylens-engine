@@ -995,6 +995,20 @@ class ParcelWorkflowUpdate(BaseModel):
     )
 
 
+class ParcelWorkflowAdvanceRequest(BaseModel):
+    """Deliberate comparison-to-workflow handoff.
+
+    The server owns the stage, disposition, watch state, and save-time
+    evidence snapshot. The client supplies only the action the user chose.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+    next_action: str = Field(min_length=1, max_length=240)
+    next_action_due_date: Optional[date] = None
+
+
 class ParcelWorkflowSnapshot(BaseModel):
     """Small, typed baseline used to detect decision-relevant parcel changes."""
 
@@ -1074,6 +1088,11 @@ class ParcelWorkflowItem(ParcelWorkflowUpdate):
     bbl: str
     saved_at: datetime
     updated_at: datetime
+
+
+class ParcelWorkflowAdvanceResponse(BaseModel):
+    status: Literal["created", "restored", "existing"]
+    item: ParcelWorkflowItem
 
 
 class ParcelWorkflowEvent(BaseModel):

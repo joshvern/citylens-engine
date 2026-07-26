@@ -55,7 +55,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     ): 1,
                     "saved_view_applied:saved_views": 2,
                     "saved_view_created:saved_views": 1,
-                    "workflow_created:header": 1,
+                    "workflow_created:comparison": 1,
                 },
                 "bbl": "3020960069",
             },
@@ -185,8 +185,11 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["comparison_engagement"] == {
         "opened": 3,
         "users": 2,
+        "workflow_creates": 1,
+        "workflow_users": 1,
         "entry_points": {"comparison": 3},
         "parcel_open_to_comparison_rate": 0.75,
+        "comparison_to_workflow_create_rate": 0.333333,
         "evidence_gate": {
             "status": "collecting",
             "minimum_opens": 10,
@@ -198,6 +201,20 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "are best-effort aggregate counters with no parcel IDs or "
                 "values, not unique shortlists, completed diligence, "
                 "lead quality, or model accuracy."
+            ),
+        },
+        "handoff_gate": {
+            "status": "collecting",
+            "minimum_workflow_creates": 5,
+            "minimum_users": 3,
+            "workflow_creates_remaining": 4,
+            "users_remaining": 2,
+            "claim": (
+                "Canonical comparison-to-workflow handoffs only; the "
+                "numerator is transactionally derived and contains no "
+                "parcel IDs, actions, due dates, values, or notes. The "
+                "directional rate is not lead quality, seller intent, or "
+                "model accuracy."
             ),
         },
     }
@@ -232,7 +249,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v7"
+    assert report["schema_version"] == "citylens/product-adoption-report@v8"
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,
@@ -302,9 +319,18 @@ def test_report_handles_empty_window_without_false_rate() -> None:
         == "collecting"
     )
     assert report["comparison_engagement"]["opened"] == 0
+    assert report["comparison_engagement"]["workflow_creates"] == 0
     assert report["comparison_engagement"]["parcel_open_to_comparison_rate"] is None
     assert (
+        report["comparison_engagement"]["comparison_to_workflow_create_rate"]
+        is None
+    )
+    assert (
         report["comparison_engagement"]["evidence_gate"]["status"]
+        == "collecting"
+    )
+    assert (
+        report["comparison_engagement"]["handoff_gate"]["status"]
         == "collecting"
     )
     assert report["underwriting_engagement"]["opened"] == 0
@@ -423,11 +449,46 @@ def test_comparison_gate_requires_opens_across_multiple_users() -> None:
     engagement = report["comparison_engagement"]
     assert engagement["opened"] == 10
     assert engagement["users"] == 3
+    assert engagement["workflow_creates"] == 0
+    assert engagement["workflow_users"] == 0
     assert engagement["entry_points"] == {"comparison": 10}
     assert engagement["parcel_open_to_comparison_rate"] == 0.5
+    assert engagement["comparison_to_workflow_create_rate"] == 0
     assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["handoff_gate"]["status"] == "collecting"
     assert engagement["evidence_gate"]["opens_remaining"] == 0
     assert engagement["evidence_gate"]["users_remaining"] == 0
+
+
+def test_comparison_handoff_gate_requires_canonical_creates_across_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {
+                    "comparison_opened": 1,
+                    "workflow_created": 1,
+                },
+                "sources": {
+                    "comparison_opened:comparison": 1,
+                    "workflow_created:comparison": 1,
+                },
+            }
+            for index in range(5)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["comparison_engagement"]
+    assert engagement["opened"] == 5
+    assert engagement["workflow_creates"] == 5
+    assert engagement["workflow_users"] == 3
+    assert engagement["comparison_to_workflow_create_rate"] == 1.0
+    assert engagement["evidence_gate"]["status"] == "collecting"
+    assert engagement["handoff_gate"]["status"] == "ready"
+    assert engagement["handoff_gate"]["workflow_creates_remaining"] == 0
+    assert engagement["handoff_gate"]["users_remaining"] == 0
 
 
 def test_underwriting_gate_requires_opens_and_adjustments_across_users() -> None:

@@ -23,6 +23,14 @@ owns the browser UI.
     machine-verifiable access scope and inventory receipt, authenticated reads
     bypass shared caches, and `Vary` preserves credential-specific
     representations across CORS. Large JSON responses are gzip-compressed.
+    When an authenticated user searches one canonical 10-digit BBL that is
+    absent from the complete inventory,
+    `/v1/parcel-intel/screening/{bbl}` performs a rate-limited exact lookup
+    against the private same-generation screening ledger. It returns only the
+    published/below-cutoff/excluded/not-evaluated posture, source-backed
+    reason codes, official project reference, and evidence dates. It never
+    exposes a bulk ledger, address, owner, calibrated score, or model rank;
+    every response is private/no-store.
     Historical NYC DOF final lien-sale and current DOB
     Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
     station-complex proximity are premium diligence context and never exposed

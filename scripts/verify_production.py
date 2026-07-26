@@ -2085,7 +2085,12 @@ def run_checks(
         if value.strip()
     }
     _expect(
-        {"authorization", "x-api-key"} <= vary,
+        {
+            "authorization",
+            "x-api-key",
+            "x-citylens-parcel-smoke-key",
+        }
+        <= vary,
         "map: cache key does not vary on authentication credentials",
         failures,
     )

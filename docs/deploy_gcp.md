@@ -276,6 +276,12 @@ API (Cloud Run service):
 - Optional admin API keys (internal scripts only — leave disabled unless you specifically need them):
   - `CITYLENS_ALLOW_ADMIN_API_KEYS=true`
   - `CITYLENS_ADMIN_API_KEY_HASHES=<comma-separated sha256 hashes>` (hash-only; the plaintext `CITYLENS_ADMIN_API_KEYS` env var was removed and is ignored)
+- Scheduled authenticated Parcel Intelligence verification:
+  - API: `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES=<sha256 of raw smoke key>`
+  - GitHub Actions secret: `CITYLENS_PARCEL_SMOKE_KEY=<raw smoke key>`
+  - The credential is accepted only by the tiered parcel map, sweep, and
+    detail routes; acquisition workflow and run endpoints remain protected by
+    normal user/admin auth.
 - Optional: `CITYLENS_SIGN_URLS=1` and `CITYLENS_SIGN_URL_TTL_SECONDS=300`
 
 Use Secret Manager for any value that resolves to a real secret (`CITYLENS_DOCS_ACCESS_KEY_SHA256`, `CITYLENS_ADMIN_API_KEY_HASHES`). The literal `*_SHA256` is a hash, not a secret, but treat it conservatively. Never set `CITYLENS_API_KEYS` for normal users — that path is deprecated and the auth dependency ignores it.
@@ -329,8 +335,15 @@ exercised, consistent source counts, and zero published leakage. It also
 requires the official MTA station source SLA,
 complete per-borough transit enrichment, anonymous transit redaction, and an
 audit statement that transit is diligence-only. The repository workflow
-`.github/workflows/production-smoke.yml` repeats it every six hours and stores
-the machine-readable report. A scheduled failure creates or updates one
+`.github/workflows/production-smoke.yml` repeats it every six hours alongside
+`scripts/verify_authenticated_inventory.py`, which proves that the live API
+serves exactly 5,000 unique authenticated parcels, 1,000 per borough, with
+owner context, a full selected-parcel audit, gzip, and private/no-store cache
+controls. The raw smoke key exists only as the repository Actions secret
+`CITYLENS_PARCEL_SMOKE_KEY`; only its SHA-256 is deployed in
+`CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. The workflow stores sanitized
+machine-readable reports that omit credentials, owners, and parcel IDs. A
+scheduled failure creates or updates one
 deduplicated production incident in the engine repository, and the next
 successful scheduled run closes it with a recovery comment. Manual dispatches
 remain diagnostic unless an operator explicitly enables the

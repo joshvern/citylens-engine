@@ -51,7 +51,7 @@ from ..models.schemas import (
     ParcelProspectiveValidationStatus,
     ParcelScreeningLedgerRow,
 )
-from ..services.auth import maybe_auth
+from ..services.auth import maybe_parcel_read_auth
 from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_decision_audit import build_parcel_decision_audit
@@ -898,7 +898,7 @@ def parcel_intel_map(
             f"capped at {_ANON_TOP_CAP}."
         ),
     ),
-    auth: Optional[AuthContext] = Depends(maybe_auth),
+    auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),
     _rate_limit: None = Depends(demo_rate_limit),
     gcs: GcsArtifacts = Depends(get_gcs),
     registry: ParcelIntelRegistry = Depends(get_registry),
@@ -924,7 +924,9 @@ def parcel_intel_map(
     # authenticated representation. Without this variance declaration, a
     # browser or intermediary can reuse the 25-per-borough preview after the
     # user signs in and make 125 rows look like the full inventory.
-    response.headers["Vary"] = "Authorization, X-API-Key"
+    response.headers["Vary"] = (
+        "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
+    )
     response.headers["X-CityLens-Inventory-Scope"] = (
         "authenticated_full" if auth is not None else "public_preview"
     )
@@ -950,7 +952,7 @@ def parcel_intel_map(
 def parcel_intel_parcel(
     bbl: str,
     response: Response,
-    auth: Optional[AuthContext] = Depends(maybe_auth),
+    auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),
     _rate_limit: None = Depends(demo_rate_limit),
     gcs: GcsArtifacts = Depends(get_gcs),
     registry: ParcelIntelRegistry = Depends(get_registry),
@@ -965,7 +967,9 @@ def parcel_intel_parcel(
     else:
         response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
         served_row = row
-    response.headers["Vary"] = "Authorization, X-API-Key"
+    response.headers["Vary"] = (
+        "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
+    )
     return ParcelIntelParcelResponse(
         **served_row.model_dump(),
         decision_audit=build_parcel_decision_audit(
@@ -989,7 +993,7 @@ def parcel_intel_sweep(
             f"silently capped at {_ANON_TOP_CAP}."
         ),
     ),
-    auth: Optional[AuthContext] = Depends(maybe_auth),
+    auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),
     _rate_limit: None = Depends(demo_rate_limit),
     gcs: GcsArtifacts = Depends(get_gcs),
     registry: ParcelIntelRegistry = Depends(get_registry),
@@ -1003,7 +1007,9 @@ def parcel_intel_sweep(
     else:
         rows = rows[:top]
         response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
-    response.headers["Vary"] = "Authorization, X-API-Key"
+    response.headers["Vary"] = (
+        "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
+    )
 
     generated_at = _parse_iso((manifest or {}).get("generated_at"))
     return ParcelIntelSweepResponse(

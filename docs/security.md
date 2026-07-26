@@ -1,13 +1,14 @@
 # Security
 
-## Three distinct credential surfaces
+## Four distinct credential surfaces
 
-CityLens has three different credentials. They protect different things and never substitute for each other:
+CityLens has four different credentials. They protect different things and never substitute for each other:
 
 | Surface | Header | Configured by | Purpose |
 | --- | --- | --- | --- |
 | **User login** | `Authorization: Bearer <token>` | Neon Auth (or any OIDC issuer via JWKS) | Authenticates real dashboard users for `/v1/runs*`, `/v1/me` |
 | **Admin API keys (optional)** | `X-API-Key` | `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256, hash-only) | Internal scripts only (e.g. `scripts/precompute_demo_runs.py`). Off by default **in code and in the deploy scripts**. |
+| **Parcel smoke key** | `X-CityLens-Parcel-Smoke-Key` | `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES` (SHA-256, hash-only) | Six-hourly proof of the authenticated Parcel Intelligence map/sweep/detail contract. Cannot create runs or read/write acquisition workflow state. |
 | **Docs access key** | `X-Docs-Key` | `CITYLENS_DOCS_ACCESS_KEY_SHA256` | Gates `/docs`, `/redoc`, `/openapi.json`. Cannot create runs or access user data. |
 
 > **Hardening note (fixed):** admin API keys are now **hash-only**. The
@@ -24,6 +25,10 @@ CityLens has three different credentials. They protect different things and neve
 
 - No secrets are committed. `.env.example` only lists names + placeholders.
 - For `CITYLENS_DOCS_ACCESS_KEY_SHA256`, store the SHA-256 of the docs key, not the key itself. Compute with `python -c 'import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "<your-key>"`.
+- Keep the raw Parcel Intelligence smoke key only in the repository Actions
+  secret `CITYLENS_PARCEL_SMOKE_KEY`. Configure only its SHA-256 in the API's
+  `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. Rotate both values together and
+  manually dispatch `production-smoke.yml` before removing the previous hash.
 - The deprecated `CITYLENS_API_KEYS` no longer authenticates dashboard users and is ignored by the auth dependency.
 
 ## Auth flow for `/v1/runs*` and `/v1/me`

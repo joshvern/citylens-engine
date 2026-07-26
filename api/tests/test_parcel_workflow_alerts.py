@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -100,6 +101,20 @@ def _screening_row(**overrides):
     return row
 
 
+def _evidence_review(**overrides):
+    review = {
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "check_status": "verified",
+        "source": "NYC PLUTO",
+        "source_as_of": "2026-07-20",
+        "feed_generated_at": "2026-07-20T00:00:00Z",
+        "reviewed_at": datetime(2026, 7, 21, tzinfo=timezone.utc),
+    }
+    review.update(overrides)
+    return review
+
+
 def test_alerts_surface_decision_relevant_changes() -> None:
     result = build_workflow_alerts(
         [_workflow_item()],
@@ -107,7 +122,7 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         feed_generated_at="2026-07-24T00:00:00Z",
     )
 
-    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v2"
+    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v3"
     assert result["watched_count"] == 1
     assert result["changed_lead_count"] == 1
     codes = {alert["code"] for alert in result["alerts"]}
@@ -129,6 +144,217 @@ def test_alerts_surface_decision_relevant_changes() -> None:
     }
     assert result["severity_counts"]["high"] == 6
     assert result["alerts"][0]["severity"] == "high"
+
+
+def test_reviewed_evidence_is_current_only_on_an_exact_version_match() -> None:
+    item = _workflow_item(
+        watching=False,
+        evidence_reviews={"property_facts": _evidence_review()},
+    )
+    current_check = {
+        "key": "property_facts",
+        "label": "Current property facts",
+        "status": "verified",
+        "source": "NYC PLUTO",
+        "as_of": "2026-07-20",
+    }
+
+    result = build_workflow_alerts(
+        [item],
+        [_current_row()],
+        feed_generated_at="2026-07-20T00:00:00Z",
+        current_evidence_checks={
+            "3020960069": {"property_facts": current_check}
+        },
+    )
+
+    assert result["reviewed_lead_count"] == 1
+    assert result["stale_review_count"] == 0
+    assert result["alert_count"] == 0
+
+
+def test_reviewed_evidence_status_change_is_a_source_bound_alert() -> None:
+    item = _workflow_item(
+        watching=False,
+        evidence_reviews={"property_facts": _evidence_review()},
+    )
+
+    result = build_workflow_alerts(
+        [item],
+        [_current_row()],
+        feed_generated_at="2026-07-24T00:00:00Z",
+        current_evidence_checks={
+            "3020960069": {
+                "property_facts": {
+                    "key": "property_facts",
+                    "label": "Current property facts",
+                    "status": "unavailable",
+                    "source": "NYC PLUTO",
+                    "as_of": "2026-07-24",
+                }
+            }
+        },
+    )
+
+    assert result["changed_lead_count"] == 1
+    assert result["stale_review_count"] == 1
+    assert result["severity_counts"]["high"] == 1
+    alert = result["alerts"][0]
+    assert alert["code"] == "reviewed_evidence_changed"
+    assert alert["field"] == "evidence_reviews"
+    assert alert["parcel_available"] is True
+    assert alert["evidence_changes"] == [{
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "reviewed_at": datetime(2026, 7, 21, tzinfo=timezone.utc),
+        "reviewed_status": "verified",
+        "reviewed_source": "NYC PLUTO",
+        "reviewed_source_as_of": "2026-07-20",
+        "reviewed_feed_generated_at": "2026-07-20T00:00:00Z",
+        "current_status": "unavailable",
+        "current_source": "NYC PLUTO",
+        "current_source_as_of": "2026-07-24",
+        "current_feed_generated_at": "2026-07-24T00:00:00Z",
+        "change_reasons": [
+            "status",
+            "source_as_of",
+            "feed_generation",
+        ],
+    }]
+    assert alert["source_evidence"][0]["source"] == "NYC PLUTO"
+    assert "does not clear" in alert["recommended_action"]
+
+
+def test_generation_only_review_change_is_low_severity() -> None:
+    item = _workflow_item(
+        watching=False,
+        evidence_reviews={"property_facts": _evidence_review()},
+    )
+
+    result = build_workflow_alerts(
+        [item],
+        [_current_row()],
+        feed_generated_at="2026-07-24T00:00:00Z",
+        current_evidence_checks={
+            "3020960069": {
+                "property_facts": {
+                    "key": "property_facts",
+                    "label": "Current property facts",
+                    "status": "verified",
+                    "source": "NYC PLUTO",
+                    "as_of": "2026-07-20",
+                }
+            }
+        },
+    )
+
+    assert result["stale_review_count"] == 1
+    assert result["alerts"][0]["severity"] == "low"
+    assert result["alerts"][0]["evidence_changes"][0]["change_reasons"] == [
+        "feed_generation"
+    ]
+
+
+def test_multiple_stale_reviews_are_grouped_per_parcel() -> None:
+    item = _workflow_item(
+        watching=False,
+        evidence_reviews={
+            "property_facts": _evidence_review(),
+            "ownership": _evidence_review(
+                check_key="ownership",
+                label="Ownership provenance",
+                source="NYC ACRIS / NYC PLUTO",
+            ),
+        },
+    )
+    result = build_workflow_alerts(
+        [item],
+        [_current_row()],
+        feed_generated_at="2026-07-24T00:00:00Z",
+        current_evidence_checks={
+            "3020960069": {
+                "property_facts": {
+                    "key": "property_facts",
+                    "label": "Current property facts",
+                    "status": "verified",
+                    "source": "NYC PLUTO",
+                    "as_of": "2026-07-24",
+                },
+                "ownership": {
+                    "key": "ownership",
+                    "label": "Ownership provenance",
+                    "status": "verified",
+                    "source": "NYC ACRIS / NYC PLUTO",
+                    "as_of": "2026-07-24",
+                },
+            }
+        },
+    )
+
+    assert result["alert_count"] == 1
+    assert result["stale_review_count"] == 2
+    assert result["alerts"][0]["title"] == (
+        "2 reviewed evidence versions need attention"
+    )
+    assert {
+        change["check_key"]
+        for change in result["alerts"][0]["evidence_changes"]
+    } == {"property_facts", "ownership"}
+
+
+def test_terminal_workflow_can_inspect_but_not_record_a_new_review() -> None:
+    item = _workflow_item(
+        stage="pass",
+        evidence_reviews={"property_facts": _evidence_review()},
+    )
+    result = build_workflow_alerts(
+        [item],
+        [_current_row()],
+        feed_generated_at="2026-07-24T00:00:00Z",
+        current_evidence_checks={
+            "3020960069": {
+                "property_facts": {
+                    "key": "property_facts",
+                    "label": "Current property facts",
+                    "status": "verified",
+                    "source": "NYC PLUTO",
+                    "as_of": "2026-07-24",
+                }
+            }
+        },
+    )
+
+    alert = next(
+        item
+        for item in result["alerts"]
+        if item["code"] == "reviewed_evidence_changed"
+    )
+    assert alert["parcel_available"] is True
+    assert alert["review_recordable"] is False
+    assert "Reopen the terminal workflow" in alert["recommended_action"]
+
+
+def test_reviewed_evidence_without_current_parcel_stays_unresolved() -> None:
+    item = _workflow_item(
+        watching=False,
+        evidence_reviews={"property_facts": _evidence_review()},
+    )
+
+    result = build_workflow_alerts(
+        [item],
+        [],
+        feed_generated_at="2026-07-24T00:00:00Z",
+    )
+
+    assert result["stale_review_count"] == 1
+    alert = result["alerts"][0]
+    assert alert["severity"] == "high"
+    assert alert["parcel_available"] is False
+    assert alert["after"] == {"property_facts": None}
+    assert alert["evidence_changes"][0]["change_reasons"] == [
+        "current_evidence_unavailable"
+    ]
+    assert "cannot be matched" in alert["detail"]
 
 
 def test_removed_lead_is_urgent_but_does_not_invent_a_reason() -> None:
@@ -339,6 +565,29 @@ class _FakeExitRegistry:
         return {"3020960069": _FakeScreeningRow()}, manifest
 
 
+class _FakeReviewedStore:
+    def list_parcel_workflow(
+        self, *, app_user_id: str, include_archived: bool = False
+    ) -> list[dict]:
+        assert app_user_id == "alerts-user"
+        return [
+            _workflow_item(
+                watching=False,
+                evidence_reviews={"property_facts": _evidence_review()},
+            )
+        ]
+
+
+class _FakeReviewedRow(_FakeRow):
+    bbl = "3020960069"
+
+
+class _FakeReviewedRegistry(_FakeRegistry):
+    def citywide_map(self, _gcs):
+        rows, manifest = super().citywide_map(_gcs)
+        return [_FakeReviewedRow()], manifest
+
+
 def test_workflow_alerts_endpoint_is_authenticated_and_typed(
     auth_override,
 ) -> None:
@@ -354,7 +603,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v2"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
     assert payload["feed_generated_at"] == "2026-07-24T00:00:00Z"
     assert payload["watched_count"] == 1
     assert payload["changed_lead_count"] == 1
@@ -390,7 +639,7 @@ def test_workflow_alerts_endpoint_returns_typed_source_backed_exit(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v2"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
     assert payload["resolved_exit_count"] == 1
     assert payload["unresolved_exit_count"] == 0
     assert payload["screened_out_count"] == 1
@@ -398,3 +647,49 @@ def test_workflow_alerts_endpoint_returns_typed_source_backed_exit(
     assert alert["code"] == "screened_out_of_current_feed"
     assert alert["parcel_available"] is False
     assert alert["source_evidence"][0]["url"].endswith("/2023K0205")
+
+
+def test_workflow_alerts_endpoint_builds_current_review_versions(
+    auth_override,
+    monkeypatch,
+) -> None:
+    auth_override(app_user_id="alerts-user")
+    app.dependency_overrides[parcel_workflow.get_store] = (
+        lambda: _FakeReviewedStore()
+    )
+    app.dependency_overrides[parcel_workflow.get_gcs] = lambda: object()
+    app.dependency_overrides[parcel_workflow.get_registry] = (
+        lambda: _FakeReviewedRegistry()
+    )
+    current_check = SimpleNamespace(
+        key="property_facts",
+        model_dump=lambda: {
+            "key": "property_facts",
+            "label": "Current property facts",
+            "status": "verified",
+            "source": "NYC PLUTO",
+            "as_of": "2026-07-24",
+        },
+    )
+    monkeypatch.setattr(
+        parcel_workflow,
+        "build_parcel_decision_audit",
+        lambda row, manifest, premium_access: SimpleNamespace(
+            checks=[current_check]
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.get("/v1/parcel-intel/workflow/alerts")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
+    assert payload["watched_count"] == 0
+    assert payload["reviewed_lead_count"] == 1
+    assert payload["stale_review_count"] == 1
+    assert payload["alerts"][0]["code"] == "reviewed_evidence_changed"
+    assert payload["alerts"][0]["evidence_changes"][0]["change_reasons"] == [
+        "source_as_of",
+        "feed_generation",
+    ]

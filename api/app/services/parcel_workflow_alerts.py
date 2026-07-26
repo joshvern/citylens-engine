@@ -13,7 +13,9 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v2"
+from .parcel_workflow_actions import workflow_is_terminal
+
+ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v3"
 RANK_MOVE_THRESHOLD = 100
 
 _SEVERITY_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -87,6 +89,8 @@ def _alert(
     reason_codes: list[str] | None = None,
     recommended_action: str | None = None,
     source_evidence: list[dict[str, Any]] | None = None,
+    evidence_changes: list[dict[str, Any]] | None = None,
+    review_recordable: bool | None = None,
     parcel_available: bool = True,
 ) -> dict[str, Any]:
     return {
@@ -103,8 +107,192 @@ def _alert(
         "reason_codes": reason_codes or [],
         "recommended_action": recommended_action,
         "source_evidence": source_evidence or [],
+        "evidence_changes": evidence_changes or [],
+        "review_recordable": review_recordable,
         "parcel_available": parcel_available,
     }
+
+
+def _evidence_review_alerts(
+    item: dict[str, Any],
+    *,
+    current_checks: dict[str, dict[str, Any]] | None,
+    feed_generated_at: str | None,
+) -> list[dict[str, Any]]:
+    """Surface only exact review citations that no longer match current evidence."""
+
+    raw_reviews = item.get("evidence_reviews")
+    if not isinstance(raw_reviews, dict):
+        return []
+    current_checks = current_checks or {}
+    bbl = str(item.get("bbl") or "")
+    borough = str(item.get("borough") or "")
+    parcel_available = bool(current_checks)
+    review_recordable = parcel_available and not workflow_is_terminal(item)
+    changes: list[dict[str, Any]] = []
+    before_versions: dict[str, dict[str, Any]] = {}
+    current_versions: dict[str, dict[str, Any] | None] = {}
+    sources: list[dict[str, Any]] = []
+
+    for check_key, raw_review in sorted(raw_reviews.items()):
+        if not isinstance(raw_review, dict):
+            continue
+        current = current_checks.get(str(check_key))
+        reasons: list[str] = []
+        if not isinstance(current, dict):
+            reasons.append("current_evidence_unavailable")
+        else:
+            if raw_review.get("check_status") != current.get("status"):
+                reasons.append("status")
+            if raw_review.get("source") != current.get("source"):
+                reasons.append("source")
+            if raw_review.get("source_as_of") != current.get("as_of"):
+                reasons.append("source_as_of")
+            if raw_review.get("feed_generated_at") != feed_generated_at:
+                reasons.append("feed_generation")
+        if not reasons:
+            continue
+
+        label = str(
+            (current or {}).get("label")
+            or raw_review.get("label")
+            or str(check_key).replace("_", " ").title()
+        )
+        current_source = (
+            str(current.get("source")) if isinstance(current, dict) else None
+        )
+        current_as_of = (
+            current.get("as_of") if isinstance(current, dict) else None
+        )
+        current_status = (
+            current.get("status") if isinstance(current, dict) else None
+        )
+        reviewed_version = {
+            "status": raw_review.get("check_status"),
+            "source": raw_review.get("source"),
+            "as_of": raw_review.get("source_as_of"),
+            "feed_generated_at": raw_review.get("feed_generated_at"),
+        }
+        current_version = (
+            {
+                "status": current_status,
+                "source": current_source,
+                "as_of": current_as_of,
+                "feed_generated_at": feed_generated_at,
+            }
+            if isinstance(current, dict)
+            else None
+        )
+        before_versions[str(check_key)] = reviewed_version
+        current_versions[str(check_key)] = current_version
+        if current_source and not any(
+            evidence["source"] == current_source
+            and evidence["as_of"] == current_as_of
+            for evidence in sources
+        ):
+            sources.append(
+                {
+                    "source": current_source,
+                    "as_of": current_as_of,
+                    "url": None,
+                    "supports": "current reviewed-evidence version",
+                }
+            )
+        changes.append(
+            {
+                "check_key": check_key,
+                "label": label,
+                "reviewed_at": raw_review.get("reviewed_at"),
+                "reviewed_status": raw_review.get("check_status"),
+                "reviewed_source": raw_review.get("source"),
+                "reviewed_source_as_of": raw_review.get("source_as_of"),
+                "reviewed_feed_generated_at": raw_review.get(
+                    "feed_generated_at"
+                ),
+                "current_status": current_status,
+                "current_source": current_source,
+                "current_source_as_of": current_as_of,
+                "current_feed_generated_at": feed_generated_at,
+                "change_reasons": reasons,
+            }
+        )
+
+    if not changes:
+        return []
+
+    all_reasons = {
+        reason
+        for change in changes
+        for reason in change["change_reasons"]
+    }
+    only_generation_changed = all_reasons == {"feed_generation"}
+    if "current_evidence_unavailable" in all_reasons:
+        severity = "high"
+        detail = (
+            "At least one reviewed citation cannot be matched to a current "
+            "published evidence check. Keep prior markers as historical context "
+            "and verify the parcel's current disposition before acting."
+        )
+    elif all_reasons.intersection({"status", "source"}):
+        severity = "high"
+        detail = (
+            "Current evidence status or source differs from a version previously "
+            "reviewed. Re-open the parcel and assess each changed citation before "
+            "advancing diligence."
+        )
+    elif only_generation_changed:
+        severity = "low"
+        detail = (
+            "A newer feed generation is active. The cited statuses, sources, and "
+            "as-of dates still match, but the exact reviewed versions should be "
+            "reconfirmed before relying on them."
+        )
+    else:
+        severity = "medium"
+        detail = (
+            "One or more source as-of dates or feed versions changed after review. "
+            "Re-open the parcel and assess the current citations before relying "
+            "on them."
+        )
+
+    count = len(changes)
+    return [
+        _alert(
+            bbl=bbl,
+            borough=borough,
+            code="reviewed_evidence_changed",
+            severity=severity,
+            title=(
+                f"{count} reviewed evidence "
+                f"{'version needs' if count == 1 else 'versions need'} attention"
+            ),
+            detail=detail,
+            field="evidence_reviews",
+            before=before_versions,
+            after=current_versions,
+            recommended_action=(
+                "Open the parcel's evidence review ledger and consider each "
+                "current cited version. Reviewing it records a new version; it "
+                "does not clear the underlying diligence question."
+                if review_recordable
+                else (
+                    "Open the parcel to inspect the current citations. Reopen the "
+                    "terminal workflow before recording a new review marker; the "
+                    "prior marker remains historical."
+                    if parcel_available
+                    else (
+                        "Verify the parcel against current official records. "
+                        "Previous review markers remain historical and cannot be "
+                        "treated as current."
+                    )
+                )
+            ),
+            source_evidence=sources,
+            evidence_changes=changes,
+            review_recordable=review_recordable,
+            parcel_available=parcel_available,
+        )
+    ]
 
 
 def _screening_source_evidence(
@@ -654,15 +842,28 @@ def build_workflow_alerts(
     feed_generated_at: str | None,
     screening_rows: dict[str, dict[str, Any]] | None = None,
     data_sources: dict[str, Any] | None = None,
+    current_evidence_checks: (
+        dict[str, dict[str, dict[str, Any]]] | None
+    ) = None,
 ) -> dict[str, Any]:
     """Return authenticated in-app changes for active watched leads."""
 
     screening_rows = screening_rows or {}
     data_sources = data_sources or {}
+    current_evidence_checks = current_evidence_checks or {}
+    active = [
+        item for item in items if item.get("archived_at") is None
+    ]
     watched = [
         item
-        for item in items
-        if item.get("watching") is True and item.get("archived_at") is None
+        for item in active
+        if item.get("watching") is True
+    ]
+    reviewed = [
+        item
+        for item in active
+        if isinstance(item.get("evidence_reviews"), dict)
+        and bool(item.get("evidence_reviews"))
     ]
     current_by_bbl = {
         str(row.get("bbl")): row
@@ -677,6 +878,7 @@ def build_workflow_alerts(
     screened_out_count = 0
     eligible_below_cutoff_count = 0
     missing_snapshot_count = 0
+    stale_review_count = 0
 
     for item in watched:
         bbl = str(item.get("bbl") or "")
@@ -738,6 +940,21 @@ def build_workflow_alerts(
             changed_bbls.add(bbl)
             alerts.extend(row_alerts)
 
+    for item in reviewed:
+        bbl = str(item.get("bbl") or "")
+        review_alerts = _evidence_review_alerts(
+            item,
+            current_checks=current_evidence_checks.get(bbl),
+            feed_generated_at=feed_generated_at,
+        )
+        if review_alerts:
+            stale_review_count += sum(
+                len(alert.get("evidence_changes") or [])
+                for alert in review_alerts
+            )
+            changed_bbls.add(bbl)
+            alerts.extend(review_alerts)
+
     alerts.sort(
         key=lambda item: (
             _SEVERITY_ORDER.get(str(item.get("severity")), 99),
@@ -765,6 +982,8 @@ def build_workflow_alerts(
         "unresolved_exit_count": unresolved_exit_count,
         "screened_out_count": screened_out_count,
         "eligible_below_cutoff_count": eligible_below_cutoff_count,
+        "reviewed_lead_count": len(reviewed),
+        "stale_review_count": stale_review_count,
         "severity_counts": {
             severity: severity_counts.get(severity, 0)
             for severity in ("urgent", "high", "medium", "low")

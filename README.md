@@ -208,14 +208,21 @@ Current pinned release tag:
   governed outcome export and private workflow responses are always
   `private, no-store`, including early authentication failures. The
   authenticated
-  `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
-  snapshots with the current atomic feed and reports owner, newer-sale,
-  zoning, opportunity, rank/tier, lien, violation, flood, environmental
-  designation, MIH, transit-complex/tier, imagery, exact-name portfolio, and
-  feed-removal changes. Small transit distance fluctuations do not alert when
-  the nearest complex and access tier are unchanged. A removed lead is
-  deliberately labeled for current-record verification rather than being
-  called sold, built, or completed without authoritative evidence.
+  `/v1/parcel-intel/workflow/alerts` v3 endpoint is the private evidence-change
+  inbox. It compares watched leads' saved snapshots with the current atomic
+  feed and also compares every active source-bound review marker with the
+  current decision-audit citation, even when ordinary watch alerts are off.
+  Multiple stale markers are grouped into one parcel alert; material
+  status/source changes are high priority, source-date changes are medium,
+  and generation-only changes are low. The response reports marker and parcel
+  counts separately and returns exact reviewed/current citation versions.
+  It also reports owner, newer-sale, zoning, opportunity, rank/tier, lien,
+  violation, flood, environmental designation, MIH, transit-complex/tier,
+  imagery, exact-name portfolio, and feed-removal changes. Small transit
+  distance fluctuations do not alert when the nearest complex and access tier
+  are unchanged. A removed lead is deliberately labeled for current-record
+  verification rather than being called sold, built, or completed without
+  authoritative evidence.
 - Authenticated users can persist the complete citywide explorer state through
   `GET|PUT|DELETE /v1/parcel-intel/saved-searches`. The v2 saved-view contract
   stores borough scope, search text, priority/opportunity filters, optional

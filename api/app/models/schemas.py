@@ -1444,6 +1444,35 @@ class ParcelWorkflowAlertSource(BaseModel):
     supports: str
 
 
+class ParcelWorkflowEvidenceChange(BaseModel):
+    """Exact reviewed citation compared with the current evidence version."""
+
+    check_key: ParcelWorkflowEvidenceReviewKey
+    label: str = Field(min_length=1, max_length=120)
+    reviewed_at: datetime
+    reviewed_status: ParcelWorkflowEvidenceCheckStatus
+    reviewed_source: str = Field(min_length=1, max_length=256)
+    reviewed_source_as_of: Optional[str] = Field(default=None, max_length=96)
+    reviewed_feed_generated_at: Optional[str] = Field(
+        default=None, max_length=40
+    )
+    current_status: Optional[ParcelWorkflowEvidenceCheckStatus] = None
+    current_source: Optional[str] = Field(default=None, max_length=256)
+    current_source_as_of: Optional[str] = Field(default=None, max_length=96)
+    current_feed_generated_at: Optional[str] = Field(
+        default=None, max_length=40
+    )
+    change_reasons: list[
+        Literal[
+            "status",
+            "source",
+            "source_as_of",
+            "feed_generation",
+            "current_evidence_unavailable",
+        ]
+    ] = Field(min_length=1)
+
+
 class ParcelWorkflowAlert(BaseModel):
     bbl: str
     borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
@@ -1465,6 +1494,7 @@ class ParcelWorkflowAlert(BaseModel):
         "transit_access_changed",
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
+        "reviewed_evidence_changed",
     ]
     severity: Literal["urgent", "high", "medium", "low"]
     title: str
@@ -1485,6 +1515,11 @@ class ParcelWorkflowAlert(BaseModel):
     source_evidence: list[ParcelWorkflowAlertSource] = Field(
         default_factory=list
     )
+    evidence_changes: list[ParcelWorkflowEvidenceChange] = Field(
+        default_factory=list,
+        max_length=6,
+    )
+    review_recordable: Optional[bool] = None
     parcel_available: bool = True
 
 
@@ -1492,6 +1527,7 @@ class ParcelWorkflowAlerts(BaseModel):
     schema_version: Literal[
         "citylens/parcel-workflow-alerts@v1",
         "citylens/parcel-workflow-alerts@v2",
+        "citylens/parcel-workflow-alerts@v3",
     ]
     generated_at: datetime
     feed_generated_at: Optional[datetime] = None
@@ -1503,6 +1539,8 @@ class ParcelWorkflowAlerts(BaseModel):
     unresolved_exit_count: int = 0
     screened_out_count: int = 0
     eligible_below_cutoff_count: int = 0
+    reviewed_lead_count: int = 0
+    stale_review_count: int = 0
     severity_counts: dict[str, int]
     alerts: list[ParcelWorkflowAlert] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

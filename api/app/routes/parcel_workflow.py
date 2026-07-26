@@ -184,6 +184,27 @@ def workflow_alerts(
         gcs,
         manifest=manifest,
     )
+    reviewed_bbls = {
+        str(item.get("bbl") or "")
+        for item in items
+        if item.get("archived_at") is None
+        and isinstance(item.get("evidence_reviews"), dict)
+        and bool(item.get("evidence_reviews"))
+    }
+    current_evidence_checks: dict[str, dict[str, dict]] = {}
+    if reviewed_bbls:
+        for row in rows:
+            if row.bbl not in reviewed_bbls:
+                continue
+            audit = build_parcel_decision_audit(
+                row,
+                manifest,
+                premium_access=True,
+            )
+            current_evidence_checks[row.bbl] = {
+                check.key: check.model_dump()
+                for check in audit.checks
+            }
     watched_bbls = {
         str(item.get("bbl") or "")
         for item in items
@@ -199,6 +220,7 @@ def workflow_alerts(
             if bbl in watched_bbls
         },
         data_sources=(manifest or {}).get("data_sources") or {},
+        current_evidence_checks=current_evidence_checks,
         feed_generated_at=(
             generated_at if isinstance(generated_at, str) else None
         ),

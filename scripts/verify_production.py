@@ -109,7 +109,8 @@ REQUIRED_WEB_COPY = (
     "Find the sites worth pursuing this week",
     "Citywide opportunity explorer",
     "Filter the five-borough market",
-    "Published evidence",
+    "Qualification receipt",
+    "not model accuracy, seller intent, transaction probability",
     "Search parcels",
 )
 

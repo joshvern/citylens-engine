@@ -842,6 +842,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
     )
     payload["decision_audit"] = {
         "schema_version": "citylens/parcel-decision-audit@v1",
+        "evidence_generated_at": "2026-07-24T02:43:29Z",
         "overall_status": "screened",
         "overall_label": "Eligible lead after current gates",
         "readiness": {
@@ -964,6 +965,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
     )
 
     bad = deepcopy(payload)
+    bad["decision_audit"]["evidence_generated_at"] = None
     bad["decision_audit"]["validation"]["precision_at_100"] = 0.99
     bad["decision_audit"]["readiness"]["review_items"] = [
         "Review the private tax-lien evidence."
@@ -975,6 +977,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
         model_metadata=model_metadata,
     )
     assert any("precision_at_100 does not match" in failure for failure in failures)
+    assert any("evidence version is missing" in failure for failure in failures)
     assert any("anonymous readiness exposed tax-lien" in failure for failure in failures)
     assert any("anonymous ownership evidence" in failure for failure in failures)
     assert any("diligence-only role is ambiguous" in failure for failure in failures)

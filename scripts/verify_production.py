@@ -1647,6 +1647,12 @@ def validate_public_decision_audit(
         failures,
     )
     _expect(
+        _parse_timestamp(audit.get("evidence_generated_at")) is not None
+        and _has_explicit_timezone(audit.get("evidence_generated_at")),
+        "parcel detail: decision audit evidence version is missing or invalid",
+        failures,
+    )
+    _expect(
         audit.get("overall_status")
         in {"screened", "screened_with_flags", "excluded", "incomplete"},
         "parcel detail: decision audit status is invalid",

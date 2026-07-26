@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from ..models.schemas import ParcelDecisionAudit, ParcelIntelRow
@@ -18,6 +19,12 @@ def _as_float(value: Any) -> float | None:
 def _as_text(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _as_version_text(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return _as_text(value)
 
 
 def _joined_dates(*values: Any) -> str | None:
@@ -453,6 +460,9 @@ def build_parcel_decision_audit(
     return ParcelDecisionAudit.model_validate(
         {
             "schema_version": AUDIT_SCHEMA,
+            "evidence_generated_at": _as_version_text(
+                (manifest or {}).get("generated_at")
+            ),
             "overall_status": overall_status,
             "overall_label": overall_label,
             "validation": validation,

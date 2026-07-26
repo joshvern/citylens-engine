@@ -41,6 +41,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_applied": 2,
                     "saved_view_created": 1,
                     "workflow_created": 1,
+                    "workflow_evidence_reviewed": 2,
                 },
                 "sources": {
                     "parcel_opened:map": 2,
@@ -56,6 +57,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_applied:saved_views": 2,
                     "saved_view_created:saved_views": 1,
                     "workflow_created:comparison": 1,
+                    "workflow_evidence_reviewed:workflow": 2,
                 },
                 "bbl": "3020960069",
             },
@@ -70,6 +72,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "underwriting_assumptions_changed": 1,
                     "saved_view_applied": 1,
                     "workflow_updated": 2,
+                    "workflow_evidence_reviewed": 1,
                 },
                 "sources": {
                     "parcel_opened:direct": 1,
@@ -82,6 +85,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     ): 1,
                     "saved_view_applied:saved_views": 1,
                     "workflow_updated:workflow": 2,
+                    "workflow_evidence_reviewed:workflow": 1,
                 },
             },
             {
@@ -148,7 +152,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 22
+    assert report["total_events"] == 25
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
@@ -158,6 +162,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
         "workflow_created": 1,
+        "workflow_evidence_reviewed": 3,
         "workflow_updated": 2,
     }
     assert report["parcel_open_to_workflow_create_rate"] == 0.25
@@ -249,7 +254,25 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v8"
+    assert report["schema_version"] == "citylens/product-adoption-report@v9"
+    assert report["evidence_review_engagement"] == {
+        "reviewed_versions": 3,
+        "users": 2,
+        "source": "workflow_evidence_reviewed:workflow",
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_reviewed_versions": 10,
+            "minimum_users": 3,
+            "reviewed_versions_remaining": 7,
+            "users_remaining": 1,
+            "claim": (
+                "Canonical source-bound review markers only. A marker "
+                "means a user considered the exact cited evidence version; "
+                "it does not establish completed or cleared diligence, "
+                "lead quality, seller intent, or model accuracy."
+            ),
+        },
+    }
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,

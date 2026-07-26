@@ -85,6 +85,14 @@ owns the browser UI.
     due date, assignee, stage, and outcome, so changed commitments cannot stay
     hidden behind stale snoozes. Browser clients do not own these
     classifications or reminder identity.
+  - Active, nonterminal workflow records may carry a bounded
+    `evidence_reviews` map for six current decision-audit checks. Each entry is
+    server-bound to the exact status, source, source date, and feed generation
+    the user reviewed. The write endpoint re-reads the current parcel and
+    rejects stale optimistic-concurrency inputs; clients therefore surface old
+    entries as stale instead of silently carrying them onto new evidence.
+    These markers mean “version considered,” never “risk resolved” or
+    “diligence cleared,” and are excluded from prospective outcome exports.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
     and saved-view mutation counters are updated in the same transaction as
@@ -105,7 +113,10 @@ owns the browser UI.
     due-date, or value data in the aggregate ledger. The underwriting
     engagement gate
     `collecting` until at least 10 opens and five first adjustments exist,
-    with each behavior spanning at least three users; and labels the activation gate
+    with each behavior spanning at least three users. The source-bound review
+    gate stays `collecting` until at least 10 canonical review markers exist
+    across at least three users; its aggregate record contains no parcel,
+    check, citation, source date, or review time. The report labels the activation gate
     `collecting` until at least 30 workflow records exist across at least three
     users, and the saved-view-reuse gate `collecting` until at least 10 applies
     exist across at least three users. No user, parcel, saved-view name, search
@@ -140,8 +151,8 @@ Firestore:
 - `users/{app_user_id}/product_usage_days/{day}`: expiring aggregate adoption
   counters, with no row-level event or parcel payload
 - `users/{app_user_id}/parcel_workflow/{bbl}`: canonical user-owned acquisition
-  workflow state; reporting reads only aggregate record/user counts and archive
-  state
+  workflow state, including optional source-bound evidence-review markers;
+  reporting reads only aggregate record/user counts and archive state
 - `users/{app_user_id}/parcel_saved_searches/{search_id}`: private
   `citylens/parcel-saved-view@v2` explorer state. It restores the citywide
   borough/filter/search/overlay context and is never shared-cacheable. Saved

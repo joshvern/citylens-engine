@@ -25,6 +25,7 @@ def _row(**overrides) -> ParcelIntelRow:
 
 def _manifest() -> dict:
     return {
+        "generated_at": "2026-07-24T02:43:29Z",
         "model_metadata": {
             "label_definition": "dob_nb_job_filing",
             "performance_scope": "2024 PLUTO to 2025 DOB NB filings",
@@ -62,6 +63,7 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     )
 
     assert audit.schema_version == "citylens/parcel-decision-audit@v1"
+    assert audit.evidence_generated_at == "2026-07-24T02:43:29Z"
     assert audit.overall_status == "screened_with_flags"
     assert audit.validation.precision_at_100 == 0.34
     assert audit.validation.precision_at_1000 == 0.104

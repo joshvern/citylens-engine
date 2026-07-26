@@ -259,6 +259,7 @@ class ParcelDecisionReadiness(BaseModel):
 
 class ParcelDecisionAudit(BaseModel):
     schema_version: Literal["citylens/parcel-decision-audit@v1"]
+    evidence_generated_at: Optional[str] = Field(default=None, max_length=40)
     overall_status: Literal[
         "screened",
         "screened_with_flags",
@@ -908,6 +909,23 @@ ParcelWorkflowOutcome = Literal[
     "lost",
 ]
 
+ParcelWorkflowEvidenceReviewKey = Literal[
+    "acquisition_eligibility",
+    "current_project_clearance",
+    "property_facts",
+    "ownership",
+    "current_diligence",
+    "transit_access",
+]
+
+ParcelWorkflowEvidenceCheckStatus = Literal[
+    "verified",
+    "review",
+    "excluded",
+    "unavailable",
+    "informational",
+]
+
 ParcelProductEventName = Literal[
     "parcel_opened",
     "comparison_opened",
@@ -1009,6 +1027,33 @@ class ParcelWorkflowAdvanceRequest(BaseModel):
     next_action_due_date: Optional[date] = None
 
 
+class ParcelWorkflowEvidenceReviewRequest(BaseModel):
+    """Optimistic-concurrency contract for reviewing one current evidence check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_check_status: ParcelWorkflowEvidenceCheckStatus
+    expected_source: str = Field(min_length=1, max_length=256)
+    expected_source_as_of: Optional[str] = Field(default=None, max_length=96)
+    expected_feed_generated_at: Optional[str] = Field(default=None, max_length=40)
+
+
+class ParcelWorkflowEvidenceReview(BaseModel):
+    """Immutable citation snapshot for a human evidence-review action.
+
+    ``reviewed`` means the cited version was opened and considered. It never
+    means the underlying risk was resolved, waived, or professionally cleared.
+    """
+
+    check_key: ParcelWorkflowEvidenceReviewKey
+    label: str = Field(min_length=1, max_length=120)
+    check_status: ParcelWorkflowEvidenceCheckStatus
+    source: str = Field(min_length=1, max_length=256)
+    source_as_of: Optional[str] = Field(default=None, max_length=96)
+    feed_generated_at: Optional[str] = Field(default=None, max_length=40)
+    reviewed_at: datetime
+
+
 class ParcelWorkflowSnapshot(BaseModel):
     """Small, typed baseline used to detect decision-relevant parcel changes."""
 
@@ -1088,6 +1133,10 @@ class ParcelWorkflowItem(ParcelWorkflowUpdate):
     bbl: str
     saved_at: datetime
     updated_at: datetime
+    evidence_reviews: dict[
+        ParcelWorkflowEvidenceReviewKey,
+        ParcelWorkflowEvidenceReview,
+    ] = Field(default_factory=dict)
 
 
 class ParcelWorkflowAdvanceResponse(BaseModel):

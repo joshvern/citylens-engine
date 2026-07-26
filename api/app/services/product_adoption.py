@@ -79,6 +79,7 @@ def build_product_adoption_report(
     comparison_workflow_users: set[str] = set()
     underwriting_open_users: set[str] = set()
     underwriting_adjustment_users: set[str] = set()
+    evidence_review_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -118,6 +119,8 @@ def build_product_adoption_report(
                 underwriting_open_users.add(user_id)
             if row_events.get("underwriting_assumptions_changed", 0) > 0:
                 underwriting_adjustment_users.add(user_id)
+            if row_events.get("workflow_evidence_reviewed", 0) > 0:
+                evidence_review_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -189,6 +192,7 @@ def build_product_adoption_report(
     underwriting_adjustments = events.get(
         "underwriting_assumptions_changed", 0
     )
+    evidence_reviews = events.get("workflow_evidence_reviewed", 0)
     minimum_decision_audit_opens = 10
     minimum_decision_audit_users = 3
     decision_audit_engagement_ready = (
@@ -219,6 +223,12 @@ def build_product_adoption_report(
         and len(underwriting_adjustment_users)
         >= minimum_underwriting_adjustment_users
     )
+    minimum_evidence_reviews = 10
+    minimum_evidence_review_users = 3
+    evidence_review_engagement_ready = (
+        evidence_reviews >= minimum_evidence_reviews
+        and len(evidence_review_users) >= minimum_evidence_review_users
+    )
     minimum_saved_view_applies = 10
     minimum_saved_view_apply_users = 3
     saved_view_reuse_ready = (
@@ -232,8 +242,10 @@ def build_product_adoption_report(
             "transactionally from canonical mutations. Saved-view applies "
             "and decision-audit/underwriting interactions are directional "
             "client-side counters. Comparison opens are also directional "
-            "and contain no parcel identifiers or values. None is model accuracy, completed "
-            "diligence, a valuation, or a unique-parcel count."
+            "and contain no parcel identifiers or values. Evidence-review "
+            "markers are transactionally derived but mean only that one exact "
+            "cited version was considered. None is model accuracy, completed "
+            "or cleared diligence, a valuation, or a unique-parcel count."
         )
     ]
     if not events:
@@ -281,13 +293,19 @@ def build_product_adoption_report(
             f"{len(underwriting_adjustment_users)}/"
             f"{minimum_underwriting_adjustment_users} users."
         )
+    if not evidence_review_engagement_ready:
+        warnings.append(
+            "Source-bound evidence-review engagement is still collecting: "
+            f"{evidence_reviews}/{minimum_evidence_reviews} review markers across "
+            f"{len(evidence_review_users)}/{minimum_evidence_review_users} users."
+        )
     if pilot_statuses.get("new", 0):
         warnings.append(
             f"{pilot_statuses['new']} pilot request(s) are waiting for review."
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v8",
+        "schema_version": "citylens/product-adoption-report@v9",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -463,6 +481,34 @@ def build_product_adoption_report(
                     "not unique parcels, assumption values, saved scenarios, "
                     "valuations, transactions, lead quality, or model "
                     "accuracy."
+                ),
+            },
+        },
+        "evidence_review_engagement": {
+            "reviewed_versions": evidence_reviews,
+            "users": len(evidence_review_users),
+            "source": "workflow_evidence_reviewed:workflow",
+            "evidence_gate": {
+                "status": (
+                    "ready"
+                    if evidence_review_engagement_ready
+                    else "collecting"
+                ),
+                "minimum_reviewed_versions": minimum_evidence_reviews,
+                "minimum_users": minimum_evidence_review_users,
+                "reviewed_versions_remaining": max(
+                    0, minimum_evidence_reviews - evidence_reviews
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_evidence_review_users
+                    - len(evidence_review_users),
+                ),
+                "claim": (
+                    "Canonical source-bound review markers only. A marker "
+                    "means a user considered the exact cited evidence version; "
+                    "it does not establish completed or cleared diligence, "
+                    "lead quality, seller intent, or model accuracy."
                 ),
             },
         },

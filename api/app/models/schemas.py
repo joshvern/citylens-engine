@@ -276,6 +276,9 @@ class ParcelDecisionAudit(BaseModel):
 class ParcelIntelRow(BaseModel):
     bbl: str
     address: Optional[str] = None
+    address_source: Optional[
+        Literal["nyc_pad", "nyc_pluto", "model_sweep"]
+    ] = None
     borough: Optional[str] = None
     score_calibrated: Optional[float] = None
     score_calibrated_p10: Optional[float] = None

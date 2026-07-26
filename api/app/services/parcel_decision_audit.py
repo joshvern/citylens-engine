@@ -99,6 +99,46 @@ def build_parcel_decision_audit(
             "affects_acquisition_eligibility": False,
         }
     ]
+    if row.address_source == "nyc_pad":
+        address_status = "verified"
+        address_summary = (
+            "NYC PAD supplied a numbered tax-lot address matched to this BBL. "
+            "The enrichment improves site identity only and never changes "
+            "score, rank, eligibility, ownership, geometry, or zoning."
+        )
+        address_source = "NYC Property Address Directory (PAD)"
+    elif row.address_source == "nyc_pluto":
+        address_status = "verified"
+        address_summary = (
+            "The displayed tax-lot address comes from the current PLUTO record "
+            "for this BBL."
+        )
+        address_source = "NYC PLUTO"
+    else:
+        address_status = "review"
+        address_summary = (
+            "The displayed address is a model-sweep fallback because a current "
+            "PLUTO/PAD address provenance value was not published. Verify the "
+            "BBL in NYC records before outreach."
+        )
+        address_source = "CityLens model sweep"
+    checks.append(
+        {
+            "key": "address_identity",
+            "layer": "source_freshness",
+            "label": "Tax-lot address identity",
+            "status": address_status,
+            "summary": address_summary,
+            "source": address_source,
+            "as_of": (
+                row.property_facts_as_of
+                if row.address_source == "nyc_pluto"
+                else None
+            ),
+            "affects_model_rank": False,
+            "affects_acquisition_eligibility": False,
+        }
+    )
 
     exclusion_reasons = [
         str(reason).replace("_", " ")

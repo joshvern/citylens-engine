@@ -419,6 +419,8 @@ def _index() -> dict:
 def _public_row(*, bbl: str, borough: str, rank: int, citywide_rank: int) -> dict:
     return {
         "bbl": bbl,
+        "address": "100 TEST STREET",
+        "address_source": "nyc_pluto",
         "borough": borough,
         "acquisition_rank": rank,
         "citywide_rank": citywide_rank,
@@ -938,6 +940,16 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
                 "affects_acquisition_eligibility": False,
             },
             {
+                "key": "address_identity",
+                "layer": "source_freshness",
+                "status": "verified",
+                "summary": "Numbered PAD address matched to this BBL.",
+                "source": "NYC Property Address Directory (PAD)",
+                "as_of": None,
+                "affects_model_rank": False,
+                "affects_acquisition_eligibility": False,
+            },
+            {
                 "key": "acquisition_eligibility",
                 "layer": "eligibility_gate",
                 "status": "verified",
@@ -1019,8 +1031,11 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
     bad["decision_audit"]["readiness"]["review_items"] = [
         "Review the private tax-lien evidence."
     ]
-    bad["decision_audit"]["checks"][4]["summary"] = "PRIVATE OWNER LLC"
-    bad["decision_audit"]["checks"][5]["affects_model_rank"] = True
+    bad_checks = {
+        check["key"]: check for check in bad["decision_audit"]["checks"]
+    }
+    bad_checks["ownership"]["summary"] = "PRIVATE OWNER LLC"
+    bad_checks["current_diligence"]["affects_model_rank"] = True
     failures = validate_public_decision_audit(
         bad,
         model_metadata=model_metadata,

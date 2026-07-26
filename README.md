@@ -87,7 +87,11 @@ Current pinned release tag:
   `/v1/parcel-intel/parcel/{bbl}`, and reserves `/v1/parcel-intel/sweep` for
   CSV/export and compatibility. Public inventory is capped at 25 rows per
   borough with premium fields stripped; authenticated users can load 1,000
-  rows per borough. Large JSON responses are gzip-compressed.
+  rows per borough. The compact map response includes an explicit access scope,
+  returned/available counts, and an inventory-complete receipt. Tiered map,
+  sweep, and detail responses vary on authentication credentials; authenticated
+  responses are private/no-store so a cached 125-row preview cannot be reused
+  as the signed-in inventory. Large JSON responses are gzip-compressed.
 - The public index carries a strict, parcel-free
   `prospective-validation-status@v1` only when its source generation matches
   the active atomic feed. It separates the live cohort's

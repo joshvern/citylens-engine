@@ -19,8 +19,11 @@ owns the browser UI.
     `/v1/parcel-intel/parcel/{bbl}` only when selected, and reserves
     `/v1/parcel-intel/sweep` for CSV/export and compatibility. Public inventory
     is capped at 25 rows per borough with premium fields stripped;
-    authenticated users can load 1,000 per borough. Large JSON responses are
-    gzip-compressed. Historical NYC DOF final lien-sale and current DOB
+    authenticated users can load 1,000 per borough. The compact map returns a
+    machine-verifiable access scope and inventory receipt, authenticated reads
+    bypass shared caches, and `Vary` preserves credential-specific
+    representations across CORS. Large JSON responses are gzip-compressed.
+    Historical NYC DOF final lien-sale and current DOB
     Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
     station-complex proximity are premium diligence context and never exposed
     anonymously. These overlays are post-score and do not modify acquisition

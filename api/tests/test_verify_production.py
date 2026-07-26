@@ -856,7 +856,15 @@ def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:
                 )
             )
             citywide_rank += 1
-    payload = {"generated_at": "2026-07-23T00:00:00Z", "rows": rows}
+    payload = {
+        "generated_at": "2026-07-23T00:00:00Z",
+        "rows": rows,
+        "access_scope": "public_preview",
+        "requested_top_per_borough": 25,
+        "returned_count": 125,
+        "available_count": 5000,
+        "inventory_complete": False,
+    }
     assert (
         validate_map(payload, expected_generated_at="2026-07-23T00:00:00Z")
         == []

@@ -920,9 +920,26 @@ def parcel_intel_map(
     response.headers["Cache-Control"] = (
         _MAP_CACHE_AUTHED if auth is not None else _MAP_CACHE
     )
+    # The same endpoint has a cacheable public representation and a private
+    # authenticated representation. Without this variance declaration, a
+    # browser or intermediary can reuse the 25-per-borough preview after the
+    # user signs in and make 125 rows look like the full inventory.
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    response.headers["X-CityLens-Inventory-Scope"] = (
+        "authenticated_full" if auth is not None else "public_preview"
+    )
+    response.headers["X-CityLens-Inventory-Count"] = str(len(selected))
+    response.headers["X-CityLens-Inventory-Available"] = str(len(rows))
     return ParcelIntelMapResponse(
         rows=selected,
         generated_at=_parse_iso((manifest or {}).get("generated_at")),
+        access_scope=(
+            "authenticated_full" if auth is not None else "public_preview"
+        ),
+        requested_top_per_borough=top_per_borough,
+        returned_count=len(selected),
+        available_count=len(rows),
+        inventory_complete=len(selected) == len(rows),
     )
 
 
@@ -948,6 +965,7 @@ def parcel_intel_parcel(
     else:
         response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
         served_row = row
+    response.headers["Vary"] = "Authorization, X-API-Key"
     return ParcelIntelParcelResponse(
         **served_row.model_dump(),
         decision_audit=build_parcel_decision_audit(
@@ -985,6 +1003,7 @@ def parcel_intel_sweep(
     else:
         rows = rows[:top]
         response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    response.headers["Vary"] = "Authorization, X-API-Key"
 
     generated_at = _parse_iso((manifest or {}).get("generated_at"))
     return ParcelIntelSweepResponse(

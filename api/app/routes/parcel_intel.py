@@ -80,6 +80,15 @@ _ANON_TOP_CAP = 25
 # is monthly; 45 days means a missed retrain/publish cycle).
 _STALE_THRESHOLD_DAYS = 45.0
 
+# Competing-project evidence is operationally different from quarterly parcel
+# facts. A newly filed DOB or ZAP project can make outreach inappropriate
+# within days, so the API tightens older published manifests to this cap at
+# request time instead of trusting a stale-at-publish boolean for weeks.
+_SOURCE_MAX_AGE_CAP_DAYS: dict[str, float] = {
+    "project_activity": 8.0,
+    "land_use_activity": 8.0,
+}
+
 # Five recognized boroughs. Reject anything else with 404 to avoid
 # fishing the bucket for arbitrary keys.
 _BOROUGH_SLUGS: frozenset[str] = frozenset(
@@ -391,7 +400,10 @@ class ParcelIntelRegistry:
             generated_at=generated_at,
             feed_generation=manifest.get("artifact_generation"),
             model_metadata=manifest.get("model_metadata") or {},
-            data_sources=manifest.get("data_sources") or {},
+            data_sources=_live_source_statuses(
+                manifest.get("data_sources"),
+                now=now,
+            ),
             quality_gate=manifest.get("quality_gate") or {},
             generation_diff=manifest.get("generation_diff") or {},
             inference_replay=manifest.get("inference_replay") or {},
@@ -776,6 +788,71 @@ def _age_days(generated_at: datetime | None) -> float | None:
         generated_at = generated_at.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - generated_at
     return round(max(delta.total_seconds(), 0.0) / 86400.0, 1)
+
+
+def _live_source_statuses(
+    value: Any,
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """Recompute source ages and critical caps when the index is requested.
+
+    Manifest ``age_days`` and ``stale`` values are publish-time observations.
+    Recomputing them prevents a cached monthly feed from claiming that a source
+    is still current after its operating window has elapsed.
+    """
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, raw in value.items():
+        if not isinstance(raw, dict):
+            out[key] = raw
+            continue
+        status = dict(raw)
+        retrieved_at = _parse_iso(raw.get("retrieved_at"))
+        if retrieved_at is not None and retrieved_at.tzinfo is None:
+            retrieved_at = retrieved_at.replace(tzinfo=timezone.utc)
+
+        published_max_age = raw.get("max_age_days")
+        valid_published_max_age = (
+            float(published_max_age)
+            if isinstance(published_max_age, (int, float))
+            and not isinstance(published_max_age, bool)
+            and published_max_age > 0
+            else None
+        )
+        cap = _SOURCE_MAX_AGE_CAP_DAYS.get(str(key))
+        max_age = (
+            min(valid_published_max_age, cap)
+            if valid_published_max_age is not None and cap is not None
+            else valid_published_max_age or cap
+        )
+        age_days = (
+            max((now - retrieved_at).total_seconds(), 0.0) / 86400.0
+            if retrieved_at is not None
+            else None
+        )
+        future = retrieved_at is not None and retrieved_at > now
+        stale = (
+            future
+            or age_days is None
+            or max_age is None
+            or age_days > max_age
+        )
+
+        status["age_days"] = (
+            round(age_days, 2) if age_days is not None else None
+        )
+        status["max_age_days"] = max_age
+        status["stale"] = stale
+        if (
+            valid_published_max_age is not None
+            and max_age is not None
+            and valid_published_max_age != max_age
+        ):
+            status["published_max_age_days"] = valid_published_max_age
+        out[str(key)] = status
+    return out
 
 
 # Premium fields never leave the API on anonymous responses. Keep in sync

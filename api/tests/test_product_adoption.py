@@ -39,6 +39,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "underwriting_opened": 2,
                     "underwriting_assumptions_changed": 1,
                     "saved_view_applied": 2,
+                    "saved_view_comparison_opened": 1,
                     "saved_view_created": 1,
                     "workflow_created": 1,
                     "workflow_evidence_reviewed": 2,
@@ -56,6 +57,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                         "base_assumptions"
                     ): 1,
                     "saved_view_applied:saved_views": 2,
+                    "saved_view_comparison_opened:saved_views": 1,
                     "saved_view_created:saved_views": 1,
                     "workflow_created:comparison": 1,
                     "workflow_evidence_reviewed:workflow": 2,
@@ -154,12 +156,13 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 26
+    assert report["total_events"] == 27
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
         "parcel_opened": 4,
         "saved_view_applied": 3,
+        "saved_view_comparison_opened": 1,
         "saved_view_created": 1,
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
@@ -257,7 +260,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v10"
+    assert report["schema_version"] == "citylens/product-adoption-report@v11"
     assert report["evidence_review_engagement"] == {
         "reviewed_versions": 3,
         "users": 2,
@@ -304,8 +307,10 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["saved_view_reuse"]["updated"] == 0
     assert report["saved_view_reuse"]["deleted"] == 0
     assert report["saved_view_reuse"]["applied"] == 3
+    assert report["saved_view_reuse"]["comparisons"] == 1
     assert report["saved_view_reuse"]["event_users"] == 2
     assert report["saved_view_reuse"]["apply_users"] == 2
+    assert report["saved_view_reuse"]["comparison_users"] == 1
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"
     assert report["pilot_intake"] == {
         "records": 2,

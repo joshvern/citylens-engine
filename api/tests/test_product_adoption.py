@@ -34,6 +34,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-24",
                 "events": {
                     "parcel_opened": 3,
+                    "comparison_opened": 2,
                     "decision_audit_opened": 2,
                     "underwriting_opened": 2,
                     "underwriting_assumptions_changed": 1,
@@ -44,6 +45,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "sources": {
                     "parcel_opened:map": 2,
                     "parcel_opened:ranking": 1,
+                    "comparison_opened:comparison": 2,
                     "decision_audit_opened:decision_posture": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 2,
@@ -62,6 +64,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-23",
                 "events": {
                     "parcel_opened": 1,
+                    "comparison_opened": 1,
                     "decision_audit_opened": 1,
                     "underwriting_opened": 1,
                     "underwriting_assumptions_changed": 1,
@@ -70,6 +73,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 },
                 "sources": {
                     "parcel_opened:direct": 1,
+                    "comparison_opened:comparison": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 1,
                     (
@@ -144,8 +148,9 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 19
+    assert report["total_events"] == 22
     assert report["events"] == {
+        "comparison_opened": 3,
         "decision_audit_opened": 3,
         "parcel_opened": 4,
         "saved_view_applied": 3,
@@ -174,6 +179,25 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "Directional evidence-audit engagement only; opens are "
                 "best-effort aggregate counters, not unique parcels, "
                 "completed diligence, lead quality, or model accuracy."
+            ),
+        },
+    }
+    assert report["comparison_engagement"] == {
+        "opened": 3,
+        "users": 2,
+        "entry_points": {"comparison": 3},
+        "parcel_open_to_comparison_rate": 0.75,
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_opens": 10,
+            "minimum_users": 3,
+            "opens_remaining": 7,
+            "users_remaining": 1,
+            "claim": (
+                "Directional shortlist-comparison engagement only; opens "
+                "are best-effort aggregate counters with no parcel IDs or "
+                "values, not unique shortlists, completed diligence, "
+                "lead quality, or model accuracy."
             ),
         },
     }
@@ -208,7 +232,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v6"
+    assert report["schema_version"] == "citylens/product-adoption-report@v7"
     assert report["workflow_inventory"] == {
         "records": 2,
         "active": 1,
@@ -275,6 +299,12 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["decision_audit_engagement"]["parcel_open_to_audit_rate"] is None
     assert (
         report["decision_audit_engagement"]["evidence_gate"]["status"]
+        == "collecting"
+    )
+    assert report["comparison_engagement"]["opened"] == 0
+    assert report["comparison_engagement"]["parcel_open_to_comparison_rate"] is None
+    assert (
+        report["comparison_engagement"]["evidence_gate"]["status"]
         == "collecting"
     )
     assert report["underwriting_engagement"]["opened"] == 0
@@ -365,6 +395,36 @@ def test_decision_audit_gate_requires_opens_across_multiple_users() -> None:
         "audit_tab": 5,
     }
     assert engagement["parcel_open_to_audit_rate"] == 1.0
+    assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["evidence_gate"]["opens_remaining"] == 0
+    assert engagement["evidence_gate"]["users_remaining"] == 0
+
+
+def test_comparison_gate_requires_opens_across_multiple_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {
+                    "parcel_opened": 2,
+                    "comparison_opened": 1,
+                },
+                "sources": {
+                    "parcel_opened:ranking": 2,
+                    "comparison_opened:comparison": 1,
+                },
+            }
+            for index in range(10)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["comparison_engagement"]
+    assert engagement["opened"] == 10
+    assert engagement["users"] == 3
+    assert engagement["entry_points"] == {"comparison": 10}
+    assert engagement["parcel_open_to_comparison_rate"] == 0.5
     assert engagement["evidence_gate"]["status"] == "ready"
     assert engagement["evidence_gate"]["opens_remaining"] == 0
     assert engagement["evidence_gate"]["users_remaining"] == 0

@@ -75,6 +75,7 @@ def build_product_adoption_report(
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
     decision_audit_users: set[str] = set()
+    comparison_users: set[str] = set()
     underwriting_open_users: set[str] = set()
     underwriting_adjustment_users: set[str] = set()
 
@@ -108,6 +109,8 @@ def build_product_adoption_report(
                 saved_view_apply_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
+            if row_events.get("comparison_opened", 0) > 0:
+                comparison_users.add(user_id)
             if row_events.get("underwriting_opened", 0) > 0:
                 underwriting_open_users.add(user_id)
             if row_events.get("underwriting_assumptions_changed", 0) > 0:
@@ -175,6 +178,7 @@ def build_product_adoption_report(
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
     decision_audit_opens = events.get("decision_audit_opened", 0)
+    comparison_opens = events.get("comparison_opened", 0)
     underwriting_opens = events.get("underwriting_opened", 0)
     underwriting_adjustments = events.get(
         "underwriting_assumptions_changed", 0
@@ -184,6 +188,12 @@ def build_product_adoption_report(
     decision_audit_engagement_ready = (
         decision_audit_opens >= minimum_decision_audit_opens
         and len(decision_audit_users) >= minimum_decision_audit_users
+    )
+    minimum_comparison_opens = 10
+    minimum_comparison_users = 3
+    comparison_engagement_ready = (
+        comparison_opens >= minimum_comparison_opens
+        and len(comparison_users) >= minimum_comparison_users
     )
     minimum_underwriting_opens = 10
     minimum_underwriting_open_users = 3
@@ -208,7 +218,8 @@ def build_product_adoption_report(
             "lifecycle and saved-view mutation counts are derived "
             "transactionally from canonical mutations. Saved-view applies "
             "and decision-audit/underwriting interactions are directional "
-            "client-side counters. None is model accuracy, completed "
+            "client-side counters. Comparison opens are also directional "
+            "and contain no parcel identifiers or values. None is model accuracy, completed "
             "diligence, a valuation, or a unique-parcel count."
         )
     ]
@@ -232,6 +243,12 @@ def build_product_adoption_report(
             f"{decision_audit_opens}/{minimum_decision_audit_opens} opens across "
             f"{len(decision_audit_users)}/{minimum_decision_audit_users} users."
         )
+    if not comparison_engagement_ready:
+        warnings.append(
+            "Comparison engagement evidence is still collecting: "
+            f"{comparison_opens}/{minimum_comparison_opens} opens across "
+            f"{len(comparison_users)}/{minimum_comparison_users} users."
+        )
     if not underwriting_engagement_ready:
         warnings.append(
             "Underwriting engagement evidence is still collecting: "
@@ -249,7 +266,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v6",
+        "schema_version": "citylens/product-adoption-report@v7",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -304,6 +321,39 @@ def build_product_adoption_report(
                     "Directional evidence-audit engagement only; opens are "
                     "best-effort aggregate counters, not unique parcels, "
                     "completed diligence, lead quality, or model accuracy."
+                ),
+            },
+        },
+        "comparison_engagement": {
+            "opened": comparison_opens,
+            "users": len(comparison_users),
+            "entry_points": {
+                "comparison": sources.get(
+                    "comparison_opened:comparison", 0
+                ),
+            },
+            "parcel_open_to_comparison_rate": (
+                round(comparison_opens / parcel_opens, 6)
+                if parcel_opens > 0
+                else None
+            ),
+            "evidence_gate": {
+                "status": (
+                    "ready" if comparison_engagement_ready else "collecting"
+                ),
+                "minimum_opens": minimum_comparison_opens,
+                "minimum_users": minimum_comparison_users,
+                "opens_remaining": max(
+                    0, minimum_comparison_opens - comparison_opens
+                ),
+                "users_remaining": max(
+                    0, minimum_comparison_users - len(comparison_users)
+                ),
+                "claim": (
+                    "Directional shortlist-comparison engagement only; opens "
+                    "are best-effort aggregate counters with no parcel IDs or "
+                    "values, not unique shortlists, completed diligence, "
+                    "lead quality, or model accuracy."
                 ),
             },
         },

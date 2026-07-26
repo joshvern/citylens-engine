@@ -315,6 +315,34 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "underwriting_assumptions_changed",
         "source": "base_assumptions",
     }
+    comparison_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "comparison_opened",
+            "source": "comparison",
+        },
+    )
+    assert comparison_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "comparison_opened",
+        "source": "comparison",
+    }
+    compared_parcel_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "parcel_opened",
+            "source": "comparison",
+        },
+    )
+    assert compared_parcel_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "parcel_opened",
+        "source": "comparison",
+    }
     mismatched = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -342,6 +370,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched_underwriting_source.status_code == 422
+    mismatched_comparison_source = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "comparison_opened",
+            "source": "map",
+        },
+    )
+    assert mismatched_comparison_source.status_code == 422
     identifying = client.post(
         "/v1/parcel-intel/product-events",
         json={

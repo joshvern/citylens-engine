@@ -322,6 +322,121 @@ def test_evidence_review_usage_is_private_source_bound_and_idempotent(
     assert inactive is not None
 
 
+def test_evidence_issue_governance_preserves_source_and_private_usage(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    created = store.upsert_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload={
+            "borough": "brooklyn",
+            "stage": "reviewing",
+            "outcome": "unknown",
+            "snapshot": {
+                "citywide_rank": 12,
+                "owner_name": "OFFICIAL OWNER LLC",
+            },
+        },
+    )
+    source_snapshot = deepcopy(created["snapshot"])
+    issue_payload = {
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "issue_type": "correction",
+        "reason_code": "incorrect_value",
+        "note": "The mapped lot area conflicts with a current signed survey.",
+        "check_status": "verified",
+        "source": "NYC PLUTO",
+        "source_as_of": "2026-07-24",
+        "feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+
+    workflow, issue, mutation_status = (
+        store.submit_parcel_workflow_evidence_issue(
+            app_user_id="private-user",
+            bbl="3020960069",
+            issue=issue_payload,
+        )
+    )
+    assert mutation_status == "submitted"
+    assert workflow is not None
+    assert issue is not None
+    assert workflow["snapshot"] == source_snapshot
+    assert workflow["evidence_issues"]["property_facts"] == issue
+    issue_id = issue["issue_id"]
+    governance_path = ("parcel_evidence_issues", issue_id)
+    governance = client.documents[governance_path]
+    assert governance["submitted_by_user_id"] == "private-user"
+    assert governance["expires_at"] == now + timedelta(days=730)
+    assert governance["source"] == "NYC PLUTO"
+
+    usage_path = (
+        "users",
+        "private-user",
+        "product_usage_days",
+        "2026-07-24",
+    )
+    usage = client.documents[usage_path]
+    assert usage["events"] == {
+        "workflow_created": 1,
+        "workflow_evidence_issue_submitted": 1,
+    }
+    assert not {
+        "bbl",
+        "check_key",
+        "note",
+        "source",
+        "reason_code",
+    }.intersection(usage)
+
+    retried, retried_issue, mutation_status = (
+        store.submit_parcel_workflow_evidence_issue(
+            app_user_id="private-user",
+            bbl="3020960069",
+            issue=issue_payload,
+        )
+    )
+    assert mutation_status == "unchanged"
+    assert retried_issue == issue
+    assert retried is not None
+    assert (
+        client.documents[usage_path]["events"][
+            "workflow_evidence_issue_submitted"
+        ]
+        == 1
+    )
+
+    resolved = store.resolve_parcel_evidence_issue(
+        issue_id=issue_id,
+        status="resolved",
+        resolution_note="Verified and queued for the governed source update.",
+        admin_user_id="private-admin",
+    )
+    assert resolved is not None
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by_user_id"] == "private-admin"
+    workflow_path = (
+        "users",
+        "private-user",
+        "parcel_workflow",
+        "3020960069",
+    )
+    mirrored = client.documents[workflow_path]["evidence_issues"][
+        "property_facts"
+    ]
+    assert mirrored["status"] == "resolved"
+    assert client.documents[workflow_path]["snapshot"] == source_snapshot
+
+
 def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
     monkeypatch,
 ) -> None:

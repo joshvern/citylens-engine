@@ -771,9 +771,71 @@ environment-specific collection is required. Public submission is
 unauthenticated but bounded, consented, idempotent, honeypot-filtered, and
 throttled. Queue list/status operations still require an admin identity.
 
-The API writes only aggregate daily event/source counts to this collection.
+Evidence correction and suppression-review requests default to
+`CITYLENS_PARCEL_EVIDENCE_ISSUES_COLLECTION=parcel_evidence_issues`. Enable
+their explicit 730-day retention boundary once for each Firestore database:
+
+```bash
+gcloud firestore fields ttls update expires_at \
+  --collection-group=parcel_evidence_issues \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --enable-ttl
+
+gcloud firestore fields ttls list \
+  --collection-group=parcel_evidence_issues \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --format='table(name,ttlConfig.state)'
+```
+
+Create the composite index used by the newest-first, status-filtered admin
+triage queue:
+
+```bash
+gcloud firestore indexes composite create \
+  --collection-group=parcel_evidence_issues \
+  --field-config=field-path=status,order=ascending \
+  --field-config=field-path=submitted_at,order=descending \
+  --database='(default)' \
+  --project="<PROJECT_ID>"
+```
+
+User submission and withdrawal endpoints are authenticated and
+private/no-store. The admin list/resolve endpoints require `is_admin`; neither
+path changes the cited official fact. Do not expose the governance collection
+directly to browser credentials.
+
+Triage with an admin bearer token or enabled hash-only admin API key:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${CITYLENS_ADMIN_BEARER_TOKEN}" \
+  "https://api.citylens.dev/v1/parcel-intel/evidence-issues?status=submitted&limit=100"
+
+curl -sS -X PATCH \
+  -H "Authorization: Bearer ${CITYLENS_ADMIN_BEARER_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://api.citylens.dev/v1/parcel-intel/evidence-issues/<ISSUE_ID>" \
+  --data '{
+    "status": "resolved",
+    "resolution_note": "Reviewed against the current cited source and queued for the governed source update."
+  }'
+```
+
+Use `dismissed` only when the cited value remains supported after review.
+Resolution text is returned to the submitting user's private workflow; do not
+put secrets, personal contact details, or internal credentials in it.
+
+The central governance record expires after 730 days when the TTL policy is
+enabled. Its latest private mirror follows the containing workflow record's
+lifecycle so the submitting user can see the request outcome.
+
+Separately, the API writes only aggregate daily event/source counts to each
+user's `product_usage_days` collection.
 Parcel opens and saved-view applies are value-minimized client counters.
-Workflow lifecycle, source-bound evidence-review, and saved-view
+Workflow lifecycle, source-bound evidence-review, evidence-issue submission,
+and saved-view
 create/update/delete counters are written transactionally with their canonical
 mutations, so dropped browser telemetry cannot erase a real save and unchanged
 retries cannot inflate it. Do not add BBLs, addresses, check keys, citations,
@@ -787,7 +849,7 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The v9 report includes aggregate canonical workflow and saved-view inventory,
+The v10 report includes aggregate canonical workflow and saved-view inventory,
 an activation-evidence gate, source-bound review engagement, and a
 saved-view-reuse evidence gate. Activation
 remains `collecting` until at least 30 workflow records exist across at least

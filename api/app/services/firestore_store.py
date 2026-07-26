@@ -46,6 +46,7 @@ USER_API_KEY_BYTES = 32
 PRODUCT_EVENT_RETENTION_DAYS = 90
 PRODUCT_EVENT_DAILY_LIMIT = 1_000
 PILOT_REQUEST_RETENTION_DAYS = 365
+EVIDENCE_ISSUE_RETENTION_DAYS = 730
 
 
 def _hash_api_key(plaintext: str) -> str:
@@ -110,6 +111,7 @@ class FirestoreStore:
         usage_months_collection: str = "usage_months",
         api_keys_index_collection: str = "api_keys_by_hash",
         pilot_requests_collection: str = "pilot_requests",
+        parcel_evidence_issues_collection: str = "parcel_evidence_issues",
         client: firestore.Client | None = None,
     ) -> None:
         self.client = client or firestore.Client(project=project_id)
@@ -119,6 +121,9 @@ class FirestoreStore:
         self.usage_months_collection = usage_months_collection
         self.api_keys_index_collection = api_keys_index_collection
         self.pilot_requests_collection = pilot_requests_collection
+        self.parcel_evidence_issues_collection = (
+            parcel_evidence_issues_collection
+        )
 
     # ---------- Health ----------
 
@@ -960,6 +965,369 @@ class FirestoreStore:
             return {**existing, **patch}, mutation_status
 
         def _op() -> tuple[dict[str, Any] | None, str]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def submit_parcel_workflow_evidence_issue(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        issue: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+        """Submit one exact-version evidence issue without rewriting evidence.
+
+        The user's workflow document mirrors the latest request for fast product
+        reads. The separately indexed governance document is the durable triage
+        record. Repeating an identical active request is idempotent; a materially
+        different request must explicitly withdraw the active one first.
+        """
+
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        issue_id = f"pei_{uuid.uuid4().hex}"
+        issue_ref = self.client.collection(
+            self.parcel_evidence_issues_collection
+        ).document(issue_id)
+        event_id = uuid.uuid4().hex
+        check_key = str(issue.get("check_key") or "")
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(
+            transaction,
+        ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+            now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
+            if not snap.exists:
+                return None, None, "missing"
+            existing = snap.to_dict() or {}
+            if existing.get("archived_at") is not None:
+                return existing, None, "inactive"
+
+            raw_issues = existing.get("evidence_issues")
+            issues = (
+                dict(raw_issues) if isinstance(raw_issues, dict) else {}
+            )
+            current = issues.get(check_key)
+            identity_keys = (
+                "check_key",
+                "label",
+                "issue_type",
+                "reason_code",
+                "note",
+                "check_status",
+                "source",
+                "source_as_of",
+                "feed_generated_at",
+            )
+            requested_identity = {
+                key: issue.get(key) for key in identity_keys
+            }
+            if isinstance(current, dict) and current.get("status") == "submitted":
+                current_identity = {
+                    key: current.get(key) for key in identity_keys
+                }
+                if current_identity == requested_identity:
+                    return existing, current, "unchanged"
+                return existing, current, "conflict"
+
+            public_issue = {
+                **requested_identity,
+                "issue_id": issue_id,
+                "status": "submitted",
+                "submitted_at": now,
+                "updated_at": now,
+                "resolved_at": None,
+                "resolution_note": None,
+            }
+            governance_issue = {
+                **public_issue,
+                "schema_version": "citylens/parcel-evidence-issue@v1",
+                "bbl": bbl,
+                "borough": existing.get("borough"),
+                "submitted_by_user_id": app_user_id,
+                "resolved_by_user_id": None,
+                "expires_at": now
+                + timedelta(days=EVIDENCE_ISSUE_RETENTION_DAYS),
+            }
+            issues[check_key] = public_issue
+            patch = {
+                "evidence_issues": issues,
+                "updated_at": now,
+                "event_count": int(existing.get("event_count") or 0) + 1,
+            }
+            transaction.set(issue_ref, governance_issue)
+            transaction.set(ref, patch, merge=True)
+            transaction.set(
+                ref.collection("events").document(event_id),
+                {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": "updated",
+                    "occurred_at": now,
+                    "from_stage": existing.get("stage"),
+                    "to_stage": existing.get("stage"),
+                    "from_outcome": existing.get("outcome"),
+                    "to_outcome": existing.get("outcome"),
+                    "from_decision_reason": existing.get("decision_reason"),
+                    "to_decision_reason": existing.get("decision_reason"),
+                    "changed_fields": [f"evidence_issues.{check_key}"],
+                },
+            )
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
+            usage_payload = _product_usage_day_payload(
+                existing=existing_usage,
+                event="workflow_evidence_issue_submitted",
+                source="workflow",
+                occurred_at=now,
+            )
+            if usage_payload is not None:
+                transaction.set(usage_ref, usage_payload)
+            return {**existing, **patch}, public_issue, "submitted"
+
+        def _op() -> tuple[
+            dict[str, Any] | None,
+            dict[str, Any] | None,
+            str,
+        ]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def withdraw_parcel_workflow_evidence_issue(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        check_key: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Withdraw an open request while preserving its citation and history."""
+
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> tuple[dict[str, Any] | None, str]:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return None, "missing"
+            existing = snap.to_dict() or {}
+            if existing.get("archived_at") is not None:
+                return existing, "inactive"
+            raw_issues = existing.get("evidence_issues")
+            issues = (
+                dict(raw_issues) if isinstance(raw_issues, dict) else {}
+            )
+            current = issues.get(check_key)
+            if not isinstance(current, dict):
+                return existing, "missing_issue"
+            if current.get("status") != "submitted":
+                return existing, "unchanged"
+
+            now = utcnow()
+            withdrawn = {
+                **current,
+                "status": "withdrawn",
+                "updated_at": now,
+            }
+            issues[check_key] = withdrawn
+            issue_id = str(current.get("issue_id") or "")
+            issue_ref = None
+            issue_snap = None
+            if issue_id:
+                issue_ref = self.client.collection(
+                    self.parcel_evidence_issues_collection
+                ).document(issue_id)
+                issue_snap = issue_ref.get(transaction=transaction)
+            patch = {
+                "evidence_issues": issues,
+                "updated_at": now,
+                "event_count": int(existing.get("event_count") or 0) + 1,
+            }
+            if (
+                issue_ref is not None
+                and issue_snap is not None
+                and issue_snap.exists
+            ):
+                transaction.set(
+                    issue_ref,
+                    {"status": "withdrawn", "updated_at": now},
+                    merge=True,
+                )
+            transaction.set(ref, patch, merge=True)
+            transaction.set(
+                ref.collection("events").document(event_id),
+                {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": "updated",
+                    "occurred_at": now,
+                    "from_stage": existing.get("stage"),
+                    "to_stage": existing.get("stage"),
+                    "from_outcome": existing.get("outcome"),
+                    "to_outcome": existing.get("outcome"),
+                    "from_decision_reason": existing.get("decision_reason"),
+                    "to_decision_reason": existing.get("decision_reason"),
+                    "changed_fields": [f"evidence_issues.{check_key}"],
+                },
+            )
+            return {**existing, **patch}, "withdrawn"
+
+        def _op() -> tuple[dict[str, Any] | None, str]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def list_parcel_evidence_issues(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return the newest bounded admin triage queue."""
+
+        def _op() -> list[dict[str, Any]]:
+            query = self.client.collection(
+                self.parcel_evidence_issues_collection
+            )
+            if status is not None:
+                query = query.where(
+                    filter=FieldFilter("status", "==", status)
+                )
+            snapshots = (
+                query.order_by(
+                    "submitted_at",
+                    direction=firestore.Query.DESCENDING,
+                )
+                .limit(limit)
+                .stream()
+            )
+            return [snap.to_dict() or {} for snap in snapshots]
+
+        return retry_transient(_op)
+
+    def resolve_parcel_evidence_issue(
+        self,
+        *,
+        issue_id: str,
+        status: str,
+        resolution_note: str,
+        admin_user_id: str,
+    ) -> dict[str, Any] | None:
+        """Resolve or dismiss a request and mirror the outcome to its owner."""
+
+        issue_ref = self.client.collection(
+            self.parcel_evidence_issues_collection
+        ).document(issue_id)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> dict[str, Any] | None:
+            issue_snap = issue_ref.get(transaction=transaction)
+            if not issue_snap.exists:
+                return None
+            existing_issue = issue_snap.to_dict() or {}
+            if existing_issue.get("status") != "submitted":
+                return existing_issue
+            now = utcnow()
+            app_user_id = str(
+                existing_issue.get("submitted_by_user_id") or ""
+            )
+            bbl = str(existing_issue.get("bbl") or "")
+            check_key = str(existing_issue.get("check_key") or "")
+            workflow_ref = None
+            workflow = None
+            if app_user_id and bbl and check_key:
+                workflow_ref = self._parcel_workflow_col(
+                    app_user_id
+                ).document(bbl)
+                workflow_snap = workflow_ref.get(transaction=transaction)
+                if workflow_snap.exists:
+                    workflow = workflow_snap.to_dict() or {}
+
+            updated_issue = {
+                **existing_issue,
+                "status": status,
+                "resolution_note": resolution_note,
+                "resolved_at": now,
+                "resolved_by_user_id": admin_user_id,
+                "updated_at": now,
+            }
+            transaction.set(issue_ref, updated_issue)
+
+            if workflow_ref is not None and workflow is not None:
+                raw_issues = workflow.get("evidence_issues")
+                issues = (
+                    dict(raw_issues)
+                    if isinstance(raw_issues, dict)
+                    else {}
+                )
+                mirrored = issues.get(check_key)
+                if (
+                    isinstance(mirrored, dict)
+                    and mirrored.get("issue_id") == issue_id
+                ):
+                    issues[check_key] = {
+                        **mirrored,
+                        "status": status,
+                        "resolution_note": resolution_note,
+                        "resolved_at": now,
+                        "updated_at": now,
+                    }
+                    transaction.set(
+                        workflow_ref,
+                        {
+                            "evidence_issues": issues,
+                            "updated_at": now,
+                            "event_count": int(
+                                workflow.get("event_count") or 0
+                            )
+                            + 1,
+                        },
+                        merge=True,
+                    )
+                    transaction.set(
+                        workflow_ref.collection("events").document(event_id),
+                        {
+                            "event_id": event_id,
+                            "schema_version": (
+                                "citylens/parcel-workflow-event@v1"
+                            ),
+                            "bbl": bbl,
+                            "event_type": "updated",
+                            "occurred_at": now,
+                            "from_stage": workflow.get("stage"),
+                            "to_stage": workflow.get("stage"),
+                            "from_outcome": workflow.get("outcome"),
+                            "to_outcome": workflow.get("outcome"),
+                            "from_decision_reason": workflow.get(
+                                "decision_reason"
+                            ),
+                            "to_decision_reason": workflow.get(
+                                "decision_reason"
+                            ),
+                            "changed_fields": [
+                                f"evidence_issues.{check_key}"
+                            ],
+                        },
+                    )
+            return updated_issue
+
+        def _op() -> dict[str, Any] | None:
             transaction = self.client.transaction()
             return _txn(transaction)
 

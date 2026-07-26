@@ -845,6 +845,9 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         "brooklyn",
         "queens",
     }
+    assert all(
+        row["address_source"] == "nyc_pluto" for row in body["rows"]
+    )
     assert all(row["owner_name"] is None for row in body["rows"])
     assert all(row["recent_change"] is False for row in body["rows"])
     assert all(row["owner_entity_type"] is None for row in body["rows"])
@@ -924,6 +927,7 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     assert body["returned_count"] == 30
     assert body["available_count"] == 30
     assert body["inventory_complete"] is True
+    assert body["rows"][0]["address_source"] == "nyc_pluto"
     assert body["rows"][0]["owner_name"] == "ACME REALTY LLC"
     assert body["rows"][0]["recent_change"] is True
     assert body["rows"][0]["owner_entity_type"] == "llc"

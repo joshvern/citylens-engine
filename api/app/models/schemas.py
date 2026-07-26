@@ -473,6 +473,9 @@ class ParcelIntelMapRow(BaseModel):
 
     bbl: str
     address: Optional[str] = None
+    address_source: Optional[
+        Literal["nyc_pad", "nyc_pluto", "model_sweep"]
+    ] = None
     borough: str
     score_calibrated: Optional[float] = None
     priority_rank: Optional[int] = None

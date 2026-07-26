@@ -933,6 +933,8 @@ ParcelProductEventName = Literal[
     "decision_audit_opened",
     "underwriting_opened",
     "underwriting_assumptions_changed",
+    "screen_audit_opened",
+    "screen_criterion_relaxed",
 ]
 
 ParcelProductEventSource = Literal[
@@ -947,6 +949,8 @@ ParcelProductEventSource = Literal[
     "audit_tab",
     "underwrite_tab",
     "base_assumptions",
+    "screen_summary",
+    "screen_audit",
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
@@ -963,6 +967,8 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "decision_audit_opened": {"decision_posture", "audit_tab"},
     "underwriting_opened": {"underwrite_tab"},
     "underwriting_assumptions_changed": {"base_assumptions"},
+    "screen_audit_opened": {"screen_summary"},
+    "screen_criterion_relaxed": {"screen_audit"},
 }
 
 
@@ -972,8 +978,9 @@ class ParcelProductEventCreate(BaseModel):
     Workflow and saved-view mutation counters are derived transactionally by
     the API from canonical writes. Only parcel/comparison opens,
     decision-audit opens, underwriting opens/first adjustments, and saved-view
-    applies remain client-reported. Comparison events carry no parcel
-    identifiers or compared values.
+    applies and coarse screen-audit interactions remain client-reported.
+    Comparison and screen-audit events carry no parcel identifiers, filter
+    values, queries, criteria, thresholds, or compared values.
     """
 
     model_config = ConfigDict(extra="forbid")

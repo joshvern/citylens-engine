@@ -944,6 +944,34 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "underwriting_assumptions_changed",
         "source": "base_assumptions",
     }
+    screen_audit_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "screen_audit_opened",
+            "source": "screen_summary",
+        },
+    )
+    assert screen_audit_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "screen_audit_opened",
+        "source": "screen_summary",
+    }
+    screen_criterion_relaxed = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "screen_criterion_relaxed",
+            "source": "screen_audit",
+        },
+    )
+    assert screen_criterion_relaxed.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "screen_criterion_relaxed",
+        "source": "screen_audit",
+    }
     comparison_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -999,6 +1027,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched_underwriting_source.status_code == 422
+    mismatched_screen_audit_source = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "screen_audit_opened",
+            "source": "screen_audit",
+        },
+    )
+    assert mismatched_screen_audit_source.status_code == 422
     mismatched_comparison_source = client.post(
         "/v1/parcel-intel/product-events",
         json={

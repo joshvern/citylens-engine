@@ -254,10 +254,13 @@ Current pinned release tag:
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
   parcel-open, comparison-open, decision-audit-open,
-  underwriting-open/first-adjustment, and saved-view-apply sources and rejects
+  underwriting-open/first-adjustment, saved-view-apply, screen-audit-open, and
+  screen-criterion-relaxed sources and rejects
   workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
   values or results, notes, tags, assignees, contacts, and arbitrary
   properties. Comparison opens contain no shortlist identities or values.
+  Screen-audit events contain no criterion, threshold, query, result count,
+  parcel, owner, or relaxed value.
   Decision-audit opens identify only whether the user entered through the
   overview posture or the Audit tab; underwriting events identify only the
   Underwrite tab or the first base-input adjustment for a parcel/session.

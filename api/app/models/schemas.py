@@ -1733,7 +1733,12 @@ class ParcelScreeningLedgerRow(BaseModel):
 
 
 class ParcelSavedSearchFilters(BaseModel):
-    """The complete, restorable state of the citywide parcel explorer."""
+    """The complete, restorable state of the citywide parcel explorer.
+
+    ``opportunity`` is retained as the v2 compatibility field for saved views
+    created before compound screening. New clients send ``opportunity="all"``
+    and persist the independent ``site_type`` and ``signals`` dimensions.
+    """
 
     query: str = Field(default="", max_length=160)
     priority: Literal["all", "highest", "high_or_better"] = "all"
@@ -1753,16 +1758,97 @@ class ParcelSavedSearchFilters(BaseModel):
         "conversion_or_overbuilt",
         "active_project",
     ] = "uncommitted"
+    site_type: Optional[
+        Literal[
+            "all",
+            "uncommitted",
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+        ]
+    ] = None
+    signals: list[
+        Literal[
+            "assemblage",
+            "tax_lien",
+            "violations",
+            "floodplain",
+            "environmental_review",
+            "mih",
+            "transit_800m",
+            "portfolio",
+            "recent_change",
+            "long_held",
+        ]
+    ] = Field(default_factory=list, max_length=10)
     owner_portfolio_id: Optional[str] = Field(default=None, max_length=128)
     overlay: Literal["priority", "opportunity", "borough"] = "borough"
 
     @model_validator(mode="after")
     def normalize_and_validate(self) -> ParcelSavedSearchFilters:
         self.query = self.query.strip()
-        if self.opportunity != "portfolio" and self.owner_portfolio_id is not None:
+        explicit_site_type = "site_type" in self.model_fields_set
+        explicit_signals = "signals" in self.model_fields_set
+        legacy_site_types = {
+            "uncommitted",
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+        }
+        legacy_signals = {
+            "assemblage",
+            "tax_lien",
+            "violations",
+            "floodplain",
+            "environmental_review",
+            "mih",
+            "transit_800m",
+            "portfolio",
+        }
+        if self.opportunity != "all":
+            expected_site_type = (
+                self.opportunity
+                if self.opportunity in legacy_site_types
+                else "all"
+            )
+            expected_signals = (
+                [self.opportunity]
+                if self.opportunity in legacy_signals
+                else []
+            )
+            if (
+                explicit_site_type
+                and self.site_type != expected_site_type
+            ) or (
+                explicit_signals
+                and self.signals != expected_signals
+            ):
+                raise PydanticCustomError(
+                    "conflicting_saved_view_filters",
+                    (
+                        "legacy opportunity cannot conflict with site_type or "
+                        "signals"
+                    ),
+                )
+        if self.site_type is None:
+            self.site_type = (
+                self.opportunity
+                if self.opportunity in legacy_site_types
+                else "all"
+            )
+        if not explicit_signals and self.opportunity in legacy_signals:
+            self.signals = [self.opportunity]  # type: ignore[list-item]
+        self.signals = list(dict.fromkeys(self.signals))
+
+        if (
+            "portfolio" not in self.signals
+            and self.owner_portfolio_id is not None
+        ):
             raise PydanticCustomError(
                 "invalid_saved_view_owner_focus",
-                "owner_portfolio_id requires opportunity='portfolio'",
+                "owner_portfolio_id requires signals to include 'portfolio'",
             )
         if self.owner_portfolio_id is not None:
             self.owner_portfolio_id = self.owner_portfolio_id.strip()

@@ -241,8 +241,12 @@ Current pinned release tag:
   authoritative evidence.
 - Authenticated users can persist the complete citywide explorer state through
   `GET|PUT|DELETE /v1/parcel-intel/saved-searches`. The v2 saved-view contract
-  stores borough scope, search text, priority/opportunity filters, optional
-  owner-portfolio focus, and map overlay. Responses are private/no-store.
+  stores borough scope, search text, priority, independent site type, multiple
+  required evidence signals, optional owner-portfolio focus, and map overlay.
+  Selected signals use deterministic AND semantics and never modify model
+  score or rank. The legacy `opportunity` field remains accepted and is
+  normalized into the new dimensions so existing saved views continue to
+  restore correctly. Responses are private/no-store.
   `alert_frequency` is intentionally limited to `off`; scheduled saved-search
   delivery is not implemented and the API does not imply otherwise.
 - Authenticated Parcel Intelligence clients may submit the strict

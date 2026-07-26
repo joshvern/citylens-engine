@@ -1319,6 +1319,8 @@ def test_saved_search_crud(auth_override) -> None:
     assert created.json()["schema_version"] == "citylens/parcel-saved-view@v2"
     assert created.json()["name"] == "Citywide vacant sites"
     assert created.json()["filters"]["query"] == "llc"
+    assert created.json()["filters"]["site_type"] == "vacant_site"
+    assert created.json()["filters"]["signals"] == []
     assert created.json()["alert_frequency"] == "off"
     listed = client.get("/v1/parcel-intel/saved-searches")
     assert listed.headers["cache-control"] == "private, no-store"
@@ -1345,6 +1347,14 @@ def test_saved_search_crud(auth_override) -> None:
             },
         },
         {
+            "name": "Conflicting legacy and compound filters",
+            "borough": "all",
+            "filters": {
+                "opportunity": "vacant_site",
+                "site_type": "ground_up_candidate",
+            },
+        },
+        {
             "name": "Invalid opportunity",
             "borough": "all",
             "filters": {"opportunity": "seller_intent"},
@@ -1362,6 +1372,70 @@ def test_saved_search_rejects_unrestorable_or_unimplemented_state(
         json=payload,
     )
     assert response.status_code == 422
+
+
+def test_saved_search_preserves_compound_site_and_signal_filters(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="compound-search-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    created = client.put(
+        "/v1/parcel-intel/saved-searches/queens-long-held-transit",
+        json={
+            "name": "Queens long-held transit sites",
+            "borough": "queens",
+            "filters": {
+                "query": "",
+                "priority": "high_or_better",
+                "opportunity": "all",
+                "site_type": "uncommitted",
+                "signals": ["long_held", "transit_800m", "long_held"],
+                "overlay": "priority",
+            },
+            "alert_frequency": "off",
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    filters = created.json()["filters"]
+    assert filters["opportunity"] == "all"
+    assert filters["site_type"] == "uncommitted"
+    assert filters["signals"] == ["long_held", "transit_800m"]
+
+    listed = client.get("/v1/parcel-intel/saved-searches")
+    assert listed.status_code == 200
+    assert listed.json()[0]["filters"] == filters
+
+
+def test_saved_search_normalizes_legacy_portfolio_focus(auth_override) -> None:
+    auth_override(app_user_id="legacy-portfolio-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    created = client.put(
+        "/v1/parcel-intel/saved-searches/legacy-portfolio",
+        json={
+            "name": "Legacy owner portfolio",
+            "borough": "all",
+            "filters": {
+                "opportunity": "portfolio",
+                "owner_portfolio_id": "owner-portfolio-1",
+            },
+            "alert_frequency": "off",
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    assert created.json()["filters"]["site_type"] == "all"
+    assert created.json()["filters"]["signals"] == ["portfolio"]
+    assert (
+        created.json()["filters"]["owner_portfolio_id"]
+        == "owner-portfolio-1"
+    )
 
 
 def test_workflow_rejects_bad_bbl(auth_override) -> None:

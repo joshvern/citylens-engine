@@ -1782,6 +1782,16 @@ class ParcelSavedSearchFilters(BaseModel):
             "long_held",
         ]
     ] = Field(default_factory=list, max_length=10)
+    min_lot_area_sqft: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10_000_000,
+    )
+    min_unused_floor_area_sqft: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=100_000_000,
+    )
     owner_portfolio_id: Optional[str] = Field(default=None, max_length=128)
     overlay: Literal["priority", "opportunity", "borough"] = "borough"
 

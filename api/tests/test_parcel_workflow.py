@@ -1000,6 +1000,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "comparison_opened",
         "source": "comparison",
     }
+    peer_comparison_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "comparison_opened",
+            "source": "decision_peers",
+        },
+    )
+    assert peer_comparison_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "comparison_opened",
+        "source": "decision_peers",
+    }
     compared_parcel_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1013,6 +1027,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "app_user_id": "user-adoption",
         "event": "parcel_opened",
         "source": "comparison",
+    }
+    peer_parcel_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "parcel_opened",
+            "source": "decision_peers",
+        },
+    )
+    assert peer_parcel_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "parcel_opened",
+        "source": "decision_peers",
     }
     mismatched = client.post(
         "/v1/parcel-intel/product-events",

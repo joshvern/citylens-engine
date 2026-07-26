@@ -48,7 +48,8 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "sources": {
                     "parcel_opened:map": 2,
                     "parcel_opened:ranking": 1,
-                    "comparison_opened:comparison": 2,
+                    "comparison_opened:comparison": 1,
+                    "comparison_opened:decision_peers": 1,
                     "decision_audit_opened:decision_posture": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 2,
@@ -198,7 +199,10 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "users": 2,
         "workflow_creates": 1,
         "workflow_users": 1,
-        "entry_points": {"comparison": 3},
+        "entry_points": {
+            "comparison": 2,
+            "decision_peers": 1,
+        },
         "parcel_open_to_comparison_rate": 0.75,
         "comparison_to_workflow_create_rate": 0.333333,
         "evidence_gate": {
@@ -496,7 +500,10 @@ def test_comparison_gate_requires_opens_across_multiple_users() -> None:
     assert engagement["users"] == 3
     assert engagement["workflow_creates"] == 0
     assert engagement["workflow_users"] == 0
-    assert engagement["entry_points"] == {"comparison": 10}
+    assert engagement["entry_points"] == {
+        "comparison": 10,
+        "decision_peers": 0,
+    }
     assert engagement["parcel_open_to_comparison_rate"] == 0.5
     assert engagement["comparison_to_workflow_create_rate"] == 0
     assert engagement["evidence_gate"]["status"] == "ready"

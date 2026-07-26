@@ -827,6 +827,18 @@ def _live_source_statuses(
             if valid_published_max_age is not None and cap is not None
             else valid_published_max_age or cap
         )
+        # Some manifest entries are provenance-only metadata rather than
+        # refreshable operational inputs. The CityLens imagery baseline, for
+        # example, records the historical comparison year but has no retrieval
+        # timestamp or freshness SLA. Treating that absence as a stale source
+        # produces a false acquisition warning in the product.
+        if retrieved_at is None and max_age is None:
+            status["age_days"] = None
+            status["max_age_days"] = None
+            status["stale"] = False
+            status["freshness_status"] = "not_applicable"
+            out[str(key)] = status
+            continue
         age_days = (
             max((now - retrieved_at).total_seconds(), 0.0) / 86400.0
             if retrieved_at is not None

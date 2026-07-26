@@ -203,6 +203,15 @@ async def security_headers_middleware(
         # Intake responses can include validation detail or private queue
         # records and must never enter a browser or intermediary cache.
         response.headers.setdefault("Cache-Control", "no-store")
+    if (
+        request.url.path.startswith("/v1/parcel-intel/workflow")
+        and request.url.path
+        != "/v1/parcel-intel/workflow/analytics/methodology"
+    ):
+        # Workflow records can contain private notes, dispositions, actions,
+        # and evidence-review state. Cover early 401/403 responses as well as
+        # successful route responses.
+        response.headers["Cache-Control"] = "private, no-store"
     for name, value in _SECURITY_RESPONSE_HEADERS.items():
         response.headers[name] = value
     return response

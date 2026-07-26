@@ -851,6 +851,120 @@ class FirestoreStore:
 
         return retry_transient(_op)
 
+    def set_parcel_workflow_evidence_review(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        check_key: str,
+        review: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Atomically add or remove a source-bound human review marker.
+
+        Review markers never mutate the parcel snapshot, disposition, stage,
+        action, notes, or outcome. Repeating the same request is idempotent and
+        preserves the original ``reviewed_at`` timestamp.
+        """
+
+        ref = self._parcel_workflow_col(app_user_id).document(bbl)
+        event_id = uuid.uuid4().hex
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> tuple[dict[str, Any] | None, str]:
+            now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
+            if not snap.exists:
+                return None, "missing"
+            existing = snap.to_dict() or {}
+            if (
+                existing.get("archived_at") is not None
+                or workflow_is_terminal(existing)
+            ):
+                return existing, "inactive"
+
+            raw_reviews = existing.get("evidence_reviews")
+            reviews = (
+                dict(raw_reviews) if isinstance(raw_reviews, dict) else {}
+            )
+            current_review = reviews.get(check_key)
+            if review is None:
+                if current_review is None:
+                    return existing, "unchanged"
+                reviews.pop(check_key, None)
+                mutation_status = "removed"
+            else:
+                review_identity = {
+                    key: value
+                    for key, value in review.items()
+                    if key != "reviewed_at"
+                }
+                current_identity = (
+                    {
+                        key: value
+                        for key, value in current_review.items()
+                        if key != "reviewed_at"
+                    }
+                    if isinstance(current_review, dict)
+                    else None
+                )
+                if current_identity == review_identity:
+                    return existing, "unchanged"
+                reviews[check_key] = {
+                    **review_identity,
+                    "reviewed_at": now,
+                }
+                mutation_status = "reviewed"
+
+            patch = {
+                "evidence_reviews": reviews,
+                "updated_at": now,
+                "event_count": int(existing.get("event_count") or 0) + 1,
+            }
+            transaction.set(ref, patch, merge=True)
+            transaction.set(
+                ref.collection("events").document(event_id),
+                {
+                    "event_id": event_id,
+                    "schema_version": "citylens/parcel-workflow-event@v1",
+                    "bbl": bbl,
+                    "event_type": "updated",
+                    "occurred_at": now,
+                    "from_stage": existing.get("stage"),
+                    "to_stage": existing.get("stage"),
+                    "from_outcome": existing.get("outcome"),
+                    "to_outcome": existing.get("outcome"),
+                    "from_decision_reason": existing.get("decision_reason"),
+                    "to_decision_reason": existing.get("decision_reason"),
+                    "changed_fields": [f"evidence_reviews.{check_key}"],
+                },
+            )
+            if mutation_status == "reviewed":
+                existing_usage = (
+                    (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+                )
+                usage_payload = _product_usage_day_payload(
+                    existing=existing_usage,
+                    event="workflow_evidence_reviewed",
+                    source="workflow",
+                    occurred_at=now,
+                )
+                if usage_payload is not None:
+                    transaction.set(usage_ref, usage_payload)
+            return {**existing, **patch}, mutation_status
+
+        def _op() -> tuple[dict[str, Any] | None, str]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
     def list_parcel_workflow_events(
         self, *, app_user_id: str, bbl: str
     ) -> list[dict[str, Any]]:

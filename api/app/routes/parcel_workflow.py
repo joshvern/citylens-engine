@@ -16,6 +16,8 @@ from ..models.schemas import (
     ParcelWorkflowAnalytics,
     ParcelWorkflowAnalyticsMethodology,
     ParcelWorkflowEvent,
+    ParcelWorkflowEvidenceReviewKey,
+    ParcelWorkflowEvidenceReviewRequest,
     ParcelWorkflowItem,
     ParcelWorkflowOutcomeExport,
     ParcelWorkflowReminderSnoozeRequest,
@@ -27,6 +29,7 @@ from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
+from ..services.parcel_decision_audit import build_parcel_decision_audit
 from ..services.parcel_workflow_actions import (
     build_workflow_actions,
     normalize_workflow_action_payload,
@@ -342,6 +345,121 @@ def advance_workflow_from_comparison(
         payload=payload,
     )
     return {"status": mutation_status, "item": item}
+
+
+@router.put(
+    "/parcel-intel/workflow/{bbl}/evidence-reviews/{check_key}",
+    response_model=ParcelWorkflowItem,
+)
+def review_workflow_evidence(
+    bbl: str,
+    check_key: ParcelWorkflowEvidenceReviewKey,
+    body: ParcelWorkflowEvidenceReviewRequest,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> dict:
+    """Record that the user reviewed one exact current evidence version."""
+
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    existing = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+    )
+    if existing is None or existing.get("archived_at") is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Save this parcel to an active workflow before reviewing evidence",
+        )
+
+    row, manifest = registry.parcel(gcs, bbl)
+    audit = build_parcel_decision_audit(
+        row,
+        manifest,
+        premium_access=True,
+    )
+    check = next(
+        (candidate for candidate in audit.checks if candidate.key == check_key),
+        None,
+    )
+    if check is None:
+        raise HTTPException(status_code=422, detail="Evidence check is unavailable")
+    feed_generated_at = audit.evidence_generated_at
+    if (
+        body.expected_check_status != check.status
+        or body.expected_source != check.source
+        or body.expected_source_as_of != check.as_of
+        or body.expected_feed_generated_at != feed_generated_at
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Evidence changed since it was displayed; reload the parcel "
+                "before marking it reviewed"
+            ),
+        )
+
+    item, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+        check_key=check_key,
+        review={
+            "check_key": check_key,
+            "label": check.label,
+            "check_status": check.status,
+            "source": check.source,
+            "source_as_of": check.as_of,
+            "feed_generated_at": feed_generated_at,
+        },
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Workflow record not found")
+    if mutation_status == "inactive":
+        raise HTTPException(
+            status_code=409,
+            detail="Only open, active workflow records can review evidence",
+        )
+    return item
+
+
+@router.delete(
+    "/parcel-intel/workflow/{bbl}/evidence-reviews/{check_key}",
+    response_model=ParcelWorkflowItem,
+)
+def clear_workflow_evidence_review(
+    bbl: str,
+    check_key: ParcelWorkflowEvidenceReviewKey,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    """Remove a human review marker without changing the cited parcel evidence."""
+
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    item, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+        check_key=check_key,
+        review=None,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Workflow record not found")
+    if mutation_status == "inactive":
+        raise HTTPException(
+            status_code=409,
+            detail="Only open, active workflow records can change evidence reviews",
+        )
+    return item
 
 
 @router.post(

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.models.schemas import ParcelIntelRow
 from app.routes import parcel_workflow
 from app.services.firestore_store import (
     PRODUCT_EVENT_DAILY_LIMIT,
@@ -85,6 +86,67 @@ class FakeWorkflowStore:
         doc["archived_at"] = None
         return doc, mutation_status
 
+    def set_parcel_workflow_evidence_review(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        check_key: str,
+        review: dict | None,
+    ) -> tuple[dict | None, str]:
+        del app_user_id
+        item = self.items.get(bbl)
+        if item is None:
+            return None, "missing"
+        if (
+            item.get("archived_at") is not None
+            or item.get("stage") == "pass"
+            or item.get("outcome") in {"closed", "rejected", "lost"}
+        ):
+            return item, "inactive"
+        reviews = dict(item.get("evidence_reviews") or {})
+        current = reviews.get(check_key)
+        if review is None:
+            if current is None:
+                return item, "unchanged"
+            reviews.pop(check_key)
+            mutation_status = "removed"
+        else:
+            current_identity = (
+                {key: value for key, value in current.items() if key != "reviewed_at"}
+                if isinstance(current, dict)
+                else None
+            )
+            if current_identity == review:
+                return item, "unchanged"
+            reviews[check_key] = {
+                **review,
+                "reviewed_at": datetime.now(timezone.utc),
+            }
+            mutation_status = "reviewed"
+        item["evidence_reviews"] = reviews
+        item["updated_at"] = datetime.now(timezone.utc)
+        events = self.events.setdefault(bbl, [])
+        events.insert(
+            0,
+            {
+                "event_id": f"event-{len(events) + 1}",
+                "schema_version": "citylens/parcel-workflow-event@v1",
+                "bbl": bbl,
+                "event_type": "updated",
+                "occurred_at": datetime.now(timezone.utc),
+                "from_stage": item.get("stage"),
+                "to_stage": item.get("stage"),
+                "from_outcome": item.get("outcome"),
+                "to_outcome": item.get("outcome"),
+                "from_decision_reason": item.get("decision_reason"),
+                "to_decision_reason": item.get("decision_reason"),
+                "changed_fields": [f"evidence_reviews.{check_key}"],
+            },
+        )
+        item["event_count"] = len(events)
+        return item, mutation_status
+
     def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
         if bbl not in self.items or self.items[bbl].get("archived_at") is not None:
             return False
@@ -155,15 +217,20 @@ class FakeWorkflowStore:
         return self.searches.pop(search_id, None) is not None
 
 
-class _FakeParcel:
-    def model_dump(self) -> dict:
-        return {
+class _FakeWorkflowRegistry:
+    def parcel(self, _gcs: object, _bbl: str) -> tuple[ParcelIntelRow, dict]:
+        return ParcelIntelRow.model_validate(
+            {
+            "bbl": "3020960069",
             "address": "100 E 21 STREET",
             "property_facts_as_of": "2026-07-24",
+            "property_facts_current": True,
             "citywide_rank": 82,
             "acquisition_rank": 21,
             "priority_tier": "highest",
             "opportunity_category": "ground_up_candidate",
+            "acquisition_eligible": True,
+            "acquisition_status": "eligible",
             "score_calibrated": 0.42,
             "zoning_district_1": "R5",
             "land_use": "01",
@@ -190,12 +257,8 @@ class _FakeParcel:
             "transit_access_tier": "walkable",
             "transit_data_as_of": "2026-07-24",
             "recent_change": False,
-        }
-
-
-class _FakeWorkflowRegistry:
-    def parcel(self, _gcs: object, _bbl: str) -> tuple[_FakeParcel, dict]:
-        return _FakeParcel(), {"generated_at": "2026-07-24T02:43:29Z"}
+            }
+        ), {"generated_at": "2026-07-24T02:43:29Z"}
 
 
 @pytest.fixture(autouse=True)
@@ -327,6 +390,124 @@ def test_comparison_handoff_rejects_mismatched_or_unbounded_input(
         },
     )
     assert identifying_extra.status_code == 422
+
+
+def test_evidence_review_is_source_bound_idempotent_and_reversible(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="evidence-review-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    created = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={"borough": "brooklyn", "stage": "reviewing"},
+    )
+    assert created.status_code == 200, created.text
+
+    review_body = {
+        "expected_check_status": "verified",
+        "expected_source": "NYC PLUTO",
+        "expected_source_as_of": "2026-07-24",
+        "expected_feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+    reviewed = client.put(
+        "/v1/parcel-intel/workflow/3020960069/evidence-reviews/property_facts",
+        json=review_body,
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.headers["cache-control"] == "private, no-store"
+    marker = reviewed.json()["evidence_reviews"]["property_facts"]
+    assert marker == {
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "check_status": "verified",
+        "source": "NYC PLUTO",
+        "source_as_of": "2026-07-24",
+        "feed_generated_at": "2026-07-24T02:43:29Z",
+        "reviewed_at": marker["reviewed_at"],
+    }
+    event_count = store.items["3020960069"]["event_count"]
+    stored_marker = dict(
+        store.items["3020960069"]["evidence_reviews"]["property_facts"]
+    )
+
+    retried = client.put(
+        "/v1/parcel-intel/workflow/3020960069/evidence-reviews/property_facts",
+        json=review_body,
+    )
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["evidence_reviews"]["property_facts"] == marker
+    assert store.items["3020960069"]["event_count"] == event_count
+
+    stale = client.put(
+        "/v1/parcel-intel/workflow/3020960069/evidence-reviews/property_facts",
+        json={**review_body, "expected_feed_generated_at": "2026-07-23T00:00:00Z"},
+    )
+    assert stale.status_code == 409
+    assert "Evidence changed" in stale.text
+    assert (
+        store.items["3020960069"]["evidence_reviews"]["property_facts"]
+        == stored_marker
+    )
+
+    removed = client.delete(
+        "/v1/parcel-intel/workflow/3020960069/evidence-reviews/property_facts"
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.headers["cache-control"] == "private, no-store"
+    assert removed.json()["evidence_reviews"] == {}
+
+
+def test_evidence_review_requires_an_open_workflow_and_strict_contract(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="evidence-review-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    review_url = (
+        "/v1/parcel-intel/workflow/3020960069/"
+        "evidence-reviews/property_facts"
+    )
+    body = {
+        "expected_check_status": "verified",
+        "expected_source": "NYC PLUTO",
+        "expected_source_as_of": "2026-07-24",
+        "expected_feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+
+    assert client.put(review_url, json=body).status_code == 409
+    assert client.put(
+        review_url,
+        json={**body, "parcel_address": "private value"},
+    ).status_code == 422
+    assert client.put(
+        review_url.replace("property_facts", "historical_model"),
+        json=body,
+    ).status_code == 422
+
+    assert client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={"borough": "brooklyn", "stage": "pass"},
+    ).status_code == 200
+    terminal = client.put(review_url, json=body)
+    assert terminal.status_code == 409
+    assert "open, active" in terminal.text
+
+
+def test_unauthenticated_workflow_errors_are_never_cacheable() -> None:
+    client = TestClient(app)
+    response = client.put(
+        "/v1/parcel-intel/workflow/3020960069/"
+        "evidence-reviews/property_facts",
+        json={
+            "expected_check_status": "verified",
+            "expected_source": "NYC PLUTO",
+        },
+    )
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_product_event_contract_is_value_minimized(auth_override) -> None:
@@ -521,6 +702,12 @@ def test_workflow_outcome_export_is_private_maturity_safe_and_downloadable(
         "first_contacted_at": saved_at + timedelta(days=4),
         "first_qualified_at": saved_at + timedelta(days=60),
         "first_offer_submitted_at": saved_at + timedelta(days=120),
+        "evidence_reviews": {
+            "ownership": {
+                "source": "PRIVATE REVIEW SOURCE",
+                "reviewed_at": datetime.now(timezone.utc),
+            }
+        },
     }
     app.dependency_overrides[parcel_workflow.get_store] = lambda: store
     client = TestClient(app)
@@ -543,6 +730,8 @@ def test_workflow_outcome_export_is_private_maturity_safe_and_downloadable(
     assert "Named teammate" not in serialized
     assert "Private address" not in serialized
     assert "PRIVATE OWNER LLC" not in serialized
+    assert "PRIVATE REVIEW SOURCE" not in serialized
+    assert "evidence_reviews" not in serialized
 
 def test_product_usage_day_is_aggregate_only_and_bounded() -> None:
     now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)

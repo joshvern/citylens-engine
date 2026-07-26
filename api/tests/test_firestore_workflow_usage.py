@@ -215,6 +215,113 @@ def test_comparison_advance_is_atomic_and_attributed_without_identifiers(
     )
 
 
+def test_evidence_review_usage_is_private_source_bound_and_idempotent(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    store.upsert_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload={
+            "borough": "brooklyn",
+            "stage": "reviewing",
+            "outcome": "unknown",
+            "snapshot": {"citywide_rank": 12},
+        },
+    )
+    review = {
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "check_status": "verified",
+        "source": "NYC PLUTO",
+        "source_as_of": "2026-07-24",
+        "feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+
+    reviewed, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id="private-user",
+        bbl="3020960069",
+        check_key="property_facts",
+        review=review,
+    )
+    assert mutation_status == "reviewed"
+    assert reviewed is not None
+    marker = reviewed["evidence_reviews"]["property_facts"]
+    assert marker["reviewed_at"] == now
+    assert marker["source"] == "NYC PLUTO"
+    usage_path = (
+        "users",
+        "private-user",
+        "product_usage_days",
+        "2026-07-24",
+    )
+    usage = client.documents[usage_path]
+    assert usage["events"] == {
+        "workflow_created": 1,
+        "workflow_evidence_reviewed": 1,
+    }
+    assert usage["sources"] == {
+        "workflow_created:parcel": 1,
+        "workflow_evidence_reviewed:workflow": 1,
+    }
+    assert not {
+        "bbl",
+        "check_key",
+        "label",
+        "source_as_of",
+        "feed_generated_at",
+    }.intersection(usage)
+
+    retried, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id="private-user",
+        bbl="3020960069",
+        check_key="property_facts",
+        review=review,
+    )
+    assert mutation_status == "unchanged"
+    assert retried is not None
+    assert retried["evidence_reviews"]["property_facts"] == marker
+    assert (
+        client.documents[usage_path]["events"]["workflow_evidence_reviewed"]
+        == 1
+    )
+
+    removed, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id="private-user",
+        bbl="3020960069",
+        check_key="property_facts",
+        review=None,
+    )
+    assert mutation_status == "removed"
+    assert removed is not None
+    assert removed["evidence_reviews"] == {}
+    assert (
+        client.documents[usage_path]["events"]["workflow_evidence_reviewed"]
+        == 1
+    )
+
+    store.delete_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+    )
+    inactive, mutation_status = store.set_parcel_workflow_evidence_review(
+        app_user_id="private-user",
+        bbl="3020960069",
+        check_key="property_facts",
+        review=review,
+    )
+    assert mutation_status == "inactive"
+    assert inactive is not None
+
+
 def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
     monkeypatch,
 ) -> None:

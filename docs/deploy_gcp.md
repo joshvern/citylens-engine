@@ -773,11 +773,12 @@ throttled. Queue list/status operations still require an admin identity.
 
 The API writes only aggregate daily event/source counts to this collection.
 Parcel opens and saved-view applies are value-minimized client counters.
-Workflow lifecycle and saved-view create/update/delete counters are written
-transactionally with their canonical mutations, so dropped browser telemetry
-cannot erase a real save and unchanged retries cannot inflate it. Do not add
-BBLs, addresses, owners, URLs, workflow text, saved-view names/search/filter
-state, or event-level rows.
+Workflow lifecycle, source-bound evidence-review, and saved-view
+create/update/delete counters are written transactionally with their canonical
+mutations, so dropped browser telemetry cannot erase a real save and unchanged
+retries cannot inflate it. Do not add BBLs, addresses, check keys, citations,
+source dates, review times, owners, URLs, workflow text, saved-view
+names/search/filter state, or event-level rows.
 Generate the aggregate operator report with:
 
 ```bash
@@ -786,11 +787,15 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The v3 report includes aggregate canonical workflow and saved-view inventory,
-an activation-evidence gate, and a saved-view-reuse evidence gate. Activation
+The v9 report includes aggregate canonical workflow and saved-view inventory,
+an activation-evidence gate, source-bound review engagement, and a
+saved-view-reuse evidence gate. Activation
 remains `collecting` until at least 30 workflow records exist across at least
 three users. Saved-view reuse remains `collecting` until at least 10
-best-effort apply events exist across at least three users. The saved-view
+best-effort apply events exist across at least three users. The source-bound
+review gate remains `collecting` until at least 10 canonical review markers
+exist across at least three users. A review marker means only that an exact
+cited version was considered; it is not completed or cleared diligence. The saved-view
 inventory query selects only the schema marker and never reads names, search
 text, filters, or owners. These are product-use signals only; they do not
 establish model accuracy, seller intent, transaction probability, unique

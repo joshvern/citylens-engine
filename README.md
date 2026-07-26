@@ -193,7 +193,21 @@ Current pinned release tag:
   active record unchanged, so a comparison cannot overwrite private work.
   Repeat requests are transactionally deduplicated, and terminal records clear
   stale reminders and leave the action queue automatically. These are private
-  in-product reminders, not email or webhook delivery. The authenticated
+  in-product reminders, not email or webhook delivery.
+  `PUT|DELETE
+  /v1/parcel-intel/workflow/{bbl}/evidence-reviews/{check_key}` adds a
+  source-bound human review ledger to active, nonterminal workflow records.
+  The API recomputes the current premium decision audit and accepts a marker
+  only when the client-observed check status, source, source date, and feed
+  generation still match. Each marker stores that server-owned citation
+  identity and its review time; unchanged retries preserve the original time,
+  while a later feed or citation automatically makes the old marker stale in
+  clients. A marker means the exact cited version was considered—it never
+  means title, zoning, environmental, engineering, financial, seller-intent,
+  or other diligence was resolved or cleared. Markers stay out of the
+  governed outcome export and private workflow responses are always
+  `private, no-store`, including early authentication failures. The
+  authenticated
   `/v1/parcel-intel/workflow/alerts` endpoint compares watched leads' saved
   snapshots with the current atomic feed and reports owner, newer-sale,
   zoning, opportunity, rank/tier, lien, violation, flood, environmental
@@ -489,17 +503,20 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v8 report contains only window totals, event/source counts, active-user and
+The v9 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, separate comparison
 engagement and handoff, decision-audit, underwriting-engagement,
-activation, and saved-view-reuse evidence gates, and aggregate pilot-intake
-plan/status counts. Parcel opens, comparison opens, decision-audit opens,
+source-bound evidence-review, activation, and saved-view-reuse evidence gates,
+and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, and saved-view applies are best-effort
 client-side directional counters. Comparison events contain no parcel IDs or
 compared values. Underwriting events contain no parcel, assumption, range,
-result, or valuation data. Workflow
+result, or valuation data. Evidence-review counts are canonical workflow
+mutations but reveal no parcel, check, source, source date, review time, or
+review outcome; they measure consideration of exact cited versions, not
+completed or cleared diligence. Workflow
 lifecycle and saved-view create/update/delete counts are
 transactionally derived from their canonical server mutations, so a dropped
 follow-up browser request cannot erase a real save and an unchanged retry

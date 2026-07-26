@@ -106,7 +106,7 @@ REQUIRED_WEB_COPY = (
     "Citywide opportunity explorer",
     "Filter the five-borough market",
     "Published evidence",
-    "Address, BBL, owner, or zoning",
+    "Search parcels",
 )
 
 

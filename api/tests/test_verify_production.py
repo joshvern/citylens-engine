@@ -80,7 +80,7 @@ def test_web_copy_validator_checks_map_first_product_semantics() -> None:
     <div>Published evidence</div>
     <div>Citywide opportunity explorer</div>
     <p>Filter the five-borough market</p>
-    <input placeholder="Address, BBL, owner, or zoning">
+    <input placeholder="Search parcels">
     """
     assert validate_web_copy(html) == []
 

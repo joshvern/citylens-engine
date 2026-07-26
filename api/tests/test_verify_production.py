@@ -77,7 +77,12 @@ def test_security_header_validator_covers_api_and_browser_contracts() -> None:
 def test_web_copy_validator_checks_map_first_product_semantics() -> None:
     html = """
     <h1>Find the sites worth pursuing this week</h1>
-    <div>Published evidence</div>
+    <div>Qualification receipt</div>
+    <p>
+      This receipt validates feed eligibility and source reconciliation. It is
+      not model accuracy, seller intent, transaction probability, or a
+      substitute for diligence.
+    </p>
     <div>Citywide opportunity explorer</div>
     <p>Filter the five-borough market</p>
     <input placeholder="Search parcels">

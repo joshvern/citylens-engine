@@ -582,6 +582,51 @@ def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
     assert "s-maxage=600" in r.headers["cache-control"]
 
 
+def test_parcel_intel_index_recomputes_critical_source_freshness(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    manifest = _manifest(["brooklyn"])
+    manifest["data_sources"] = {
+        "land_use_activity": {
+            "source": "NYC ZAP",
+            "retrieved_at": "2026-07-10",
+            "max_age_days": 45,
+            "age_days": 0,
+            "stale": False,
+        },
+        "property_facts": {
+            "source": "NYC PLUTO",
+            "retrieved_at": "2026-07-10",
+            "max_age_days": 45,
+            "age_days": 0,
+            "stale": False,
+        },
+    }
+    fake = _make_fake_gcs(["brooklyn"])
+    fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
+        manifest
+    ).encode()
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 200, response.text
+    sources = response.json()["data_sources"]
+    assert sources["land_use_activity"]["age_days"] == 14
+    assert sources["land_use_activity"]["max_age_days"] == 8
+    assert sources["land_use_activity"]["published_max_age_days"] == 45
+    assert sources["land_use_activity"]["stale"] is True
+    assert sources["property_facts"]["age_days"] == 14
+    assert sources["property_facts"]["max_age_days"] == 45
+    assert sources["property_facts"]["stale"] is False
+
+
 def test_index_exposes_only_active_generation_prospective_status(
     monkeypatch,
 ) -> None:

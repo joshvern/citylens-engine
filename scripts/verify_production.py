@@ -90,6 +90,10 @@ REQUIRED_SOURCE_SLAS = (
     "mandatory_inclusionary_housing",
     "transit_access",
 )
+SOURCE_MAX_AGE_CAP_DAYS = {
+    "project_activity": 8.0,
+    "land_use_activity": 8.0,
+}
 EXPECTED_WORKFLOW_HORIZONS = (
     ("owner_contacted", 30),
     ("qualified", 90),
@@ -768,6 +772,8 @@ def evaluate_source_slas(
                 f"index: source SLA {key} max_age_days is missing or invalid"
             )
             max_age = None
+        if max_age is not None and key in SOURCE_MAX_AGE_CAP_DAYS:
+            max_age = min(float(max_age), SOURCE_MAX_AGE_CAP_DAYS[key])
 
         age_days = (
             max((now - retrieved_at).total_seconds(), 0.0) / 86400

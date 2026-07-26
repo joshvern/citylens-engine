@@ -210,8 +210,8 @@ def _index() -> dict:
             "property_facts": 45,
             "ownership": 45,
             "constraints": 180,
-            "project_activity": 14,
-            "land_use_activity": 45,
+            "project_activity": 8,
+            "land_use_activity": 8,
             "owner_portfolio": 45,
             "tax_lien_sale_history": 45,
             "current_violations": 7,
@@ -780,6 +780,23 @@ def test_source_sla_validator_rejects_missing_stale_and_future_sources() -> None
     )
     assert report["passed"] is False
     assert report["breach_count"] == 3
+
+
+def test_source_sla_validator_caps_project_sources_at_eight_days() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    index = _index()
+    for key in ("project_activity", "land_use_activity"):
+        index["data_sources"][key]["retrieved_at"] = "2026-07-15"
+        # Old manifests used materially looser windows. The production
+        # verifier must not inherit them.
+        index["data_sources"][key]["max_age_days"] = 45
+
+    failures, _, report = evaluate_source_slas(index, now=now)
+
+    assert any("source SLA project_activity is stale" in row for row in failures)
+    assert any("source SLA land_use_activity is stale" in row for row in failures)
+    assert report["sources"]["project_activity"]["max_age_days"] == 8
+    assert report["sources"]["land_use_activity"]["max_age_days"] == 8
 
 
 def test_index_validator_requires_reviewed_generation_diff_override() -> None:

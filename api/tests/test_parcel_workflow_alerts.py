@@ -72,6 +72,34 @@ def _current_row(**overrides):
     return row
 
 
+def _screening_row(**overrides):
+    row = {
+        "bbl": "3020960069",
+        "borough": "brooklyn",
+        "model_rank": 72,
+        "acquisition_rank": None,
+        "acquisition_eligible": False,
+        "acquisition_status": "active_project",
+        "acquisition_exclusion_reasons": [
+            "approved_land_use_project",
+        ],
+        "published": False,
+        "latest_project_filing_year": 2023,
+        "latest_project_status": "Completed — approved",
+        "latest_project_type": "land_use_entitlement",
+        "latest_project_job_number": "2023K0205",
+        "latest_project_url": (
+            "https://zap.planning.nyc.gov/projects/2023K0205"
+        ),
+        "property_facts_as_of": "2026-07-19",
+        "ownership_as_of": "2026-07-15",
+        "project_activity_as_of": "2026-07-19",
+        "land_use_activity_as_of": "2026-07-24",
+    }
+    row.update(overrides)
+    return row
+
+
 def test_alerts_surface_decision_relevant_changes() -> None:
     result = build_workflow_alerts(
         [_workflow_item()],
@@ -79,7 +107,7 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         feed_generated_at="2026-07-24T00:00:00Z",
     )
 
-    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v1"
+    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v2"
     assert result["watched_count"] == 1
     assert result["changed_lead_count"] == 1
     codes = {alert["code"] for alert in result["alerts"]}
@@ -116,6 +144,76 @@ def test_removed_lead_is_urgent_but_does_not_invent_a_reason() -> None:
     assert alert["code"] == "removed_from_current_feed"
     assert "does not assert why" in alert["detail"]
     assert "completed" not in alert["detail"].casefold()
+    assert alert["current_disposition"] == "not_evaluated"
+    assert alert["parcel_available"] is False
+    assert result["resolved_exit_count"] == 0
+    assert result["unresolved_exit_count"] == 1
+
+
+def test_screening_ledger_explains_zap_exit_with_official_evidence() -> None:
+    result = build_workflow_alerts(
+        [_workflow_item()],
+        [],
+        screening_rows={"3020960069": _screening_row()},
+        data_sources={
+            "land_use_activity": {
+                "source": "NYC ZAP project activity",
+                "retrieved_at": "2026-07-24",
+            }
+        },
+        feed_generated_at="2026-07-24T00:00:00Z",
+    )
+
+    assert result["resolved_exit_count"] == 1
+    assert result["unresolved_exit_count"] == 0
+    assert result["screened_out_count"] == 1
+    alert = result["alerts"][0]
+    assert alert["code"] == "screened_out_of_current_feed"
+    assert alert["current_disposition"] == "screened_out"
+    assert alert["reason_codes"] == ["approved_land_use_project"]
+    assert "2023K0205" in alert["detail"]
+    assert alert["recommended_action"]
+    assert alert["parcel_available"] is False
+    assert alert["source_evidence"] == [
+        {
+            "source": "NYC ZAP project activity",
+            "as_of": "2026-07-24",
+            "url": "https://zap.planning.nyc.gov/projects/2023K0205",
+            "supports": "approved_land_use_project",
+        }
+    ]
+    serialized = str(alert)
+    assert "OLD OWNER LLC" not in serialized
+    assert "score_calibrated" not in serialized
+
+
+def test_screening_ledger_distinguishes_eligible_below_cutoff() -> None:
+    screening = _screening_row(
+        acquisition_rank=1264,
+        acquisition_eligible=True,
+        acquisition_status="eligible",
+        acquisition_exclusion_reasons=[],
+        latest_project_filing_year=None,
+        latest_project_status=None,
+        latest_project_type=None,
+        latest_project_job_number=None,
+        latest_project_url=None,
+    )
+    result = build_workflow_alerts(
+        [_workflow_item()],
+        [],
+        screening_rows={"3020960069": screening},
+        feed_generated_at="2026-07-24T00:00:00Z",
+    )
+
+    assert result["eligible_below_cutoff_count"] == 1
+    assert result["screened_out_count"] == 0
+    alert = result["alerts"][0]
+    assert alert["code"] == "eligible_below_published_cutoff"
+    assert alert["severity"] == "medium"
+    assert alert["current_disposition"] == "eligible_below_cutoff"
+    assert "1,264" in alert["detail"]
+    assert "disqualification" in alert["recommended_action"]
 
 
 def test_alerts_ignore_unwatched_archived_and_unknown_baseline_values() -> None:
@@ -206,8 +304,39 @@ class _FakeRegistry:
     def citywide_map(self, _gcs):
         return (
             [_FakeRow()],
-            {"generated_at": "2026-07-24T00:00:00+00:00"},
+            {
+                "generated_at": "2026-07-24T00:00:00+00:00",
+                "data_sources": {},
+            },
         )
+
+    def screening_ledger(self, _gcs, *, manifest):
+        assert manifest["generated_at"] == "2026-07-24T00:00:00+00:00"
+        return {}, manifest
+
+
+class _FakeScreeningRow:
+    def model_dump(self) -> dict:
+        return _screening_row()
+
+
+class _FakeExitRegistry:
+    def citywide_map(self, _gcs):
+        return (
+            [],
+            {
+                "generated_at": "2026-07-24T00:00:00+00:00",
+                "data_sources": {
+                    "land_use_activity": {
+                        "source": "NYC ZAP project activity",
+                        "retrieved_at": "2026-07-24",
+                    }
+                },
+            },
+        )
+
+    def screening_ledger(self, _gcs, *, manifest):
+        return {"3020960069": _FakeScreeningRow()}, manifest
 
 
 def test_workflow_alerts_endpoint_is_authenticated_and_typed(
@@ -225,7 +354,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v1"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v2"
     assert payload["feed_generated_at"] == "2026-07-24T00:00:00Z"
     assert payload["watched_count"] == 1
     assert payload["changed_lead_count"] == 1
@@ -244,3 +373,28 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
     }
+
+
+def test_workflow_alerts_endpoint_returns_typed_source_backed_exit(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="alerts-user")
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: _FakeStore()
+    app.dependency_overrides[parcel_workflow.get_gcs] = lambda: object()
+    app.dependency_overrides[parcel_workflow.get_registry] = (
+        lambda: _FakeExitRegistry()
+    )
+    client = TestClient(app)
+
+    response = client.get("/v1/parcel-intel/workflow/alerts")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v2"
+    assert payload["resolved_exit_count"] == 1
+    assert payload["unresolved_exit_count"] == 0
+    assert payload["screened_out_count"] == 1
+    alert = payload["alerts"][0]
+    assert alert["code"] == "screened_out_of_current_feed"
+    assert alert["parcel_available"] is False
+    assert alert["source_evidence"][0]["url"].endswith("/2023K0205")

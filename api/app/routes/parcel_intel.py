@@ -49,6 +49,7 @@ from ..models.schemas import (
     ParcelIntelSweepResponse,
     ParcelProspectiveValidationHealth,
     ParcelProspectiveValidationStatus,
+    ParcelScreeningLedgerRow,
 )
 from ..services.auth import maybe_auth
 from ..services.auth_context import AuthContext
@@ -102,6 +103,28 @@ _GENERATION_RE = re.compile(
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _PROSPECTIVE_MAX_OBSERVATION_LAG_DAYS = 8
+_SCREENING_LEDGER_SCHEMA = (
+    "citylens-parcel-intel/screening-ledger@v1"
+)
+_SCREENING_LEDGER_FIELDS = (
+    "bbl",
+    "borough",
+    "model_rank",
+    "acquisition_rank",
+    "acquisition_eligible",
+    "acquisition_status",
+    "acquisition_exclusion_reasons",
+    "published",
+    "latest_project_filing_year",
+    "latest_project_status",
+    "latest_project_type",
+    "latest_project_job_number",
+    "latest_project_url",
+    "property_facts_as_of",
+    "ownership_as_of",
+    "project_activity_as_of",
+    "land_use_activity_as_of",
+)
 
 
 def _utc_now() -> datetime:
@@ -128,6 +151,9 @@ class ParcelIntelRegistry:
         self._manifest_cache_key: str | None = None
         self._rows_by_borough: dict[tuple[str, str], list[dict]] = {}
         self._map_rows: dict[str, list[ParcelIntelMapRow]] = {}
+        self._screening_rows: dict[
+            str, dict[str, ParcelScreeningLedgerRow]
+        ] = {}
 
     def _gcs_object_name(self, leaf: str) -> str:
         return f"{_GCS_PREFIX}/{leaf}"
@@ -209,6 +235,49 @@ class ParcelIntelRegistry:
                 leaves.append(f"{borough['slug']}.jsonl")
         for leaf in leaves:
             self._atomic_artifact_metadata(manifest, leaf)
+        screening_keys = {
+            "screening_ledger_schema",
+            "screening_ledger_fields",
+            "screening_ledger_row_count",
+        }
+        screening_present = screening_keys.intersection(manifest)
+        artifacts = manifest.get("artifacts")
+        ledger_artifact_present = (
+            isinstance(artifacts, dict)
+            and "screening-ledger.jsonl" in artifacts
+        )
+        if screening_present or ledger_artifact_present:
+            if screening_present != screening_keys:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence manifest is invalid",
+                )
+            screening_schema = manifest.get("screening_ledger_schema")
+            screening_rows = manifest.get("screening_ledger_row_count")
+            if (
+                screening_schema != _SCREENING_LEDGER_SCHEMA
+                or manifest.get("screening_ledger_fields")
+                != list(_SCREENING_LEDGER_FIELDS)
+                or isinstance(screening_rows, bool)
+                or not isinstance(screening_rows, int)
+                or screening_rows < 1
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence manifest is invalid",
+                )
+            metadata = self._atomic_artifact_metadata(
+                manifest,
+                "screening-ledger.jsonl",
+            )
+            if (
+                metadata is None
+                or metadata.get("row_count") != screening_rows
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Parcel intelligence manifest is invalid",
+                )
 
     def _download_artifact(
         self,
@@ -277,6 +346,7 @@ class ParcelIntelRegistry:
                 # Drop borough caches; they'll lazy-reload on next read.
                 self._rows_by_borough = {}
                 self._map_rows = {}
+                self._screening_rows = {}
                 self._manifest_cache_key = new_key
             self._manifest = manifest
         return manifest
@@ -595,6 +665,75 @@ class ParcelIntelRegistry:
                 self._map_rows[cache_key] = validated
             cached = validated
 
+        return cached, manifest
+
+    def screening_ledger(
+        self,
+        gcs: GcsArtifacts,
+        *,
+        manifest: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, ParcelScreeningLedgerRow], dict[str, Any]]:
+        """Load the private current-screening ledger for watched-lead status."""
+
+        manifest = manifest or self._refresh_manifest(gcs)
+        if manifest.get("screening_ledger_schema") is None:
+            return {}, manifest
+        cache_key = self._cache_key(manifest)
+        with self._lock:
+            cached = self._screening_rows.get(cache_key)
+        if cached is None:
+            try:
+                payload, expected_rows = self._download_artifact(
+                    gcs,
+                    manifest,
+                    "screening-ledger.jsonl",
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Parcel intelligence screening ledger is missing"
+                    ),
+                ) from exc
+            parsed_rows: dict[str, ParcelScreeningLedgerRow] = {}
+            bad_lines = 0
+            for line in payload.decode(
+                "utf-8", errors="replace"
+            ).splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    raw = json.loads(line)
+                    row = ParcelScreeningLedgerRow.model_validate(raw)
+                except (json.JSONDecodeError, ValidationError):
+                    bad_lines += 1
+                    continue
+                if row.bbl in parsed_rows:
+                    bad_lines += 1
+                    continue
+                parsed_rows[row.bbl] = row
+            if (
+                bad_lines
+                or expected_rows is None
+                or len(parsed_rows) != expected_rows
+            ):
+                log.error(
+                    "parcel-intel screening ledger validation failed: "
+                    "expected=%s parsed=%d bad_lines=%d",
+                    expected_rows,
+                    len(parsed_rows),
+                    bad_lines,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Parcel intelligence screening ledger validation "
+                        "failed"
+                    ),
+                )
+            with self._lock:
+                self._screening_rows[cache_key] = parsed_rows
+            cached = parsed_rows
         return cached, manifest
 
     def parcel(

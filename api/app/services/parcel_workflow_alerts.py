@@ -13,10 +13,40 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v1"
+ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v2"
 RANK_MOVE_THRESHOLD = 100
 
 _SEVERITY_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+_SOURCE_URLS = {
+    "property_facts": "https://zola.planning.nyc.gov/",
+    "ownership": "https://a836-acris.nyc.gov/CP/",
+    "project_activity": (
+        "https://a810-bisweb.nyc.gov/bisweb/"
+        "PropertyProfileOverviewServlet"
+    ),
+    "land_use_activity": "https://zap.planning.nyc.gov/",
+    "constraints": "https://nyclandmarks.lunaimaging.com/",
+}
+_REASON_SOURCE = {
+    "approved_land_use_project": "land_use_activity",
+    "active_land_use_project": "land_use_activity",
+    "active_project": "project_activity",
+    "completed_project": "project_activity",
+    "recently_acquired": "ownership",
+    "individual_landmark": "constraints",
+    "historic_district": "constraints",
+    "public_owner": "property_facts",
+    "institutional_owner": "property_facts",
+    "public_or_tax_exempt_owner_type": "property_facts",
+    "administrative_or_condo_lot": "property_facts",
+    "missing_current_pluto": "property_facts",
+    "missing_address": "property_facts",
+    "missing_owner": "property_facts",
+    "missing_parcel_geometry": "property_facts",
+    "missing_zoning": "property_facts",
+    "missing_lot_area": "property_facts",
+    "missing_allowed_far": "property_facts",
+}
 
 
 def _normalized_text(value: Any) -> str | None:
@@ -53,6 +83,11 @@ def _alert(
     field: str,
     before: Any,
     after: Any,
+    current_disposition: str | None = None,
+    reason_codes: list[str] | None = None,
+    recommended_action: str | None = None,
+    source_evidence: list[dict[str, Any]] | None = None,
+    parcel_available: bool = True,
 ) -> dict[str, Any]:
     return {
         "bbl": bbl,
@@ -64,7 +99,189 @@ def _alert(
         "field": field,
         "before": before,
         "after": after,
+        "current_disposition": current_disposition,
+        "reason_codes": reason_codes or [],
+        "recommended_action": recommended_action,
+        "source_evidence": source_evidence or [],
+        "parcel_available": parcel_available,
     }
+
+
+def _screening_source_evidence(
+    screening: dict[str, Any],
+    *,
+    data_sources: dict[str, Any],
+) -> list[dict[str, Any]]:
+    reasons = list(screening.get("acquisition_exclusion_reasons") or [])
+    source_keys: list[str] = []
+    for reason in reasons:
+        key = _REASON_SOURCE.get(str(reason))
+        if key and key not in source_keys:
+            source_keys.append(key)
+    if not source_keys:
+        source_keys.append("property_facts")
+
+    evidence: list[dict[str, Any]] = []
+    for key in source_keys:
+        metadata = data_sources.get(key)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        as_of_field = {
+            "property_facts": "property_facts_as_of",
+            "ownership": "ownership_as_of",
+            "project_activity": "project_activity_as_of",
+            "land_use_activity": "land_use_activity_as_of",
+            "constraints": "property_facts_as_of",
+        }[key]
+        project_source = key in {
+            "project_activity",
+            "land_use_activity",
+        }
+        evidence.append(
+            {
+                "source": str(
+                    metadata.get("source")
+                    or {
+                        "property_facts": "NYC PLUTO",
+                        "ownership": "NYC ACRIS",
+                        "project_activity": "NYC DOB",
+                        "land_use_activity": "NYC ZAP",
+                        "constraints": "NYC LPC",
+                    }[key]
+                ),
+                "as_of": (
+                    screening.get(as_of_field)
+                    or metadata.get("retrieved_at")
+                ),
+                "url": (
+                    screening.get("latest_project_url")
+                    if project_source
+                    and screening.get("latest_project_url")
+                    else _SOURCE_URLS[key]
+                ),
+                "supports": ", ".join(
+                    reason
+                    for reason in reasons
+                    if _REASON_SOURCE.get(str(reason)) == key
+                )
+                or "current screening status",
+            }
+        )
+    return evidence
+
+
+def _screening_exit_alert(
+    *,
+    item: dict[str, Any],
+    screening: dict[str, Any],
+    data_sources: dict[str, Any],
+) -> dict[str, Any]:
+    bbl = str(item.get("bbl") or "")
+    borough = str(item.get("borough") or screening.get("borough") or "")
+    reasons = [
+        str(reason)
+        for reason in (
+            screening.get("acquisition_exclusion_reasons") or []
+        )
+    ]
+    if screening.get("acquisition_eligible") is True:
+        rank = screening.get("acquisition_rank")
+        detail = (
+            "The parcel still passes the current acquisition screen but ranks "
+            "below the published borough inventory cutoff."
+        )
+        if isinstance(rank, int):
+            detail += f" Its current borough acquisition rank is {rank:,}."
+        return _alert(
+            bbl=bbl,
+            borough=borough,
+            code="eligible_below_published_cutoff",
+            severity="medium",
+            title="Still eligible, below the current published cutoff",
+            detail=detail,
+            field="published_opportunity_set",
+            before=True,
+            after=False,
+            current_disposition="eligible_below_cutoff",
+            recommended_action=(
+                "Keep the parcel watched and re-review it if its rank or "
+                "screening facts change; do not treat this as a disqualification."
+            ),
+            source_evidence=_screening_source_evidence(
+                screening,
+                data_sources=data_sources,
+            ),
+            parcel_available=False,
+        )
+
+    status = str(screening.get("acquisition_status") or "screened_out")
+    project_id = screening.get("latest_project_job_number")
+    if status == "active_project":
+        title = "Current project activity now screens out this lead"
+        detail = (
+            "The current source-backed screen identifies active or recently "
+            "approved project activity."
+        )
+        if project_id:
+            detail += f" Official project {project_id} is attached."
+        action = (
+            "Review the cited project record and disposition the lead as "
+            "competing-sponsor activity unless verified control evidence "
+            "supports a different conclusion."
+        )
+        severity = "urgent"
+    elif status == "completed_project":
+        title = "Completed redevelopment now screens out this lead"
+        detail = (
+            "Current DOB or property evidence indicates the redevelopment "
+            "opportunity is no longer uncommitted."
+        )
+        action = (
+            "Verify completion in the cited records, then close or reject the "
+            "lead with the confirmed disposition."
+        )
+        severity = "urgent"
+    elif status == "constrained":
+        title = "Current acquisition constraints screen out this lead"
+        detail = (
+            "One or more current ownership, landmark, lot, or recent-sale "
+            "conditions now fail the acquisition screen."
+        )
+        action = (
+            "Review each cited constraint before rejecting the lead; the "
+            "screen is conservative and is not a legal or title conclusion."
+        )
+        severity = "high"
+    else:
+        title = "Current source gaps screen out this lead"
+        detail = (
+            "Required current parcel facts are incomplete, so the lead no "
+            "longer qualifies for the published opportunity inventory."
+        )
+        action = (
+            "Resolve the missing official facts before restoring or advancing "
+            "the lead."
+        )
+        severity = "high"
+
+    return _alert(
+        bbl=bbl,
+        borough=borough,
+        code="screened_out_of_current_feed",
+        severity=severity,
+        title=title,
+        detail=detail,
+        field="acquisition_eligible",
+        before=True,
+        after=False,
+        current_disposition="screened_out",
+        reason_codes=reasons,
+        recommended_action=action,
+        source_evidence=_screening_source_evidence(
+            screening,
+            data_sources=data_sources,
+        ),
+        parcel_available=False,
+    )
 
 
 def _row_alerts(
@@ -435,9 +652,13 @@ def build_workflow_alerts(
     current_rows: Iterable[dict[str, Any]],
     *,
     feed_generated_at: str | None,
+    screening_rows: dict[str, dict[str, Any]] | None = None,
+    data_sources: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return authenticated in-app changes for active watched leads."""
 
+    screening_rows = screening_rows or {}
+    data_sources = data_sources or {}
     watched = [
         item
         for item in items
@@ -451,6 +672,10 @@ def build_workflow_alerts(
     alerts: list[dict[str, Any]] = []
     changed_bbls: set[str] = set()
     removed_count = 0
+    resolved_exit_count = 0
+    unresolved_exit_count = 0
+    screened_out_count = 0
+    eligible_below_cutoff_count = 0
     missing_snapshot_count = 0
 
     for item in watched:
@@ -463,24 +688,50 @@ def build_workflow_alerts(
         if current is None:
             removed_count += 1
             changed_bbls.add(bbl)
-            alerts.append(
-                _alert(
-                    bbl=bbl,
-                    borough=borough,
-                    code="removed_from_current_feed",
-                    severity="urgent",
-                    title="No longer in the current eligible feed",
-                    detail=(
-                        "The parcel was saved previously but is absent from the "
-                        "current acquisition-qualified inventory. Verify current "
-                        "DOB, ZAP, ownership, sale, and constraint records before "
-                        "continuing. This alert does not assert why it was removed."
-                    ),
-                    field="acquisition_eligible",
-                    before=True,
-                    after=False,
+            screening = screening_rows.get(bbl)
+            if isinstance(screening, dict):
+                exit_alert = _screening_exit_alert(
+                    item=item,
+                    screening=screening,
+                    data_sources=data_sources,
                 )
-            )
+                alerts.append(exit_alert)
+                resolved_exit_count += 1
+                if (
+                    exit_alert.get("current_disposition")
+                    == "eligible_below_cutoff"
+                ):
+                    eligible_below_cutoff_count += 1
+                else:
+                    screened_out_count += 1
+            else:
+                unresolved_exit_count += 1
+                alerts.append(
+                    _alert(
+                        bbl=bbl,
+                        borough=borough,
+                        code="removed_from_current_feed",
+                        severity="urgent",
+                        title="No longer in the current eligible feed",
+                        detail=(
+                            "The parcel was saved previously but is absent from "
+                            "the current acquisition-qualified inventory. Verify "
+                            "current DOB, ZAP, ownership, sale, and constraint "
+                            "records before continuing. This alert does not assert "
+                            "why it was removed."
+                        ),
+                        field="acquisition_eligible",
+                        before=True,
+                        after=False,
+                        current_disposition="not_evaluated",
+                        recommended_action=(
+                            "Keep the lead on hold until current official records "
+                            "explain why it is absent from the evaluated candidate "
+                            "set."
+                        ),
+                        parcel_available=False,
+                    )
+                )
             continue
         row_alerts = _row_alerts(item, current)
         if row_alerts:
@@ -510,6 +761,10 @@ def build_workflow_alerts(
         "changed_lead_count": len(changed_bbls),
         "alert_count": len(alerts),
         "removed_from_feed_count": removed_count,
+        "resolved_exit_count": resolved_exit_count,
+        "unresolved_exit_count": unresolved_exit_count,
+        "screened_out_count": screened_out_count,
+        "eligible_below_cutoff_count": eligible_below_cutoff_count,
         "severity_counts": {
             severity: severity_counts.get(severity, 0)
             for severity in ("urgent", "high", "medium", "low")

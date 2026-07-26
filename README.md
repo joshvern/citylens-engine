@@ -241,10 +241,15 @@ Current pinned release tag:
   outreach or CRM synchronization.
 - Production Parcel Intelligence manifests may use
   `atomic-publication@v1`: immutable `generations/<id>/` borough/map objects
-  plus one stable manifest pointer. The API validates the pointer path,
-  SHA-256, byte length, and row count before serving a generation and fails
-  closed on missing, corrupt, partial, or path-injection metadata. Legacy flat
-  `published_sweep@v5` objects remain readable during migration.
+  plus one stable manifest pointer. New generations also carry a private
+  `screening-ledger.jsonl` for source-backed watched-lead exit explanations.
+  The ledger excludes addresses, owners, model scores, and user workflow data;
+  it is loaded only by the authenticated workflow-alert path. The API validates
+  every referenced path, SHA-256, byte length, row count, ledger schema, and
+  unique BBL before serving a generation and fails closed on missing, corrupt,
+  partial, private-field, or path-injection metadata. Legacy flat
+  `published_sweep@v5` objects remain readable during migration and yield
+  explicitly unresolved feed-exit alerts.
 - Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
 - `CITYLENS_API_KEYS` is deprecated and ignored by auth. The optional admin `X-API-Key` path (internal scripts only) is hash-only: `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256 of each key).
 

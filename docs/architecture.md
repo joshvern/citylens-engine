@@ -66,9 +66,16 @@ owns the browser UI.
   - Authenticated parcel workflow alerts compare each watched lead's saved
     baseline with the current generation. The contract is computed on request,
     user scoped, and never exposed anonymously. It reports decision-relevant
-    differences without changing model scores or guessing why a parcel left
-    the eligible feed. Transit alerts require a station-complex or access-tier
-    change; distance-only centroid noise is ignored.
+    differences without changing model scores. Generation manifests may also
+    reference a private, value-minimized `screening-ledger.jsonl`; when a
+    watched lead leaves the 5,000-row published inventory, the API uses that
+    same-generation ledger to distinguish an eligible lead below the cutoff
+    from a source-backed current-project, completed-project, constraint, or
+    incomplete-data exclusion. Those explanations include source dates and
+    official links. If the ledger has no row, the API explicitly reports the
+    exit as unresolved rather than guessing. Transit alerts require a
+    station-complex or access-tier change; distance-only centroid noise is
+    ignored.
   - Authenticated parcel workflow actions are also computed on request from
     user-owned records. The server classifies next-action due dates as overdue,
     due today, due soon, scheduled, or unscheduled; flags missing assignees and

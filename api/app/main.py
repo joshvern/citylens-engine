@@ -33,6 +33,12 @@ from .services.run_options import (
 from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
 
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
+_PRIVATE_PARCEL_ROUTE_PREFIXES = (
+    "/v1/parcel-intel/evidence-issues",
+    "/v1/parcel-intel/product-events",
+    "/v1/parcel-intel/saved-searches",
+    "/v1/parcel-intel/workflow",
+)
 _SECURITY_RESPONSE_HEADERS = {
     "Content-Security-Policy": (
         "base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
@@ -203,14 +209,13 @@ async def security_headers_middleware(
         # Intake responses can include validation detail or private queue
         # records and must never enter a browser or intermediary cache.
         response.headers.setdefault("Cache-Control", "no-store")
-    if (
-        request.url.path.startswith("/v1/parcel-intel/workflow")
-        and request.url.path
-        != "/v1/parcel-intel/workflow/analytics/methodology"
-    ):
-        # Workflow records can contain private notes, dispositions, actions,
-        # and evidence-review state. Cover early 401/403 responses as well as
-        # successful route responses.
+    if request.url.path.startswith(
+        _PRIVATE_PARCEL_ROUTE_PREFIXES
+    ) and request.url.path != "/v1/parcel-intel/workflow/analytics/methodology":
+        # Workflow, saved-view, product-event, and evidence-governance
+        # surfaces are authenticated. Some can contain private notes,
+        # dispositions, citations, or issue reports. Cover early 401/403/422
+        # responses as well as successful route responses.
         response.headers["Cache-Control"] = "private, no-store"
     for name, value in _SECURITY_RESPONSE_HEADERS.items():
         response.headers[name] = value

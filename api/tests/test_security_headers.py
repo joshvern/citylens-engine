@@ -51,3 +51,28 @@ def test_security_headers_cover_cors_preflight(monkeypatch) -> None:
 
     assert response.status_code == 204
     _assert_security_headers(response)
+
+
+def test_private_parcel_routes_are_no_store_before_authentication() -> None:
+    client = TestClient(app)
+
+    responses = [
+        client.get("/v1/parcel-intel/workflow"),
+        client.get("/v1/parcel-intel/saved-searches"),
+        client.post(
+            "/v1/parcel-intel/product-events",
+            json={
+                "schema_version": "citylens/parcel-product-event@v1",
+                "event": "parcel_opened",
+                "source": "ranking",
+            },
+        ),
+        client.get(
+            "/v1/parcel-intel/evidence-issues?status=submitted&limit=1"
+        ),
+    ]
+
+    assert {response.status_code for response in responses} == {401}
+    for response in responses:
+        assert response.headers["cache-control"] == "private, no-store"
+        _assert_security_headers(response)

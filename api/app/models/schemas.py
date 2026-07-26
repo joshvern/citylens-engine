@@ -910,6 +910,7 @@ ParcelWorkflowOutcome = Literal[
 
 ParcelProductEventName = Literal[
     "parcel_opened",
+    "comparison_opened",
     "saved_view_applied",
     "decision_audit_opened",
     "underwriting_opened",
@@ -922,6 +923,7 @@ ParcelProductEventSource = Literal[
     "ranking",
     "action_queue",
     "watchlist",
+    "comparison",
     "saved_views",
     "decision_posture",
     "audit_tab",
@@ -930,7 +932,15 @@ ParcelProductEventSource = Literal[
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
-    "parcel_opened": {"direct", "map", "ranking", "action_queue", "watchlist"},
+    "parcel_opened": {
+        "direct",
+        "map",
+        "ranking",
+        "action_queue",
+        "watchlist",
+        "comparison",
+    },
+    "comparison_opened": {"comparison"},
     "saved_view_applied": {"saved_views"},
     "decision_audit_opened": {"decision_posture", "audit_tab"},
     "underwriting_opened": {"underwrite_tab"},
@@ -942,9 +952,10 @@ class ParcelProductEventCreate(BaseModel):
     """Value-minimized client event.
 
     Workflow and saved-view mutation counters are derived transactionally by
-    the API from canonical writes. Only parcel opens, decision-audit opens,
-    underwriting opens/first adjustments, and saved-view applies remain
-    client-reported.
+    the API from canonical writes. Only parcel/comparison opens,
+    decision-audit opens, underwriting opens/first adjustments, and saved-view
+    applies remain client-reported. Comparison events carry no parcel
+    identifiers or compared values.
     """
 
     model_config = ConfigDict(extra="forbid")

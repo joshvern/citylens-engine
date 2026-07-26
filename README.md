@@ -205,13 +205,14 @@ Current pinned release tag:
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
-  parcel-open, decision-audit-open, underwriting-open/first-adjustment, and
-  saved-view-apply sources and rejects workflow lifecycle claims, parcel IDs,
-  addresses, owners, URLs, underwriting values or results, notes, tags,
-  assignees, contacts, and arbitrary properties. Decision-audit opens identify
-  only whether the user entered through the overview posture or the Audit tab;
-  underwriting events identify only the Underwrite tab or the first base-input
-  adjustment for a parcel/session.
+  parcel-open, comparison-open, decision-audit-open,
+  underwriting-open/first-adjustment, and saved-view-apply sources and rejects
+  workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
+  values or results, notes, tags, assignees, contacts, and arbitrary
+  properties. Comparison opens contain no shortlist identities or values.
+  Decision-audit opens identify only whether the user entered through the
+  overview posture or the Audit tab; underwriting events identify only the
+  Underwrite tab or the first base-input adjustment for a parcel/session.
   Workflow and saved-view lifecycle
   counters are instead derived by the API inside the same Firestore
   transaction as the canonical mutation. Effective no-op retries do not add
@@ -479,14 +480,16 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v6 report contains only window totals, event/source counts, active-user and
+The v7 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
-directional parcel-open to decision-audit and workflow-create ratios, separate
-decision-audit, underwriting-engagement, activation, and saved-view-reuse
-evidence gates, and aggregate pilot-intake plan/status counts. Parcel opens,
-decision-audit opens, underwriting opens/first adjustments, and saved-view
-applies are best-effort client-side directional counters. Underwriting events
-contain no parcel, assumption, range, result, or valuation data. Workflow
+directional parcel-open to comparison, decision-audit, and workflow-create
+ratios, separate comparison, decision-audit, underwriting-engagement,
+activation, and saved-view-reuse evidence gates, and aggregate pilot-intake
+plan/status counts. Parcel opens, comparison opens, decision-audit opens,
+underwriting opens/first adjustments, and saved-view applies are best-effort
+client-side directional counters. Comparison events contain no parcel IDs or
+compared values. Underwriting events contain no parcel, assumption, range,
+result, or valuation data. Workflow
 lifecycle and saved-view create/update/delete counts are
 transactionally derived from their canonical server mutations, so a dropped
 follow-up browser request cannot erase a real save and an unchanged retry

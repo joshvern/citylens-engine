@@ -827,12 +827,19 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
     response = TestClient(app).get(
-        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+        "/v1/parcel-intel/map",
+        params={"top_per_borough": 1000},
+        headers={"Origin": "https://citylens.dev"},
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert len(body["rows"]) == 50
+    assert body["access_scope"] == "public_preview"
+    assert body["requested_top_per_borough"] == 1000
+    assert body["returned_count"] == 50
+    assert body["available_count"] == 60
+    assert body["inventory_complete"] is False
     assert {row["borough"] for row in body["rows"]} == {
         "brooklyn",
         "queens",
@@ -861,6 +868,17 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         for row in body["rows"]
     )
     assert "s-maxage=600" in response.headers["cache-control"]
+    assert response.headers["x-citylens-inventory-scope"] == "public_preview"
+    assert response.headers["x-citylens-inventory-count"] == "50"
+    assert response.headers["x-citylens-inventory-available"] == "60"
+    vary = {
+        value.strip().lower()
+        for value in response.headers["vary"].split(",")
+    }
+    assert {"authorization", "x-api-key", "origin"} <= vary
+    assert response.headers["access-control-allow-origin"] == (
+        "https://citylens.dev"
+    )
     assert response.headers["content-encoding"] == "gzip"
     # Compact rows do not serialize expensive detail-only fields.
     assert "parcel_geometry" not in body["rows"][0]
@@ -893,29 +911,45 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     )
 
     assert response.status_code == 200, response.text
-    assert len(response.json()["rows"]) == 30
-    assert response.json()["rows"][0]["owner_name"] == "ACME REALTY LLC"
-    assert response.json()["rows"][0]["recent_change"] is True
-    assert response.json()["rows"][0]["owner_entity_type"] == "llc"
-    assert response.json()["rows"][0]["owner_portfolio_id"] == "acme-portfolio"
-    assert response.json()["rows"][0]["owner_portfolio_lot_count"] == 9
-    assert response.json()["rows"][0]["owner_portfolio_borough_count"] == 3
-    assert response.json()["rows"][0]["owner_portfolio_candidate_count"] == 4
-    assert response.json()["rows"][0]["tax_lien_sale_year"] == 2025
-    assert response.json()["rows"][0]["critical_violation_count"] == 3
-    assert response.json()["rows"][0]["floodplain_1pct"] is True
+    body = response.json()
+    assert len(body["rows"]) == 30
+    assert body["access_scope"] == "authenticated_full"
+    assert body["requested_top_per_borough"] == 1000
+    assert body["returned_count"] == 30
+    assert body["available_count"] == 30
+    assert body["inventory_complete"] is True
+    assert body["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert body["rows"][0]["recent_change"] is True
+    assert body["rows"][0]["owner_entity_type"] == "llc"
+    assert body["rows"][0]["owner_portfolio_id"] == "acme-portfolio"
+    assert body["rows"][0]["owner_portfolio_lot_count"] == 9
+    assert body["rows"][0]["owner_portfolio_borough_count"] == 3
+    assert body["rows"][0]["owner_portfolio_candidate_count"] == 4
+    assert body["rows"][0]["tax_lien_sale_year"] == 2025
+    assert body["rows"][0]["critical_violation_count"] == 3
+    assert body["rows"][0]["floodplain_1pct"] is True
     assert (
-        response.json()["rows"][0]["environmental_review_required"] is True
+        body["rows"][0]["environmental_review_required"] is True
     )
     assert (
-        response.json()["rows"][0]["mandatory_inclusionary_housing"] is True
+        body["rows"][0]["mandatory_inclusionary_housing"] is True
     )
     assert (
-        response.json()["rows"][0]["nearest_transit_station_distance_m"]
+        body["rows"][0]["nearest_transit_station_distance_m"]
         == 325
     )
-    assert response.json()["rows"][0]["transit_access_tier"] == "very_close"
+    assert body["rows"][0]["transit_access_tier"] == "very_close"
     assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-citylens-inventory-scope"] == (
+        "authenticated_full"
+    )
+    assert response.headers["x-citylens-inventory-count"] == "30"
+    assert response.headers["x-citylens-inventory-available"] == "30"
+    vary = {
+        value.strip().lower()
+        for value in response.headers["vary"].split(",")
+    }
+    assert {"authorization", "x-api-key"} <= vary
 
 
 def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:

@@ -880,6 +880,11 @@ class ParcelIntelIndex(BaseModel):
 class ParcelIntelMapResponse(BaseModel):
     rows: list[ParcelIntelMapRow] = Field(default_factory=list)
     generated_at: Optional[datetime] = None
+    access_scope: Literal["public_preview", "authenticated_full"]
+    requested_top_per_borough: int = Field(ge=1, le=1000)
+    returned_count: int = Field(ge=0)
+    available_count: int = Field(ge=0)
+    inventory_complete: bool
 
 
 class ParcelIntelSweepResponse(BaseModel):

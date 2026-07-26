@@ -1907,6 +1907,31 @@ def validate_map(
         "map: generation does not match index",
         failures,
     )
+    _expect(
+        payload.get("access_scope") == "public_preview",
+        "map: anonymous response does not identify public-preview scope",
+        failures,
+    )
+    _expect(
+        payload.get("requested_top_per_borough") == 25,
+        "map: request receipt does not record the 25-per-borough request",
+        failures,
+    )
+    _expect(
+        payload.get("returned_count") == 125,
+        "map: response receipt does not record 125 returned rows",
+        failures,
+    )
+    _expect(
+        payload.get("available_count") == 5000,
+        "map: response receipt does not record 5,000 available rows",
+        failures,
+    )
+    _expect(
+        payload.get("inventory_complete") is False,
+        "map: anonymous preview incorrectly claims complete inventory",
+        failures,
+    )
     rows = payload.get("rows")
     _expect(isinstance(rows, list), "map: rows is not a list", failures)
     rows = rows if isinstance(rows, list) else []
@@ -2052,6 +2077,16 @@ def run_checks(
     _expect(
         "public" in map_result.headers.get("cache-control", "").lower(),
         "map: anonymous response is not publicly cacheable",
+        failures,
+    )
+    vary = {
+        value.strip().lower()
+        for value in map_result.headers.get("vary", "").split(",")
+        if value.strip()
+    }
+    _expect(
+        {"authorization", "x-api-key"} <= vary,
+        "map: cache key does not vary on authentication credentials",
         failures,
     )
     map_payload = _json(map_result, "map", failures)

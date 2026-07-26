@@ -129,6 +129,21 @@ def _is_demo_origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
     return parsed.hostname.endswith(".vercel.app")
 
 
+def _append_vary(response: Response, *names: str) -> None:
+    existing = [
+        value.strip()
+        for value in response.headers.get("Vary", "").split(",")
+        if value.strip()
+    ]
+    seen = {value.lower() for value in existing}
+    for name in names:
+        if name.lower() not in seen:
+            existing.append(name)
+            seen.add(name.lower())
+    if existing:
+        response.headers["Vary"] = ", ".join(existing)
+
+
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
@@ -150,7 +165,7 @@ async def cors_middleware(request: Request, call_next):
             "access-control-request-headers",
             "*",
         )
-        response.headers["Vary"] = "Origin"
+        _append_vary(response, "Origin")
         return response
 
     response = await call_next(request)
@@ -161,7 +176,10 @@ async def cors_middleware(request: Request, call_next):
             "GET,POST,PUT,PATCH,DELETE,OPTIONS"
         )
         response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Vary"] = "Origin"
+        # Preserve representation variance set by the route. In particular,
+        # the tiered parcel map must continue to vary on credentials when
+        # called cross-origin from citylens.dev.
+        _append_vary(response, "Origin")
     return response
 
 

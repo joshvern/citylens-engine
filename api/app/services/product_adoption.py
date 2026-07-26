@@ -74,6 +74,7 @@ def build_product_adoption_report(
     rejected_rows = 0
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
+    saved_view_comparison_users: set[str] = set()
     decision_audit_users: set[str] = set()
     comparison_users: set[str] = set()
     comparison_workflow_users: set[str] = set()
@@ -105,11 +106,14 @@ def build_product_adoption_report(
                     "saved_view_updated",
                     "saved_view_deleted",
                     "saved_view_applied",
+                    "saved_view_comparison_opened",
                 )
             ):
                 saved_view_event_users.add(user_id)
             if row_events.get("saved_view_applied", 0) > 0:
                 saved_view_apply_users.add(user_id)
+            if row_events.get("saved_view_comparison_opened", 0) > 0:
+                saved_view_comparison_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
             if row_events.get("comparison_opened", 0) > 0:
@@ -186,6 +190,9 @@ def build_product_adoption_report(
     parcel_opens = events.get("parcel_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
+    saved_view_comparison_opens = events.get(
+        "saved_view_comparison_opened", 0
+    )
     decision_audit_opens = events.get("decision_audit_opened", 0)
     comparison_opens = events.get("comparison_opened", 0)
     comparison_workflow_creates = sources.get(
@@ -246,9 +253,11 @@ def build_product_adoption_report(
             "Parcel opens are directional client-side counters; workflow "
             "lifecycle and saved-view mutation counts are derived "
             "transactionally from canonical mutations. Saved-view applies "
-            "and decision-audit/underwriting interactions are directional "
-            "client-side counters. Comparison opens are also directional "
-            "and contain no parcel identifiers or values. Evidence-review "
+            "and saved-screen comparison opens are directional, value-minimized "
+            "client-side counters. Decision-audit/underwriting interactions "
+            "are directional client-side counters. Comparison workspace opens "
+            "are also directional and contain no parcel identifiers or values. "
+            "Evidence-review "
             "markers are transactionally derived but mean only that one exact "
             "cited version was considered. Evidence-issue submissions are "
             "also transactionally derived and aggregate only; they signal "
@@ -314,7 +323,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v10",
+        "schema_version": "citylens/product-adoption-report@v11",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -551,8 +560,10 @@ def build_product_adoption_report(
             "updated": events.get("saved_view_updated", 0),
             "deleted": events.get("saved_view_deleted", 0),
             "applied": saved_view_applies,
+            "comparisons": saved_view_comparison_opens,
             "event_users": len(saved_view_event_users),
             "apply_users": len(saved_view_apply_users),
+            "comparison_users": len(saved_view_comparison_users),
             "evidence_gate": {
                 "status": "ready" if saved_view_reuse_ready else "collecting",
                 "minimum_applies": minimum_saved_view_applies,

@@ -902,6 +902,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "saved_view_applied",
         "source": "saved_views",
     }
+    saved_view_comparison_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "saved_view_comparison_opened",
+            "source": "saved_views",
+        },
+    )
+    assert saved_view_comparison_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "saved_view_comparison_opened",
+        "source": "saved_views",
+    }
     audit_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1009,6 +1023,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched.status_code == 422
+    mismatched_saved_view_comparison = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "saved_view_comparison_opened",
+            "source": "comparison",
+        },
+    )
+    assert mismatched_saved_view_comparison.status_code == 422
     mismatched_audit_source = client.post(
         "/v1/parcel-intel/product-events",
         json={

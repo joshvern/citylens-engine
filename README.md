@@ -254,13 +254,14 @@ Current pinned release tag:
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
   parcel-open, comparison-open, decision-audit-open,
-  underwriting-open/first-adjustment, saved-view-apply, screen-audit-open, and
-  screen-criterion-relaxed sources and rejects
+  underwriting-open/first-adjustment, saved-view-apply/comparison,
+  screen-audit-open, and screen-criterion-relaxed sources and rejects
   workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
   values or results, notes, tags, assignees, contacts, and arbitrary
   properties. Comparison opens contain no shortlist identities or values.
   Screen-audit events contain no criterion, threshold, query, result count,
-  parcel, owner, or relaxed value.
+  parcel, owner, or relaxed value. Saved-screen comparison events contain no
+  saved-view identity, filter, count, overlap, union, or compared value.
   Decision-audit opens identify only whether the user entered through the
   overview posture or the Audit tab; underwriting events identify only the
   Underwrite tab or the first base-input adjustment for a parcel/session.
@@ -534,7 +535,7 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v10 report contains only window totals, event/source counts, active-user and
+The v11 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, separate comparison
@@ -542,10 +543,12 @@ engagement and handoff, decision-audit, underwriting-engagement,
 source-bound evidence-review, aggregate evidence-issue, activation, and
 saved-view-reuse evidence gates,
 and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
-underwriting opens/first adjustments, and saved-view applies are best-effort
-client-side directional counters. Comparison events contain no parcel IDs or
-compared values. Underwriting events contain no parcel, assumption, range,
-result, or valuation data. Evidence-review counts are canonical workflow
+underwriting opens/first adjustments, saved-view applies, and saved-screen
+comparison opens are best-effort client-side directional counters. Saved-screen
+comparison events contain no saved-view identity, filters, criteria, thresholds,
+counts, overlap/union measures, or compared values. Comparison-desk events
+contain no parcel IDs or compared values. Underwriting events contain no parcel,
+assumption, range, result, or valuation data. Evidence-review counts are canonical workflow
 mutations but reveal no parcel, check, source, source date, review time, or
 review outcome; they measure consideration of exact cited versions, not
 completed or cleared diligence. Evidence-issue counts contain no parcel,

@@ -849,9 +849,11 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The v10 report includes aggregate canonical workflow and saved-view inventory,
+The v11 report includes aggregate canonical workflow and saved-view inventory,
 an activation-evidence gate, source-bound review engagement, and a
-saved-view-reuse evidence gate. Activation
+saved-view-reuse evidence gate, plus directional saved-screen comparison opens
+and unique comparison users. No saved-view identity, filter, threshold, search,
+count, overlap/union measure, or compared value is collected. Activation
 remains `collecting` until at least 30 workflow records exist across at least
 three users. Saved-view reuse remains `collecting` until at least 10
 best-effort apply events exist across at least three users. The source-bound

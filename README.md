@@ -312,6 +312,12 @@ Current pinned release tag:
   explicitly unresolved feed-exit alerts.
 - Interactive docs (`/docs`, `/redoc`, `/openapi.json`) are off by default. Set `CITYLENS_DOCS_ACCESS_KEY_SHA256` and call with `X-Docs-Key`. The docs key cannot create runs and cannot bypass quotas.
 - `CITYLENS_API_KEYS` is deprecated and ignored by auth. The optional admin `X-API-Key` path (internal scripts only) is hash-only: `CITYLENS_ALLOW_ADMIN_API_KEYS=true` + `CITYLENS_ADMIN_API_KEY_HASHES` (SHA-256 of each key).
+- The scheduled authenticated-inventory check uses a separate, hash-only,
+  read-only credential. The raw key lives only in the GitHub Actions
+  `CITYLENS_PARCEL_SMOKE_KEY` secret; the API receives only its SHA-256 in
+  `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. It is accepted only by the tiered
+  Parcel Intelligence map, sweep, and detail routes—not run creation or
+  acquisition workflow routes.
 
 See [docs/security.md](docs/security.md) for the full credential model.
 
@@ -368,8 +374,14 @@ anonymous ownership/diligence evidence remains withheld. Public readiness must
 remain a limited preview and cannot reveal protected lien, violation, flood,
 environmental, MIH, transit, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
-same verifier every six hours and on demand, publishes a job summary, and
-retains the JSON report for 30 days. Scheduled failures create or update one
+same public verifier plus `scripts/verify_authenticated_inventory.py` every
+six hours and on demand. The authenticated check proves that production
+returns exactly 5,000 unique parcels (1,000 per borough), preserves owner
+context, serves a full selected-parcel decision audit, compresses the map
+payload, and marks both reads `private, no-store`. The workflow publishes a
+job summary and retains both sanitized JSON reports for 30 days; neither
+report contains the smoke credential, owner names, or parcel identifiers.
+Scheduled failures create or update one
 deduplicated `[Production] Scheduled verification failing` issue; the next
 successful scheduled run records recovery and closes it. Manual checks do not
 create or close incidents unless the operator explicitly enables the

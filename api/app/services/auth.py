@@ -207,3 +207,43 @@ def maybe_auth(
     if not authorization and not x_api_key:
         return None
     return require_auth(authorization=authorization, x_api_key=x_api_key, settings=settings)
+
+
+def maybe_parcel_read_auth(
+    parcel_smoke_key: Optional[str] = Header(
+        default=None,
+        alias="X-CityLens-Parcel-Smoke-Key",
+    ),
+    auth: Optional[AuthContext] = Depends(maybe_auth),
+    settings: Settings = Depends(get_settings),
+) -> Optional[AuthContext]:
+    """Optional auth plus a least-privilege production-smoke credential.
+
+    The smoke key is intentionally a separate header and dependency rather
+    than another general API credential. Only Parcel Intelligence's tiered
+    map, sweep, and selected-parcel read routes use this dependency, so the
+    key cannot create runs or read/write private workflow state.
+    """
+
+    if parcel_smoke_key:
+        candidate_hash = sha256_hex(parcel_smoke_key)
+        valid = any(
+            hmac.compare_digest(stored_hash.lower(), candidate_hash.lower())
+            for stored_hash in settings.parcel_smoke_api_key_hashes
+        )
+        if not valid:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid parcel smoke credential",
+            )
+        return AuthContext(
+            app_user_id="production-inventory-smoke",
+            auth_provider="parcel_smoke_api_key",
+            auth_subject=candidate_hash,
+            email=None,
+            email_verified=False,
+            is_admin=False,
+            plan_type="smoke_read_only",
+        )
+
+    return auth

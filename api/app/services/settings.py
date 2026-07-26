@@ -114,6 +114,12 @@ class Settings:
     # Off by default so production deploys must explicitly opt in.
     allow_user_api_keys: bool = False
 
+    # Hash-only, read-only credential used by the scheduled production smoke
+    # to prove the authenticated Parcel Intelligence representation. The raw
+    # key exists only in the GitHub Actions secret store and is accepted only
+    # by the three tiered parcel read endpoints.
+    parcel_smoke_api_key_hashes: list[str] = field(default_factory=list)
+
     # Plan
     free_monthly_runs: int = 5
 
@@ -161,6 +167,11 @@ def get_settings() -> Settings:
         allow_admin_api_keys=_env_bool("CITYLENS_ALLOW_ADMIN_API_KEYS", False),
         admin_api_key_hashes=_csv_env("CITYLENS_ADMIN_API_KEY_HASHES", default="", required=False),
         allow_user_api_keys=_env_bool("CITYLENS_ALLOW_USER_API_KEYS", False),
+        parcel_smoke_api_key_hashes=_csv_env(
+            "CITYLENS_PARCEL_SMOKE_API_KEY_HASHES",
+            default="",
+            required=False,
+        ),
         free_monthly_runs=_env_int("CITYLENS_FREE_MONTHLY_RUNS", 5),
         docs_access_key_sha256=_opt_env("CITYLENS_DOCS_ACCESS_KEY_SHA256"),
     )

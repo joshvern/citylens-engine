@@ -60,43 +60,102 @@ jobs:
             --max-age-days "${MAX_AGE_DAYS}" \
             --output production-verification.json
 
+      - name: Verify authenticated Parcel Intelligence inventory
+        env:
+          API_BASE: ${{ inputs.api_base || 'https://api.citylens.dev' }}
+          CITYLENS_PARCEL_SMOKE_KEY: ${{ secrets.CITYLENS_PARCEL_SMOKE_KEY }}
+        run: |
+          python scripts/verify_authenticated_inventory.py \
+            --api-base "${API_BASE}" \
+            --output authenticated-production-verification.json
+
       - name: Publish verification summary
         if: always()
         run: |
-          if [ ! -f production-verification.json ]; then
-            echo "## CityLens production verification" >> "${GITHUB_STEP_SUMMARY}"
-            echo "The verifier exited before it could write a report." >> "${GITHUB_STEP_SUMMARY}"
-            exit 0
-          fi
           python - <<'PY' >> "${GITHUB_STEP_SUMMARY}"
           import json
+          from pathlib import Path
 
-          report = json.load(open("production-verification.json", encoding="utf-8"))
-          icon = "✅" if report.get("passed") else "❌"
+          def read_report(path):
+              report_path = Path(path)
+              if not report_path.exists():
+                  return None
+              try:
+                  return json.loads(report_path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  return None
+
+          report = read_report("production-verification.json")
+          authenticated = read_report(
+              "authenticated-production-verification.json"
+          )
+          passed = bool(
+              report
+              and report.get("passed")
+              and authenticated
+              and authenticated.get("passed")
+          )
+          icon = "✅" if passed else "❌"
           print(f"## {icon} CityLens production verification")
           print()
-          print(f"- Feed generation: `{report.get('feed_generated_at', 'unknown')}`")
-          print(f"- Verified at: `{report.get('verified_at', 'unknown')}`")
-          print(f"- Result: `{'passed' if report.get('passed') else 'failed'}`")
-          source_sla = report.get("source_sla") or {}
+          print(
+              f"- Public contracts: "
+              f"`{'passed' if report and report.get('passed') else 'failed'}`"
+          )
+          print(
+              f"- Authenticated inventory: "
+              f"`{'passed' if authenticated and authenticated.get('passed') else 'failed'}`"
+          )
+          print(
+              f"- Feed generation: "
+              f"`{(report or {}).get('feed_generated_at', 'unknown')}`"
+          )
+          print(
+              f"- Verified at: "
+              f"`{(report or {}).get('verified_at', 'unknown')}`"
+          )
+          inventory = (authenticated or {}).get("inventory") or {}
+          print(
+              f"- Authenticated rows: "
+              f"`{inventory.get('returned_count', 'unknown')}` / "
+              f"`{inventory.get('available_count', 'unknown')}` · "
+              f"complete `{inventory.get('inventory_complete', 'unknown')}`"
+          )
+          source_sla = (report or {}).get("source_sla") or {}
           print(
               f"- Source SLAs: `{len(source_sla.get('sources') or {})} checked`, "
               f"`{source_sla.get('warning_count', 0)} warning(s)`, "
               f"`{source_sla.get('breach_count', 0)} breach(es)`"
           )
-          security = report.get("security_headers") or {}
+          security = (report or {}).get("security_headers") or {}
           print(
               f"- Security headers: "
               f"`API {'passed' if (security.get('api') or {}).get('passed') else 'failed'}` · "
               f"`web {'passed' if (security.get('web') or {}).get('passed') else 'failed'}`"
           )
-          warnings = report.get("warnings") or []
+          warnings = (report or {}).get("warnings") or []
           if warnings:
               print()
               print("### Source freshness warnings")
               for warning in warnings:
                   print(f"- {warning}")
-          failures = report.get("failures") or []
+          failures = []
+          if report is None:
+              failures.append("public verifier did not write a valid report")
+          else:
+              failures.extend(
+                  f"public: {failure}"
+                  for failure in report.get("failures") or []
+              )
+          if authenticated is None:
+              failures.append(
+                  "authenticated verifier did not write a valid report"
+              )
+          else:
+              failures.extend(
+                  f"authenticated: {failure}"
+                  for failure in authenticated.get("failures") or []
+              )
           if failures:
               print()
               print("### Failures")
@@ -109,7 +168,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-verification
-          path: production-verification.json
+          path: |
+            production-verification.json
+            authenticated-production-verification.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -136,35 +197,56 @@ jobs:
               `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}` +
               `/actions/runs/${context.runId}`;
 
-            let report = {};
-            if (fs.existsSync("production-verification.json")) {
-              try {
-                report = JSON.parse(
-                  fs.readFileSync("production-verification.json", "utf8"),
-                );
-              } catch (error) {
-                core.warning(
-                  `Could not parse production-verification.json: ${error}`,
-                );
+            const readReport = (path) => {
+              if (!fs.existsSync(path)) {
+                return {};
               }
+              try {
+                return JSON.parse(fs.readFileSync(path, "utf8"));
+              } catch (error) {
+                core.warning(`Could not parse ${path}: ${error}`);
+                return {};
+              }
+            };
+            const report = readReport("production-verification.json");
+            const authenticated = readReport(
+              "authenticated-production-verification.json",
+            );
+            const rawFailures = [
+              ...(Array.isArray(report.failures)
+                ? report.failures.map((value) => `public: ${value}`)
+                : []),
+              ...(Array.isArray(authenticated.failures)
+                ? authenticated.failures.map(
+                    (value) => `authenticated: ${value}`,
+                  )
+                : []),
+            ];
+            if (!report.schema_version) {
+              rawFailures.push("public verifier did not write a valid report");
             }
-            const failures =
-              Array.isArray(report.failures) && report.failures.length > 0
-                ? report.failures.slice(0, 20).map((value) => {
-                    const safe = String(value).replace(/\r?\n/g, " ");
-                    return `- ${safe}`;
-                  })
-                : ["- The verifier exited before recording a failure list."];
+            if (!authenticated.schema_version) {
+              rawFailures.push(
+                "authenticated verifier did not write a valid report",
+              );
+            }
+            const failures = rawFailures.length > 0
+              ? rawFailures.slice(0, 20).map((value) => {
+                  const safe = String(value).replace(/\r?\n/g, " ");
+                  return `- ${safe}`;
+                })
+              : ["- The verifier exited before recording a failure list."];
             const body = [
               marker,
               runToken,
-              "The six-hourly production verification workflow failed.",
+              "The six-hourly public/authenticated verification workflow failed.",
               "",
               `- Latest failing run: [${context.runId}](${runUrl})`,
               `- Attempt: \`${runAttempt}\``,
               `- Commit: \`${context.sha}\``,
               `- Verified at: \`${report.verified_at || "unavailable"}\``,
               `- Feed generation: \`${report.feed_generated_at || "unavailable"}\``,
+              `- Authenticated inventory: \`${authenticated.inventory?.returned_count || "unavailable"}\` rows`,
               "",
               "### Verifier failures",
               "",

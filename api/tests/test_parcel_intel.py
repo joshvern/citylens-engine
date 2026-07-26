@@ -875,7 +875,12 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         value.strip().lower()
         for value in response.headers["vary"].split(",")
     }
-    assert {"authorization", "x-api-key", "origin"} <= vary
+    assert {
+        "authorization",
+        "x-api-key",
+        "x-citylens-parcel-smoke-key",
+        "origin",
+    } <= vary
     assert response.headers["access-control-allow-origin"] == (
         "https://citylens.dev"
     )
@@ -949,7 +954,11 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
         value.strip().lower()
         for value in response.headers["vary"].split(",")
     }
-    assert {"authorization", "x-api-key"} <= vary
+    assert {
+        "authorization",
+        "x-api-key",
+        "x-citylens-parcel-smoke-key",
+    } <= vary
 
 
 def test_parcel_detail_is_tiered_and_keeps_geometry(monkeypatch) -> None:
@@ -1561,6 +1570,69 @@ def test_invalid_bearer_on_sweep_is_401_not_anon_downgrade(monkeypatch) -> None:
         headers={"Authorization": "Bearer not-a-valid-token"},
     )
     assert r.status_code == 401
+
+
+def test_parcel_smoke_key_is_full_read_only_inventory_auth(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    smoke_key = "production-smoke-test-key"
+    monkeypatch.setenv(
+        "CITYLENS_PARCEL_SMOKE_API_KEY_HASHES",
+        hashlib.sha256(smoke_key.encode("utf-8")).hexdigest(),
+    )
+    fake = _make_fake_gcs(
+        ["brooklyn"],
+        {
+            "brooklyn": [
+                _row(
+                    "3020000001",
+                    owner_name="ACME REALTY LLC",
+                    acquisition_rank=1,
+                ),
+                _row("3020000002", acquisition_rank=2),
+            ]
+        },
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    client = TestClient(app)
+    headers = {"X-CityLens-Parcel-Smoke-Key": smoke_key}
+
+    response = client.get(
+        "/v1/parcel-intel/map",
+        params={"top_per_borough": 1000},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["access_scope"] == "authenticated_full"
+    assert body["returned_count"] == 2
+    assert body["available_count"] == 2
+    assert body["inventory_complete"] is True
+    assert body["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert response.headers["cache-control"] == "private, no-store"
+
+    workflow = client.get("/v1/parcel-intel/workflow", headers=headers)
+    assert workflow.status_code == 401
+
+
+def test_invalid_parcel_smoke_key_is_not_anonymous_downgrade(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv(
+        "CITYLENS_PARCEL_SMOKE_API_KEY_HASHES",
+        hashlib.sha256(b"valid-smoke-key").hexdigest(),
+    )
+    fake = _make_fake_gcs(["brooklyn"])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/map",
+        headers={"X-CityLens-Parcel-Smoke-Key": "wrong-smoke-key"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid parcel smoke credential"
 
 
 # --- Robust read path (corrupt manifest / bad JSONL / bad rows) ---

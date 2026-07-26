@@ -887,6 +887,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
             "source": "ranking",
         }
     ]
+    screening_lookup = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "screening_lookup_completed",
+            "source": "screening_lookup",
+        },
+    )
+    assert screening_lookup.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "screening_lookup_completed",
+        "source": "screening_lookup",
+    }
     applied = client.post(
         "/v1/parcel-intel/product-events",
         json={

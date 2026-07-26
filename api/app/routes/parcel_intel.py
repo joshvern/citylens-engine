@@ -50,12 +50,13 @@ from ..models.schemas import (
     ParcelProspectiveValidationHealth,
     ParcelProspectiveValidationStatus,
     ParcelScreeningLedgerRow,
+    ParcelScreeningStatusResponse,
 )
-from ..services.auth import maybe_parcel_read_auth
+from ..services.auth import maybe_parcel_read_auth, require_auth
 from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_decision_audit import build_parcel_decision_audit
-from ..services.rate_limit import demo_rate_limit
+from ..services.rate_limit import demo_rate_limit, enforce_token_bucket
 from ..services.settings import Settings, get_settings
 
 log = logging.getLogger(__name__)
@@ -973,6 +974,111 @@ def parcel_intel_index(
     out = registry.index(gcs)
     response.headers["Cache-Control"] = _INDEX_CACHE
     return out
+
+
+@router.get(
+    "/parcel-intel/screening/{bbl}",
+    response_model=ParcelScreeningStatusResponse,
+)
+def parcel_intel_screening_status(
+    bbl: str,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> ParcelScreeningStatusResponse:
+    """Explain one exact BBL without exposing the private screening ledger."""
+
+    borough = _BBL_BOROUGH.get(bbl[:1]) if bbl else None
+    if len(bbl) != 10 or not bbl.isdigit() or borough is None:
+        raise HTTPException(
+            status_code=422,
+            detail="BBL must be a canonical 10-digit NYC tax-lot identifier",
+        )
+    enforce_token_bucket(
+        key=f"parcel-screening-lookup:{auth.app_user_id}",
+        capacity=20,
+        refill_per_second=0.2,
+    )
+    rows, manifest = registry.screening_ledger(gcs)
+    if (
+        manifest.get("screening_ledger_schema")
+        != _SCREENING_LEDGER_SCHEMA
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Parcel screening status is unavailable",
+        )
+    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    row = rows.get(bbl)
+    feed_generation = manifest.get("artifact_generation")
+    generated_at = _parse_iso(manifest.get("generated_at"))
+
+    if row is None:
+        return ParcelScreeningStatusResponse(
+            bbl=bbl,
+            borough=borough,
+            result="not_evaluated",
+            evaluated=False,
+            published=False,
+            feed_generation=(
+                feed_generation
+                if isinstance(feed_generation, str)
+                else None
+            ),
+            feed_generated_at=generated_at,
+            interpretation=(
+                "This parcel is not in the current evaluated candidate ledger. "
+                "That is not a determination of infeasibility, owner intent, "
+                "or transaction potential."
+            ),
+        )
+
+    if row.published:
+        result = "published_lead"
+        interpretation = (
+            "This parcel passed current qualification and is present in the "
+            "published acquisition inventory."
+        )
+    elif row.acquisition_eligible:
+        result = "qualified_below_cutoff"
+        interpretation = (
+            "This parcel passed current qualification but fell below the "
+            "current 5,000-lead publication cutoff. That is not a negative "
+            "diligence conclusion."
+        )
+    else:
+        result = "screened_out"
+        interpretation = (
+            "This parcel was evaluated but excluded from the acquisition "
+            "inventory by the current source-backed qualification policy."
+        )
+
+    return ParcelScreeningStatusResponse(
+        bbl=bbl,
+        borough=row.borough,
+        result=result,
+        evaluated=True,
+        published=row.published,
+        acquisition_eligible=row.acquisition_eligible,
+        acquisition_status=row.acquisition_status,
+        exclusion_reasons=row.acquisition_exclusion_reasons,
+        latest_project_filing_year=row.latest_project_filing_year,
+        latest_project_status=row.latest_project_status,
+        latest_project_type=row.latest_project_type,
+        latest_project_job_number=row.latest_project_job_number,
+        latest_project_url=row.latest_project_url,
+        property_facts_as_of=row.property_facts_as_of,
+        ownership_as_of=row.ownership_as_of,
+        project_activity_as_of=row.project_activity_as_of,
+        land_use_activity_as_of=row.land_use_activity_as_of,
+        feed_generation=(
+            feed_generation if isinstance(feed_generation, str) else None
+        ),
+        feed_generated_at=generated_at,
+        interpretation=interpretation,
+    )
 
 
 @router.get("/parcel-intel/map", response_model=ParcelIntelMapResponse)

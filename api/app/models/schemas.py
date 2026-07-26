@@ -939,6 +939,7 @@ ParcelWorkflowEvidenceCheckStatus = Literal[
 
 ParcelProductEventName = Literal[
     "parcel_opened",
+    "screening_lookup_completed",
     "comparison_opened",
     "saved_view_applied",
     "decision_audit_opened",
@@ -951,6 +952,7 @@ ParcelProductEventName = Literal[
 
 ParcelProductEventSource = Literal[
     "direct",
+    "screening_lookup",
     "map",
     "ranking",
     "action_queue",
@@ -976,6 +978,7 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
         "comparison",
         "decision_peers",
     },
+    "screening_lookup_completed": {"screening_lookup"},
     "comparison_opened": {"comparison", "decision_peers"},
     "saved_view_applied": {"saved_views"},
     "decision_audit_opened": {"decision_posture", "audit_tab"},
@@ -993,7 +996,8 @@ class ParcelProductEventCreate(BaseModel):
     Workflow and saved-view mutation counters are derived transactionally by
     the API from canonical writes. Only parcel/comparison opens,
     decision-audit opens, underwriting opens/first adjustments, and saved-view
-    applies and coarse screen-audit interactions remain client-reported.
+    applies, exact-BBL screening lookups, and coarse screen-audit interactions
+    remain client-reported.
     Parcel, saved-screen, and screen-audit comparison events carry no parcel
     or saved-view identifiers, filter values, queries, criteria, thresholds,
     result counts, overlap measures, or compared values.
@@ -1753,6 +1757,60 @@ class ParcelScreeningLedgerRow(BaseModel):
                     "latest_project_url must be an official NYC HTTPS URL"
                 )
         return self
+
+
+class ParcelScreeningStatusResponse(BaseModel):
+    """Authenticated, exact-BBL explanation of the current screening result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[
+        "citylens/parcel-screening-status@v1"
+    ] = "citylens/parcel-screening-status@v1"
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    result: Literal[
+        "published_lead",
+        "qualified_below_cutoff",
+        "screened_out",
+        "not_evaluated",
+    ]
+    evaluated: bool
+    published: bool
+    acquisition_eligible: Optional[bool] = None
+    acquisition_status: Optional[
+        Literal[
+            "eligible",
+            "active_project",
+            "completed_project",
+            "constrained",
+            "incomplete_data",
+        ]
+    ] = None
+    exclusion_reasons: list[str] = Field(default_factory=list)
+    latest_project_filing_year: Optional[int] = Field(
+        default=None, ge=1900, le=2100
+    )
+    latest_project_status: Optional[str] = None
+    latest_project_type: Optional[
+        Literal[
+            "new_building",
+            "alt_co_new_building",
+            "demolition",
+            "land_use_entitlement",
+        ]
+    ] = None
+    latest_project_job_number: Optional[str] = None
+    latest_project_url: Optional[str] = None
+    property_facts_as_of: Optional[str] = None
+    ownership_as_of: Optional[str] = None
+    project_activity_as_of: Optional[str] = None
+    land_use_activity_as_of: Optional[str] = None
+    feed_generation: Optional[str] = None
+    feed_generated_at: Optional[datetime] = None
+    interpretation: str = Field(min_length=1, max_length=1000)
 
 
 class ParcelSavedSearchFilters(BaseModel):

@@ -402,6 +402,127 @@ def test_screening_ledger_loads_strict_private_projection() -> None:
     assert fake.requests[-1].endswith("/screening-ledger.jsonl")
 
 
+def test_screening_status_requires_authentication(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [_screening_row()])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/screening/3020960069"
+    )
+
+    assert response.status_code == 401
+
+
+def test_screening_status_explains_source_backed_exclusion(
+    monkeypatch,
+    auth_override,
+) -> None:
+    _set_required_env(monkeypatch)
+    auth_override()
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [_screening_row()])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/screening/3020960069"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == (
+        "citylens/parcel-screening-status@v1"
+    )
+    assert body["result"] == "screened_out"
+    assert body["evaluated"] is True
+    assert body["published"] is False
+    assert body["acquisition_eligible"] is False
+    assert body["exclusion_reasons"] == ["approved_land_use_project"]
+    assert body["latest_project_job_number"] == "2023K0205"
+    assert body["latest_project_url"] == (
+        "https://zap.planning.nyc.gov/projects/2023K0205"
+    )
+    assert "model_rank" not in body
+    assert "owner_name" not in body
+    assert "score_calibrated" not in body
+    assert response.headers["cache-control"] == "private, no-store"
+    assert {
+        value.strip().lower()
+        for value in response.headers["vary"].split(",")
+    } >= {"authorization", "x-api-key"}
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        (
+            _screening_row(
+                acquisition_eligible=True,
+                acquisition_status="eligible",
+                acquisition_rank=6001,
+                acquisition_exclusion_reasons=[],
+            ),
+            "qualified_below_cutoff",
+        ),
+        (
+            _screening_row(
+                acquisition_eligible=True,
+                acquisition_status="eligible",
+                acquisition_rank=42,
+                acquisition_exclusion_reasons=[],
+                published=True,
+            ),
+            "published_lead",
+        ),
+    ],
+)
+def test_screening_status_distinguishes_qualified_results(
+    monkeypatch,
+    auth_override,
+    row: dict,
+    expected: str,
+) -> None:
+    _set_required_env(monkeypatch)
+    auth_override()
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [row])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/screening/3020960069"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["result"] == expected
+    assert response.json()["acquisition_eligible"] is True
+    assert response.json()["exclusion_reasons"] == []
+
+
+def test_screening_status_explains_not_evaluated_and_rejects_bad_bbl(
+    monkeypatch,
+    auth_override,
+) -> None:
+    _set_required_env(monkeypatch)
+    auth_override()
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [_screening_row()])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    client = TestClient(app)
+
+    missing = client.get("/v1/parcel-intel/screening/3020960070")
+    invalid = client.get("/v1/parcel-intel/screening/not-a-bbl")
+
+    assert missing.status_code == 200, missing.text
+    assert missing.json()["result"] == "not_evaluated"
+    assert missing.json()["evaluated"] is False
+    assert missing.json()["acquisition_eligible"] is None
+    assert "not a determination of infeasibility" in (
+        missing.json()["interpretation"]
+    )
+    assert invalid.status_code == 422
+
+
 def test_screening_ledger_rejects_unexpected_private_fields() -> None:
     fake = _make_atomic_fake_gcs(["brooklyn"])
     _add_screening_ledger(

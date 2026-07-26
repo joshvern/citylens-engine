@@ -39,6 +39,21 @@ def _expect(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
+def _is_mappable_nyc_row(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    lat = value.get("lat")
+    lng = value.get("lng")
+    return (
+        isinstance(lat, (int, float))
+        and not isinstance(lat, bool)
+        and isinstance(lng, (int, float))
+        and not isinstance(lng, bool)
+        and 40.45 <= float(lat) <= 41.0
+        and -74.30 <= float(lng) <= -73.65
+    )
+
+
 def _request_json(
     url: str,
     *,
@@ -148,6 +163,15 @@ def validate_authenticated_map(
             ),
             failures,
         )
+    mappable_rows = [row for row in rows if _is_mappable_nyc_row(row)]
+    _expect(
+        len(mappable_rows) == expected_total,
+        (
+            f"map: expected {expected_total:,} rows with plausible NYC "
+            f"coordinates, got {len(mappable_rows):,}"
+        ),
+        failures,
+    )
     _expect(
         any(
             isinstance(row, dict)
@@ -336,6 +360,15 @@ def run_checks(
             "returned_count": map_payload.get("returned_count"),
             "available_count": map_payload.get("available_count"),
             "inventory_complete": map_payload.get("inventory_complete"),
+            "mappable_count": sum(
+                1
+                for row in (
+                    map_payload.get("rows")
+                    if isinstance(map_payload.get("rows"), list)
+                    else []
+                )
+                if _is_mappable_nyc_row(row)
+            ),
             "generated_at": map_payload.get("generated_at"),
         },
         "timings_seconds": timings,

@@ -381,8 +381,9 @@ environmental, MIH, transit, or imagery signals.
 same public verifier plus `scripts/verify_authenticated_inventory.py` every
 six hours and on demand. The authenticated check proves that production
 returns exactly 5,000 unique parcels (1,000 per borough), preserves owner
-context, serves a full selected-parcel decision audit, compresses the map
-payload, and marks both reads `private, no-store`. The workflow publishes a
+context, requires all 5,000 map rows to carry plausible NYC coordinates,
+serves a full selected-parcel decision audit, compresses the map payload, and
+marks both reads `private, no-store`. The workflow publishes a
 job summary and retains both sanitized JSON reports for 30 days; neither
 report contains the smoke credential, owner names, or parcel identifiers.
 Scheduled failures create or update one

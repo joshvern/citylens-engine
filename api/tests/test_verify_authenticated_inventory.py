@@ -31,6 +31,8 @@ def _map_payload() -> dict:
                 "bbl": f"{index}000000001",
                 "borough": borough,
                 "owner_name": f"Owner {index}",
+                "lat": 40.55 + index * 0.05,
+                "lng": -74.2 + index * 0.08,
             }
             for index, borough in enumerate(BOROUGHS, start=1)
         ],
@@ -65,6 +67,7 @@ def test_authenticated_map_validator_rejects_downgraded_or_ambiguous_data() -> N
     payload["access_scope"] = "public_preview"
     payload["inventory_complete"] = False
     payload["rows"][1]["bbl"] = payload["rows"][0]["bbl"]
+    payload["rows"][2]["lat"] = None
     headers = deepcopy(_map_headers())
     headers["cache-control"] = "public, max-age=600"
     headers["vary"] = "Accept-Encoding"
@@ -79,6 +82,7 @@ def test_authenticated_map_validator_rejects_downgraded_or_ambiguous_data() -> N
     assert any("access scope" in failure for failure in failures)
     assert any("not marked complete" in failure for failure in failures)
     assert any("BBLs are not unique" in failure for failure in failures)
+    assert any("plausible NYC coordinates" in failure for failure in failures)
     assert any("not private, no-store" in failure for failure in failures)
     assert any("every supported credential" in failure for failure in failures)
 

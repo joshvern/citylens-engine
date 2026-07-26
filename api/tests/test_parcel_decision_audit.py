@@ -35,6 +35,9 @@ def _manifest() -> dict:
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
             "prospective_2026_validated": False,
+            "evaluation_evidence": {
+                "status": "development_exposed",
+            },
         }
     }
 
@@ -68,6 +71,9 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert audit.validation.precision_at_100 == 0.34
     assert audit.validation.precision_at_1000 == 0.104
     assert audit.validation.prospective_validated is False
+    assert "not an independent current-accuracy estimate" in (
+        audit.validation.disclaimer
+    )
     checks = {check.key: check for check in audit.checks}
     assert checks["historical_model"].affects_model_rank is True
     assert checks["acquisition_eligibility"].affects_acquisition_eligibility is True

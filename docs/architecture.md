@@ -100,6 +100,16 @@ owns the browser UI.
     service prioritizes material source/status changes above source-date and
     generation-only changes so routine refreshes do not masquerade as new
     acquisition conclusions.
+  - Any non-archived workflow may carry one latest `evidence_issues` request
+    per reviewable check. Submission binds a correction or suppression review
+    to the current server citation with the same optimistic-concurrency
+    identity used by reviews. It writes an opaque, separately indexed
+    `parcel_evidence_issues` governance record plus a user-visible workflow
+    mirror in one transaction. Open requests cannot overwrite one another,
+    withdrawal never deletes the citation, and admin resolution mirrors
+    status plus a bounded response without mutating source facts, snapshots,
+    scores, ranks, or review markers. The evidence-change center includes
+    submitted requests until they are resolved, dismissed, or withdrawn.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
     and saved-view mutation counters are updated in the same transaction as
@@ -158,7 +168,8 @@ Firestore:
 - `users/{app_user_id}/product_usage_days/{day}`: expiring aggregate adoption
   counters, with no row-level event or parcel payload
 - `users/{app_user_id}/parcel_workflow/{bbl}`: canonical user-owned acquisition
-  workflow state, including optional source-bound evidence-review markers;
+  workflow state, including optional source-bound evidence-review markers and
+  latest evidence-issue mirrors;
   reporting reads only aggregate record/user counts and archive state
 - `users/{app_user_id}/parcel_saved_searches/{search_id}`: private
   `citylens/parcel-saved-view@v2` explorer state. It restores the citywide
@@ -169,6 +180,9 @@ Firestore:
 - `pilot_requests/{request_id}`: consented design-partner intake with an
   opaque idempotency-derived ID, controlled operational status, and 365-day
   `expires_at` boundary. Records are private and are not product telemetry.
+- `parcel_evidence_issues/{issue_id}`: private, admin-triaged correction and
+  suppression-review requests with exact citation identity, opaque submitter
+  ID, bounded note, governed status, and 730-day `expires_at`.
 
 GCS:
 - `gs://<CITYLENS_BUCKET>/runs/<run_id>/<artifact_filename>`

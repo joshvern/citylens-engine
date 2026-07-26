@@ -22,6 +22,7 @@ class FakeWorkflowStore:
         self.events: dict[str, list[dict]] = {}
         self.product_events: list[dict] = []
         self.searches: dict[str, dict] = {}
+        self.evidence_issues: dict[str, dict] = {}
 
     def list_parcel_workflow(
         self, *, app_user_id: str, include_archived: bool = False
@@ -146,6 +147,135 @@ class FakeWorkflowStore:
         )
         item["event_count"] = len(events)
         return item, mutation_status
+
+    def submit_parcel_workflow_evidence_issue(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        issue: dict,
+    ) -> tuple[dict | None, dict | None, str]:
+        item = self.items.get(bbl)
+        if item is None:
+            return None, None, "missing"
+        if item.get("archived_at") is not None:
+            return item, None, "inactive"
+        issues = dict(item.get("evidence_issues") or {})
+        current = issues.get(issue["check_key"])
+        identity_keys = (
+            "check_key",
+            "label",
+            "issue_type",
+            "reason_code",
+            "note",
+            "check_status",
+            "source",
+            "source_as_of",
+            "feed_generated_at",
+        )
+        if isinstance(current, dict) and current.get("status") == "submitted":
+            if all(current.get(key) == issue.get(key) for key in identity_keys):
+                return item, current, "unchanged"
+            return item, current, "conflict"
+        now = datetime.now(timezone.utc)
+        issue_id = f"pei_{len(self.evidence_issues) + 1:032x}"
+        public_issue = {
+            **issue,
+            "issue_id": issue_id,
+            "status": "submitted",
+            "submitted_at": now,
+            "updated_at": now,
+            "resolved_at": None,
+            "resolution_note": None,
+        }
+        issues[issue["check_key"]] = public_issue
+        item["evidence_issues"] = issues
+        item["updated_at"] = now
+        self.evidence_issues[issue_id] = {
+            **public_issue,
+            "bbl": bbl,
+            "borough": item["borough"],
+            "submitted_by_user_id": app_user_id,
+            "resolved_by_user_id": None,
+            "expires_at": now + timedelta(days=730),
+        }
+        return item, public_issue, "submitted"
+
+    def withdraw_parcel_workflow_evidence_issue(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        check_key: str,
+    ) -> tuple[dict | None, str]:
+        del app_user_id
+        item = self.items.get(bbl)
+        if item is None:
+            return None, "missing"
+        if item.get("archived_at") is not None:
+            return item, "inactive"
+        issues = dict(item.get("evidence_issues") or {})
+        current = issues.get(check_key)
+        if not isinstance(current, dict):
+            return item, "missing_issue"
+        if current.get("status") != "submitted":
+            return item, "unchanged"
+        now = datetime.now(timezone.utc)
+        withdrawn = {**current, "status": "withdrawn", "updated_at": now}
+        issues[check_key] = withdrawn
+        item["evidence_issues"] = issues
+        item["updated_at"] = now
+        self.evidence_issues[current["issue_id"]].update(
+            {"status": "withdrawn", "updated_at": now}
+        )
+        return item, "withdrawn"
+
+    def list_parcel_evidence_issues(
+        self, *, status: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        items = list(self.evidence_issues.values())
+        if status is not None:
+            items = [item for item in items if item["status"] == status]
+        return items[:limit]
+
+    def resolve_parcel_evidence_issue(
+        self,
+        *,
+        issue_id: str,
+        status: str,
+        resolution_note: str,
+        admin_user_id: str,
+    ) -> dict | None:
+        issue = self.evidence_issues.get(issue_id)
+        if issue is None:
+            return None
+        if issue["status"] != "submitted":
+            return issue
+        now = datetime.now(timezone.utc)
+        issue.update(
+            {
+                "status": status,
+                "resolution_note": resolution_note,
+                "resolved_at": now,
+                "resolved_by_user_id": admin_user_id,
+                "updated_at": now,
+            }
+        )
+        current = (
+            self.items[issue["bbl"]]
+            .get("evidence_issues", {})
+            .get(issue["check_key"])
+        )
+        if isinstance(current, dict) and current["issue_id"] == issue_id:
+            current.update(
+                {
+                    "status": status,
+                    "resolution_note": resolution_note,
+                    "resolved_at": now,
+                    "updated_at": now,
+                }
+            )
+        return issue
 
     def delete_parcel_workflow(self, *, app_user_id: str, bbl: str) -> bool:
         if bbl not in self.items or self.items[bbl].get("archived_at") is not None:
@@ -496,6 +626,213 @@ def test_evidence_review_requires_an_open_workflow_and_strict_contract(
     assert "open, active" in terminal.text
 
 
+def test_evidence_issue_is_source_bound_private_and_reversible(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="evidence-issue-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    created = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={"borough": "brooklyn", "stage": "reviewing"},
+    )
+    assert created.status_code == 200, created.text
+    original_snapshot = dict(created.json()["snapshot"])
+    issue_url = (
+        "/v1/parcel-intel/workflow/3020960069/"
+        "evidence-issues/property_facts"
+    )
+    body = {
+        "issue_type": "correction",
+        "reason_code": "incorrect_value",
+        "note": (
+            "The official lot area appears inconsistent with the recorded "
+            "survey; please verify the source match."
+        ),
+        "expected_check_status": "verified",
+        "expected_source": "NYC PLUTO",
+        "expected_source_as_of": "2026-07-24",
+        "expected_feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+
+    submitted = client.post(issue_url, json=body)
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.headers["cache-control"] == "private, no-store"
+    issue = submitted.json()["evidence_issues"]["property_facts"]
+    assert issue["issue_id"].startswith("pei_")
+    assert issue["status"] == "submitted"
+    assert issue["source"] == "NYC PLUTO"
+    assert issue["source_as_of"] == "2026-07-24"
+    assert submitted.json()["snapshot"] == original_snapshot
+    assert submitted.json()["evidence_reviews"] == {}
+
+    retried = client.post(issue_url, json=body)
+    assert retried.status_code == 200, retried.text
+    assert (
+        retried.json()["evidence_issues"]["property_facts"]["issue_id"]
+        == issue["issue_id"]
+    )
+
+    conflicting = client.post(
+        issue_url,
+        json={
+            **body,
+            "note": (
+                "A different material concern should not overwrite the "
+                "already submitted governance request."
+            ),
+        },
+    )
+    assert conflicting.status_code == 409
+    assert "already open" in conflicting.text
+
+    stale = client.post(
+        issue_url,
+        json={**body, "expected_source_as_of": "2026-07-23"},
+    )
+    assert stale.status_code == 409
+    assert "Evidence changed" in stale.text
+
+    withdrawn = client.delete(issue_url)
+    assert withdrawn.status_code == 200, withdrawn.text
+    withdrawn_issue = withdrawn.json()["evidence_issues"]["property_facts"]
+    assert withdrawn_issue["status"] == "withdrawn"
+    assert withdrawn_issue["source"] == "NYC PLUTO"
+    assert withdrawn_issue["note"] == issue["note"]
+    assert withdrawn.json()["snapshot"] == original_snapshot
+
+
+def test_evidence_issue_admin_triage_is_authorized_and_mirrored(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="evidence-issue-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    assert client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={"borough": "brooklyn", "stage": "pass"},
+    ).status_code == 200
+    submitted = client.post(
+        (
+            "/v1/parcel-intel/workflow/3020960069/"
+            "evidence-issues/ownership"
+        ),
+        json={
+            "issue_type": "suppression_review",
+            "reason_code": "privacy_or_safety",
+            "note": (
+                "Please review whether this ownership display creates a "
+                "specific privacy or safety concern for the team."
+            ),
+            "expected_check_status": "verified",
+            "expected_source": "NYC ACRIS / NYC PLUTO",
+            "expected_source_as_of": None,
+            "expected_feed_generated_at": "2026-07-24T02:43:29Z",
+        },
+    )
+    assert submitted.status_code == 200, submitted.text
+    issue_id = submitted.json()["evidence_issues"]["ownership"]["issue_id"]
+
+    forbidden = client.get(
+        "/v1/parcel-intel/evidence-issues?status=submitted"
+    )
+    assert forbidden.status_code == 403
+
+    auth_override(
+        app_user_id="evidence-admin",
+        plan_type="admin",
+        is_admin=True,
+    )
+    listed = client.get(
+        "/v1/parcel-intel/evidence-issues?status=submitted"
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.headers["cache-control"] == "private, no-store"
+    assert listed.headers["vary"] == "Authorization, X-API-Key"
+    assert [item["issue_id"] for item in listed.json()["items"]] == [
+        issue_id
+    ]
+
+    resolved = client.patch(
+        f"/v1/parcel-intel/evidence-issues/{issue_id}",
+        json={
+            "status": "resolved",
+            "resolution_note": (
+                "Reviewed against the current source; the product display "
+                "will be handled through the governed source update process."
+            ),
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "resolved"
+    assert resolved.json()["resolved_by_user_id"] == "evidence-admin"
+    mirrored = store.items["3020960069"]["evidence_issues"]["ownership"]
+    assert mirrored["status"] == "resolved"
+    assert mirrored["resolution_note"].startswith("Reviewed against")
+
+    repeated = client.patch(
+        f"/v1/parcel-intel/evidence-issues/{issue_id}",
+        json={
+            "status": "resolved",
+            "resolution_note": (
+                "Reviewed against the current source; the product display "
+                "will be handled through the governed source update process."
+            ),
+        },
+    )
+    assert repeated.status_code == 200, repeated.text
+
+    conflicting = client.patch(
+        f"/v1/parcel-intel/evidence-issues/{issue_id}",
+        json={
+            "status": "dismissed",
+            "resolution_note": (
+                "A materially different terminal decision must not replace "
+                "the recorded governance outcome."
+            ),
+        },
+    )
+    assert conflicting.status_code == 409
+
+    no_longer_open = client.get(
+        "/v1/parcel-intel/evidence-issues?status=submitted"
+    )
+    assert no_longer_open.json()["items"] == []
+
+
+def test_evidence_issue_rejects_unsaved_or_unbounded_requests(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="evidence-issue-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    issue_url = (
+        "/v1/parcel-intel/workflow/3020960069/"
+        "evidence-issues/property_facts"
+    )
+    body = {
+        "issue_type": "correction",
+        "reason_code": "incorrect_value",
+        "note": "This is a sufficiently specific bounded correction request.",
+        "expected_check_status": "verified",
+        "expected_source": "NYC PLUTO",
+        "expected_source_as_of": "2026-07-24",
+        "expected_feed_generated_at": "2026-07-24T02:43:29Z",
+    }
+    assert client.post(issue_url, json=body).status_code == 409
+    assert client.post(
+        issue_url,
+        json={**body, "parcel_owner": "private identifying value"},
+    ).status_code == 422
+    assert client.post(
+        issue_url,
+        json={**body, "note": "too short"},
+    ).status_code == 422
+
+
 def test_unauthenticated_workflow_errors_are_never_cacheable() -> None:
     client = TestClient(app)
     response = client.put(
@@ -508,6 +845,23 @@ def test_unauthenticated_workflow_errors_are_never_cacheable() -> None:
     )
     assert response.status_code == 401
     assert response.headers["cache-control"] == "private, no-store"
+
+    issue_response = client.post(
+        "/v1/parcel-intel/workflow/3020960069/"
+        "evidence-issues/property_facts",
+        json={
+            "issue_type": "correction",
+            "reason_code": "incorrect_value",
+            "note": (
+                "This is a bounded correction request for the cited "
+                "official source version."
+            ),
+            "expected_check_status": "verified",
+            "expected_source": "NYC PLUTO",
+        },
+    )
+    assert issue_response.status_code == 401
+    assert issue_response.headers["cache-control"] == "private, no-store"
 
 
 def test_product_event_contract_is_value_minimized(auth_override) -> None:
@@ -708,6 +1062,13 @@ def test_workflow_outcome_export_is_private_maturity_safe_and_downloadable(
                 "reviewed_at": datetime.now(timezone.utc),
             }
         },
+        "evidence_issues": {
+            "ownership": {
+                "issue_id": "pei_0123456789abcdef0123456789abcdef",
+                "note": "PRIVATE EVIDENCE CORRECTION NOTE",
+                "status": "submitted",
+            }
+        },
     }
     app.dependency_overrides[parcel_workflow.get_store] = lambda: store
     client = TestClient(app)
@@ -731,7 +1092,9 @@ def test_workflow_outcome_export_is_private_maturity_safe_and_downloadable(
     assert "Private address" not in serialized
     assert "PRIVATE OWNER LLC" not in serialized
     assert "PRIVATE REVIEW SOURCE" not in serialized
+    assert "PRIVATE EVIDENCE CORRECTION NOTE" not in serialized
     assert "evidence_reviews" not in serialized
+    assert "evidence_issues" not in serialized
 
 def test_product_usage_day_is_aggregate_only_and_bounded() -> None:
     now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)

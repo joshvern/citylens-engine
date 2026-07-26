@@ -206,12 +206,28 @@ Current pinned release tag:
   means title, zoning, environmental, engineering, financial, seller-intent,
   or other diligence was resolved or cleared. Markers stay out of the
   governed outcome export and private workflow responses are always
-  `private, no-store`, including early authentication failures. The
+  `private, no-store`, including early authentication failures.
+  `POST|DELETE
+  /v1/parcel-intel/workflow/{bbl}/evidence-issues/{check_key}` adds a
+  governed correction or suppression-review request against the same exact
+  citation identity. Requests preserve the cited status, source, source date,
+  feed generation, bounded user note, and lifecycle status without changing
+  the parcel fact, review marker, save-time snapshot, model input, score, or
+  rank. Identical retries are idempotent, conflicting open requests require
+  explicit withdrawal, and source-version drift returns `409`. Terminal
+  workflows may report data quality concerns; archived workflows may not.
+  Admin-only `GET /v1/parcel-intel/evidence-issues` and
+  `PATCH /v1/parcel-intel/evidence-issues/{issue_id}` provide a bounded
+  triage/resolve path. Resolutions are mirrored to the submitting user's
+  workflow, while the official value remains unchanged until a governed
+  source update is published. The
   authenticated
-  `/v1/parcel-intel/workflow/alerts` v3 endpoint is the private evidence-change
+  `/v1/parcel-intel/workflow/alerts` v4 endpoint is the private evidence-change
   inbox. It compares watched leads' saved snapshots with the current atomic
   feed and also compares every active source-bound review marker with the
   current decision-audit citation, even when ordinary watch alerts are off.
+  It keeps unresolved correction/suppression-review requests visible even
+  when the parcel is not watched.
   Multiple stale markers are grouped into one parcel alert; material
   status/source changes are high priority, source-date changes are medium,
   and generation-only changes are low. The response reports marker and parcel
@@ -510,12 +526,13 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v9 report contains only window totals, event/source counts, active-user and
+The v10 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, separate comparison
 engagement and handoff, decision-audit, underwriting-engagement,
-source-bound evidence-review, activation, and saved-view-reuse evidence gates,
+source-bound evidence-review, aggregate evidence-issue, activation, and
+saved-view-reuse evidence gates,
 and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, and saved-view applies are best-effort
 client-side directional counters. Comparison events contain no parcel IDs or
@@ -523,7 +540,9 @@ compared values. Underwriting events contain no parcel, assumption, range,
 result, or valuation data. Evidence-review counts are canonical workflow
 mutations but reveal no parcel, check, source, source date, review time, or
 review outcome; they measure consideration of exact cited versions, not
-completed or cleared diligence. Workflow
+completed or cleared diligence. Evidence-issue counts contain no parcel,
+citation, source, reason, note, request, or outcome values; they measure
+aggregate data-quality friction only. Workflow
 lifecycle and saved-view create/update/delete counts are
 transactionally derived from their canonical server mutations, so a dropped
 follow-up browser request cannot erase a real save and an unchanged retry

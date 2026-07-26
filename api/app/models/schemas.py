@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal, Optional
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 
@@ -1054,6 +1054,103 @@ class ParcelWorkflowEvidenceReview(BaseModel):
     reviewed_at: datetime
 
 
+ParcelWorkflowEvidenceIssueType = Literal[
+    "correction",
+    "suppression_review",
+]
+
+ParcelWorkflowEvidenceIssueReason = Literal[
+    "incorrect_value",
+    "outdated_source",
+    "wrong_parcel_match",
+    "duplicate_or_merged_lot",
+    "privacy_or_safety",
+    "other",
+]
+
+ParcelWorkflowEvidenceIssueStatus = Literal[
+    "submitted",
+    "withdrawn",
+    "resolved",
+    "dismissed",
+]
+
+
+class ParcelWorkflowEvidenceIssueRequest(BaseModel):
+    """A source-bound request; never an instruction to rewrite source facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    issue_type: ParcelWorkflowEvidenceIssueType
+    reason_code: ParcelWorkflowEvidenceIssueReason
+    note: str = Field(min_length=20, max_length=1000)
+    expected_check_status: ParcelWorkflowEvidenceCheckStatus
+    expected_source: str = Field(min_length=1, max_length=256)
+    expected_source_as_of: Optional[str] = Field(default=None, max_length=96)
+    expected_feed_generated_at: Optional[str] = Field(default=None, max_length=40)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 20:
+            raise ValueError("note must contain at least 20 non-whitespace characters")
+        return normalized
+
+
+class ParcelWorkflowEvidenceIssue(BaseModel):
+    """Private, immutable citation plus the current governance status."""
+
+    issue_id: str = Field(pattern=r"^pei_[a-f0-9]{32}$")
+    check_key: ParcelWorkflowEvidenceReviewKey
+    label: str = Field(min_length=1, max_length=120)
+    issue_type: ParcelWorkflowEvidenceIssueType
+    reason_code: ParcelWorkflowEvidenceIssueReason
+    note: str = Field(min_length=20, max_length=1000)
+    status: ParcelWorkflowEvidenceIssueStatus
+    check_status: ParcelWorkflowEvidenceCheckStatus
+    source: str = Field(min_length=1, max_length=256)
+    source_as_of: Optional[str] = Field(default=None, max_length=96)
+    feed_generated_at: Optional[str] = Field(default=None, max_length=40)
+    submitted_at: datetime
+    updated_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolution_note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ParcelWorkflowEvidenceIssueAdminRecord(ParcelWorkflowEvidenceIssue):
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    submitted_by_user_id: str = Field(min_length=1, max_length=128)
+    resolved_by_user_id: Optional[str] = Field(default=None, max_length=128)
+    expires_at: datetime
+
+
+class ParcelWorkflowEvidenceIssueAdminList(BaseModel):
+    items: list[ParcelWorkflowEvidenceIssueAdminRecord] = Field(
+        default_factory=list
+    )
+
+
+class ParcelWorkflowEvidenceIssueAdminUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["resolved", "dismissed"]
+    resolution_note: str = Field(min_length=10, max_length=1000)
+
+    @field_validator("resolution_note")
+    @classmethod
+    def normalize_resolution_note(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 10:
+            raise ValueError(
+                "resolution_note must contain at least 10 non-whitespace characters"
+            )
+        return normalized
+
+
 class ParcelWorkflowSnapshot(BaseModel):
     """Small, typed baseline used to detect decision-relevant parcel changes."""
 
@@ -1136,6 +1233,10 @@ class ParcelWorkflowItem(ParcelWorkflowUpdate):
     evidence_reviews: dict[
         ParcelWorkflowEvidenceReviewKey,
         ParcelWorkflowEvidenceReview,
+    ] = Field(default_factory=dict)
+    evidence_issues: dict[
+        ParcelWorkflowEvidenceReviewKey,
+        ParcelWorkflowEvidenceIssue,
     ] = Field(default_factory=dict)
 
 
@@ -1495,6 +1596,7 @@ class ParcelWorkflowAlert(BaseModel):
         "imagery_change_signal_changed",
         "owner_portfolio_size_changed",
         "reviewed_evidence_changed",
+        "evidence_issue_submitted",
     ]
     severity: Literal["urgent", "high", "medium", "low"]
     title: str
@@ -1519,6 +1621,7 @@ class ParcelWorkflowAlert(BaseModel):
         default_factory=list,
         max_length=6,
     )
+    evidence_issue: Optional[ParcelWorkflowEvidenceIssue] = None
     review_recordable: Optional[bool] = None
     parcel_available: bool = True
 
@@ -1528,6 +1631,7 @@ class ParcelWorkflowAlerts(BaseModel):
         "citylens/parcel-workflow-alerts@v1",
         "citylens/parcel-workflow-alerts@v2",
         "citylens/parcel-workflow-alerts@v3",
+        "citylens/parcel-workflow-alerts@v4",
     ]
     generated_at: datetime
     feed_generated_at: Optional[datetime] = None
@@ -1541,6 +1645,8 @@ class ParcelWorkflowAlerts(BaseModel):
     eligible_below_cutoff_count: int = 0
     reviewed_lead_count: int = 0
     stale_review_count: int = 0
+    issue_lead_count: int = 0
+    open_issue_count: int = 0
     severity_counts: dict[str, int]
     alerts: list[ParcelWorkflowAlert] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

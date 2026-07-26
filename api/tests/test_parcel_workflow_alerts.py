@@ -115,6 +115,28 @@ def _evidence_review(**overrides):
     return review
 
 
+def _evidence_issue(**overrides):
+    issue = {
+        "issue_id": "pei_0123456789abcdef0123456789abcdef",
+        "check_key": "property_facts",
+        "label": "Current property facts",
+        "issue_type": "correction",
+        "reason_code": "incorrect_value",
+        "note": "The displayed lot area conflicts with a current signed survey.",
+        "status": "submitted",
+        "check_status": "verified",
+        "source": "NYC PLUTO",
+        "source_as_of": "2026-07-20",
+        "feed_generated_at": "2026-07-20T00:00:00Z",
+        "submitted_at": datetime(2026, 7, 21, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 7, 21, tzinfo=timezone.utc),
+        "resolved_at": None,
+        "resolution_note": None,
+    }
+    issue.update(overrides)
+    return issue
+
+
 def test_alerts_surface_decision_relevant_changes() -> None:
     result = build_workflow_alerts(
         [_workflow_item()],
@@ -122,7 +144,7 @@ def test_alerts_surface_decision_relevant_changes() -> None:
         feed_generated_at="2026-07-24T00:00:00Z",
     )
 
-    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v3"
+    assert result["schema_version"] == "citylens/parcel-workflow-alerts@v4"
     assert result["watched_count"] == 1
     assert result["changed_lead_count"] == 1
     codes = {alert["code"] for alert in result["alerts"]}
@@ -144,6 +166,51 @@ def test_alerts_surface_decision_relevant_changes() -> None:
     }
     assert result["severity_counts"]["high"] == 6
     assert result["alerts"][0]["severity"] == "high"
+
+
+def test_open_evidence_issue_stays_visible_without_rewriting_source() -> None:
+    issue = _evidence_issue()
+    item = _workflow_item(
+        watching=False,
+        evidence_issues={"property_facts": issue},
+    )
+    result = build_workflow_alerts(
+        [item],
+        [_current_row(owner_name="OLD OWNER LLC")],
+        feed_generated_at="2026-07-24T00:00:00Z",
+    )
+
+    assert result["issue_lead_count"] == 1
+    assert result["open_issue_count"] == 1
+    assert result["changed_lead_count"] == 1
+    alert = result["alerts"][0]
+    assert alert["code"] == "evidence_issue_submitted"
+    assert alert["severity"] == "medium"
+    assert alert["evidence_issue"] == issue
+    assert alert["before"]["source"] == "NYC PLUTO"
+    assert alert["after"] == {"request_status": "submitted"}
+    assert "remains visible and unchanged" in alert["detail"]
+
+
+def test_resolved_or_withdrawn_evidence_issues_leave_the_open_queue() -> None:
+    for issue_status in ("resolved", "dismissed", "withdrawn"):
+        result = build_workflow_alerts(
+            [
+                _workflow_item(
+                    watching=False,
+                    evidence_issues={
+                        "property_facts": _evidence_issue(
+                            status=issue_status
+                        )
+                    },
+                )
+            ],
+            [_current_row(owner_name="OLD OWNER LLC")],
+            feed_generated_at="2026-07-24T00:00:00Z",
+        )
+        assert result["issue_lead_count"] == 0
+        assert result["open_issue_count"] == 0
+        assert result["alert_count"] == 0
 
 
 def test_reviewed_evidence_is_current_only_on_an_exact_version_match() -> None:
@@ -578,6 +645,19 @@ class _FakeReviewedStore:
         ]
 
 
+class _FakeIssueStore:
+    def list_parcel_workflow(
+        self, *, app_user_id: str, include_archived: bool = False
+    ) -> list[dict]:
+        assert app_user_id == "alerts-user"
+        return [
+            _workflow_item(
+                watching=False,
+                evidence_issues={"property_facts": _evidence_issue()},
+            )
+        ]
+
+
 class _FakeReviewedRow(_FakeRow):
     bbl = "3020960069"
 
@@ -603,7 +683,7 @@ def test_workflow_alerts_endpoint_is_authenticated_and_typed(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v4"
     assert payload["feed_generated_at"] == "2026-07-24T00:00:00Z"
     assert payload["watched_count"] == 1
     assert payload["changed_lead_count"] == 1
@@ -639,7 +719,7 @@ def test_workflow_alerts_endpoint_returns_typed_source_backed_exit(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v4"
     assert payload["resolved_exit_count"] == 1
     assert payload["unresolved_exit_count"] == 0
     assert payload["screened_out_count"] == 1
@@ -684,7 +764,7 @@ def test_workflow_alerts_endpoint_builds_current_review_versions(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v3"
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v4"
     assert payload["watched_count"] == 0
     assert payload["reviewed_lead_count"] == 1
     assert payload["stale_review_count"] == 1
@@ -693,3 +773,34 @@ def test_workflow_alerts_endpoint_builds_current_review_versions(
         "source_as_of",
         "feed_generation",
     ]
+
+
+def test_workflow_alerts_endpoint_returns_typed_open_issue(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="alerts-user")
+    app.dependency_overrides[parcel_workflow.get_store] = (
+        lambda: _FakeIssueStore()
+    )
+    app.dependency_overrides[parcel_workflow.get_gcs] = lambda: object()
+    app.dependency_overrides[parcel_workflow.get_registry] = (
+        lambda: _FakeRegistry()
+    )
+    client = TestClient(app)
+
+    response = client.get("/v1/parcel-intel/workflow/alerts")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema_version"] == "citylens/parcel-workflow-alerts@v4"
+    assert payload["issue_lead_count"] == 1
+    assert payload["open_issue_count"] == 1
+    alert = next(
+        item
+        for item in payload["alerts"]
+        if item["code"] == "evidence_issue_submitted"
+    )
+    assert alert["evidence_issue"]["issue_id"] == (
+        "pei_0123456789abcdef0123456789abcdef"
+    )
+    assert alert["evidence_issue"]["status"] == "submitted"

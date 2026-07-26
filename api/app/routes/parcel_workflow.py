@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from ..models.schemas import (
     ParcelIntelRow,
@@ -16,6 +16,11 @@ from ..models.schemas import (
     ParcelWorkflowAnalytics,
     ParcelWorkflowAnalyticsMethodology,
     ParcelWorkflowEvent,
+    ParcelWorkflowEvidenceIssueAdminList,
+    ParcelWorkflowEvidenceIssueAdminRecord,
+    ParcelWorkflowEvidenceIssueAdminUpdate,
+    ParcelWorkflowEvidenceIssueRequest,
+    ParcelWorkflowEvidenceIssueStatus,
     ParcelWorkflowEvidenceReviewKey,
     ParcelWorkflowEvidenceReviewRequest,
     ParcelWorkflowItem,
@@ -67,6 +72,9 @@ def get_store(settings: Settings = Depends(get_settings)) -> FirestoreStore:
         auth_identities_collection=settings.auth_identities_collection,
         usage_months_collection=settings.usage_months_collection,
         api_keys_index_collection=settings.api_keys_index_collection,
+        parcel_evidence_issues_collection=(
+            settings.parcel_evidence_issues_collection
+        ),
     )
 
 
@@ -448,6 +456,220 @@ def review_workflow_evidence(
             detail="Only open, active workflow records can review evidence",
         )
     return item
+
+
+@router.post(
+    "/parcel-intel/workflow/{bbl}/evidence-issues/{check_key}",
+    response_model=ParcelWorkflowItem,
+)
+def submit_workflow_evidence_issue(
+    bbl: str,
+    check_key: ParcelWorkflowEvidenceReviewKey,
+    body: ParcelWorkflowEvidenceIssueRequest,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+) -> dict:
+    """Submit a private issue against one exact current citation version."""
+
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    enforce_token_bucket(
+        key=f"parcel-evidence-issue:{auth.app_user_id}",
+        capacity=12,
+        refill_per_second=1 / 60,
+    )
+    existing = store.get_parcel_workflow(
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+    )
+    if existing is None or existing.get("archived_at") is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Save this parcel to a workflow before reporting a source issue"
+            ),
+        )
+
+    row, manifest = registry.parcel(gcs, bbl)
+    audit = build_parcel_decision_audit(
+        row,
+        manifest,
+        premium_access=True,
+    )
+    check = next(
+        (candidate for candidate in audit.checks if candidate.key == check_key),
+        None,
+    )
+    if check is None:
+        raise HTTPException(status_code=422, detail="Evidence check is unavailable")
+    feed_generated_at = audit.evidence_generated_at
+    if (
+        body.expected_check_status != check.status
+        or body.expected_source != check.source
+        or body.expected_source_as_of != check.as_of
+        or body.expected_feed_generated_at != feed_generated_at
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Evidence changed since it was displayed; reload the parcel "
+                "before reporting the current version"
+            ),
+        )
+
+    item, _, mutation_status = (
+        store.submit_parcel_workflow_evidence_issue(
+            app_user_id=auth.app_user_id,
+            bbl=bbl,
+            issue={
+                "check_key": check_key,
+                "label": check.label,
+                "issue_type": body.issue_type,
+                "reason_code": body.reason_code,
+                "note": body.note,
+                "check_status": check.status,
+                "source": check.source,
+                "source_as_of": check.as_of,
+                "feed_generated_at": feed_generated_at,
+            },
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Workflow record not found")
+    if mutation_status == "inactive":
+        raise HTTPException(
+            status_code=409,
+            detail="Restore this archived workflow before reporting an issue",
+        )
+    if mutation_status == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "An issue is already open for this evidence check; withdraw "
+                "it before submitting a materially different request"
+            ),
+        )
+    return item
+
+
+@router.delete(
+    "/parcel-intel/workflow/{bbl}/evidence-issues/{check_key}",
+    response_model=ParcelWorkflowItem,
+)
+def withdraw_workflow_evidence_issue(
+    bbl: str,
+    check_key: ParcelWorkflowEvidenceReviewKey,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    """Withdraw an open request without deleting its citation or audit trail."""
+
+    response.headers["Cache-Control"] = "private, no-store"
+    if not re.fullmatch(r"[1-5][0-9]{9}", bbl):
+        raise HTTPException(
+            status_code=422, detail="BBL must be 10 digits with borough prefix 1-5"
+        )
+    item, mutation_status = (
+        store.withdraw_parcel_workflow_evidence_issue(
+            app_user_id=auth.app_user_id,
+            bbl=bbl,
+            check_key=check_key,
+        )
+    )
+    if item is None or mutation_status == "missing_issue":
+        raise HTTPException(status_code=404, detail="Open evidence issue not found")
+    if mutation_status == "inactive":
+        raise HTTPException(
+            status_code=409,
+            detail="Restore this archived workflow before changing the request",
+        )
+    if mutation_status == "unchanged":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a submitted evidence issue can be withdrawn",
+        )
+    return item
+
+
+def _require_admin(auth: AuthContext) -> None:
+    if not auth.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.get(
+    "/parcel-intel/evidence-issues",
+    response_model=ParcelWorkflowEvidenceIssueAdminList,
+)
+def list_parcel_evidence_issues(
+    response: Response,
+    issue_status: ParcelWorkflowEvidenceIssueStatus | None = Query(
+        default=None,
+        alias="status",
+    ),
+    limit: int = 100,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    """Admin-only, bounded evidence-governance triage queue."""
+
+    _require_admin(auth)
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be 1-200")
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    return {
+        "items": store.list_parcel_evidence_issues(
+            status=issue_status,
+            limit=limit,
+        )
+    }
+
+
+@router.patch(
+    "/parcel-intel/evidence-issues/{issue_id}",
+    response_model=ParcelWorkflowEvidenceIssueAdminRecord,
+)
+def resolve_parcel_evidence_issue(
+    issue_id: str,
+    body: ParcelWorkflowEvidenceIssueAdminUpdate,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    store: FirestoreStore = Depends(get_store),
+) -> dict:
+    """Admin resolution changes request status, never the cited source fact."""
+
+    _require_admin(auth)
+    if not re.fullmatch(r"pei_[a-f0-9]{32}", issue_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    record = store.resolve_parcel_evidence_issue(
+        issue_id=issue_id,
+        status=body.status,
+        resolution_note=body.resolution_note,
+        admin_user_id=auth.app_user_id,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    if (
+        record.get("status") != body.status
+        or record.get("resolution_note") != body.resolution_note
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only a submitted evidence issue can be resolved or dismissed; "
+                "reload the governance queue"
+            ),
+        )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    return record
 
 
 @router.delete(

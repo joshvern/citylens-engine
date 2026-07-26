@@ -42,6 +42,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_created": 1,
                     "workflow_created": 1,
                     "workflow_evidence_reviewed": 2,
+                    "workflow_evidence_issue_submitted": 1,
                 },
                 "sources": {
                     "parcel_opened:map": 2,
@@ -58,6 +59,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_created:saved_views": 1,
                     "workflow_created:comparison": 1,
                     "workflow_evidence_reviewed:workflow": 2,
+                    "workflow_evidence_issue_submitted:workflow": 1,
                 },
                 "bbl": "3020960069",
             },
@@ -152,7 +154,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 25
+    assert report["total_events"] == 26
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
@@ -162,6 +164,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
         "workflow_created": 1,
+        "workflow_evidence_issue_submitted": 1,
         "workflow_evidence_reviewed": 3,
         "workflow_updated": 2,
     }
@@ -254,7 +257,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v9"
+    assert report["schema_version"] == "citylens/product-adoption-report@v10"
     assert report["evidence_review_engagement"] == {
         "reviewed_versions": 3,
         "users": 2,
@@ -272,6 +275,18 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "lead quality, seller intent, or model accuracy."
             ),
         },
+    }
+    assert report["evidence_issue_engagement"] == {
+        "submitted": 1,
+        "users": 1,
+        "source": "workflow_evidence_issue_submitted:workflow",
+        "claim": (
+            "Canonical aggregate evidence-governance submissions only. "
+            "Counts exclude parcel IDs, cited values, sources, reasons, "
+            "notes, request IDs, and resolution outcomes. A submission "
+            "signals data-quality friction, not an incorrect official "
+            "record, lead quality, seller intent, or model accuracy."
+        ),
     }
     assert report["workflow_inventory"] == {
         "records": 2,
@@ -369,6 +384,8 @@ def test_report_handles_empty_window_without_false_rate() -> None:
         == "collecting"
     )
     assert report["workflow_inventory"]["records"] == 0
+    assert report["evidence_issue_engagement"]["submitted"] == 0
+    assert report["evidence_issue_engagement"]["users"] == 0
     assert report["saved_view_inventory"]["records"] == 0
     assert report["pilot_intake"]["records"] == 0
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"

@@ -15,7 +15,7 @@ from typing import Any, Iterable
 
 from .parcel_workflow_actions import workflow_is_terminal
 
-ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v3"
+ALERT_SCHEMA = "citylens/parcel-workflow-alerts@v4"
 RANK_MOVE_THRESHOLD = 100
 
 _SEVERITY_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -90,6 +90,7 @@ def _alert(
     recommended_action: str | None = None,
     source_evidence: list[dict[str, Any]] | None = None,
     evidence_changes: list[dict[str, Any]] | None = None,
+    evidence_issue: dict[str, Any] | None = None,
     review_recordable: bool | None = None,
     parcel_available: bool = True,
 ) -> dict[str, Any]:
@@ -108,6 +109,7 @@ def _alert(
         "recommended_action": recommended_action,
         "source_evidence": source_evidence or [],
         "evidence_changes": evidence_changes or [],
+        "evidence_issue": evidence_issue,
         "review_recordable": review_recordable,
         "parcel_available": parcel_available,
     }
@@ -293,6 +295,82 @@ def _evidence_review_alerts(
             parcel_available=parcel_available,
         )
     ]
+
+
+def _evidence_issue_alerts(
+    item: dict[str, Any],
+    *,
+    parcel_available: bool,
+) -> list[dict[str, Any]]:
+    """Keep unresolved user-reported source issues visible until disposition."""
+
+    raw_issues = item.get("evidence_issues")
+    if not isinstance(raw_issues, dict):
+        return []
+    bbl = str(item.get("bbl") or "")
+    borough = str(item.get("borough") or "")
+    alerts: list[dict[str, Any]] = []
+    for check_key, raw_issue in sorted(raw_issues.items()):
+        if (
+            not isinstance(raw_issue, dict)
+            or raw_issue.get("status") != "submitted"
+        ):
+            continue
+        issue_type = str(raw_issue.get("issue_type") or "")
+        reason_code = str(raw_issue.get("reason_code") or "")
+        label = str(
+            raw_issue.get("label")
+            or str(check_key).replace("_", " ").title()
+        )
+        severity = (
+            "high"
+            if issue_type == "suppression_review"
+            or reason_code in {"wrong_parcel_match", "privacy_or_safety"}
+            else "medium"
+        )
+        alerts.append(
+            _alert(
+                bbl=bbl,
+                borough=borough,
+                code="evidence_issue_submitted",
+                severity=severity,
+                title=f"Source issue awaiting review · {label}",
+                detail=(
+                    "Your private request is in the CityLens evidence-governance "
+                    "queue. The cited official value remains visible and unchanged "
+                    "until the request is resolved."
+                ),
+                field=f"evidence_issues.{check_key}",
+                before={
+                    "status": raw_issue.get("check_status"),
+                    "source": raw_issue.get("source"),
+                    "as_of": raw_issue.get("source_as_of"),
+                    "feed_generated_at": raw_issue.get(
+                        "feed_generated_at"
+                    ),
+                },
+                after={"request_status": "submitted"},
+                reason_codes=[reason_code] if reason_code else [],
+                recommended_action=(
+                    "Open the parcel workflow to inspect or withdraw the request. "
+                    "Continue verifying the cited official record independently; "
+                    "submission does not suppress, correct, or clear it."
+                ),
+                source_evidence=[
+                    {
+                        "source": str(
+                            raw_issue.get("source") or "Source unavailable"
+                        ),
+                        "as_of": raw_issue.get("source_as_of"),
+                        "url": None,
+                        "supports": "reported evidence version",
+                    }
+                ],
+                evidence_issue=raw_issue,
+                parcel_available=parcel_available,
+            )
+        )
+    return alerts
 
 
 def _screening_source_evidence(
@@ -865,6 +943,16 @@ def build_workflow_alerts(
         if isinstance(item.get("evidence_reviews"), dict)
         and bool(item.get("evidence_reviews"))
     ]
+    issue_items = [
+        item
+        for item in active
+        if isinstance(item.get("evidence_issues"), dict)
+        and any(
+            isinstance(issue, dict)
+            and issue.get("status") == "submitted"
+            for issue in item["evidence_issues"].values()
+        )
+    ]
     current_by_bbl = {
         str(row.get("bbl")): row
         for row in current_rows
@@ -879,6 +967,7 @@ def build_workflow_alerts(
     eligible_below_cutoff_count = 0
     missing_snapshot_count = 0
     stale_review_count = 0
+    open_issue_count = 0
 
     for item in watched:
         bbl = str(item.get("bbl") or "")
@@ -955,6 +1044,17 @@ def build_workflow_alerts(
             changed_bbls.add(bbl)
             alerts.extend(review_alerts)
 
+    for item in issue_items:
+        bbl = str(item.get("bbl") or "")
+        issue_alerts = _evidence_issue_alerts(
+            item,
+            parcel_available=bbl in current_by_bbl,
+        )
+        if issue_alerts:
+            open_issue_count += len(issue_alerts)
+            changed_bbls.add(bbl)
+            alerts.extend(issue_alerts)
+
     alerts.sort(
         key=lambda item: (
             _SEVERITY_ORDER.get(str(item.get("severity")), 99),
@@ -984,6 +1084,8 @@ def build_workflow_alerts(
         "eligible_below_cutoff_count": eligible_below_cutoff_count,
         "reviewed_lead_count": len(reviewed),
         "stale_review_count": stale_review_count,
+        "issue_lead_count": len(issue_items),
+        "open_issue_count": open_issue_count,
         "severity_counts": {
             severity: severity_counts.get(severity, 0)
             for severity in ("urgent", "high", "medium", "low")

@@ -80,6 +80,7 @@ def build_product_adoption_report(
     underwriting_open_users: set[str] = set()
     underwriting_adjustment_users: set[str] = set()
     evidence_review_users: set[str] = set()
+    evidence_issue_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -121,6 +122,8 @@ def build_product_adoption_report(
                 underwriting_adjustment_users.add(user_id)
             if row_events.get("workflow_evidence_reviewed", 0) > 0:
                 evidence_review_users.add(user_id)
+            if row_events.get("workflow_evidence_issue_submitted", 0) > 0:
+                evidence_issue_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -193,6 +196,9 @@ def build_product_adoption_report(
         "underwriting_assumptions_changed", 0
     )
     evidence_reviews = events.get("workflow_evidence_reviewed", 0)
+    evidence_issue_submissions = events.get(
+        "workflow_evidence_issue_submitted", 0
+    )
     minimum_decision_audit_opens = 10
     minimum_decision_audit_users = 3
     decision_audit_engagement_ready = (
@@ -244,8 +250,11 @@ def build_product_adoption_report(
             "client-side counters. Comparison opens are also directional "
             "and contain no parcel identifiers or values. Evidence-review "
             "markers are transactionally derived but mean only that one exact "
-            "cited version was considered. None is model accuracy, completed "
-            "or cleared diligence, a valuation, or a unique-parcel count."
+            "cited version was considered. Evidence-issue submissions are "
+            "also transactionally derived and aggregate only; they signal "
+            "data-quality friction without revealing the parcel, citation, "
+            "reason, or note. None is model accuracy, completed or cleared "
+            "diligence, a valuation, or a unique-parcel count."
         )
     ]
     if not events:
@@ -305,7 +314,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v9",
+        "schema_version": "citylens/product-adoption-report@v10",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -511,6 +520,18 @@ def build_product_adoption_report(
                     "lead quality, seller intent, or model accuracy."
                 ),
             },
+        },
+        "evidence_issue_engagement": {
+            "submitted": evidence_issue_submissions,
+            "users": len(evidence_issue_users),
+            "source": "workflow_evidence_issue_submitted:workflow",
+            "claim": (
+                "Canonical aggregate evidence-governance submissions only. "
+                "Counts exclude parcel IDs, cited values, sources, reasons, "
+                "notes, request IDs, and resolution outcomes. A submission "
+                "signals data-quality friction, not an incorrect official "
+                "record, lead quality, seller intent, or model accuracy."
+            ),
         },
         "excluded_or_invalid_rows": rejected_rows,
         "workflow_inventory": {

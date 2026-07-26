@@ -242,7 +242,8 @@ Current pinned release tag:
 - Authenticated users can persist the complete citywide explorer state through
   `GET|PUT|DELETE /v1/parcel-intel/saved-searches`. The v2 saved-view contract
   stores borough scope, search text, priority, independent site type, multiple
-  required evidence signals, optional owner-portfolio focus, and map overlay.
+  required evidence signals, bounded minimum PLUTO lot-area and unused-FAR
+  proxy criteria, optional owner-portfolio focus, and map overlay.
   Selected signals use deterministic AND semantics and never modify model
   score or rank. The legacy `opportunity` field remains accepted and is
   normalized into the new dimensions so existing saved views continue to

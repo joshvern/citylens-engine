@@ -1359,6 +1359,14 @@ def test_saved_search_crud(auth_override) -> None:
             "borough": "all",
             "filters": {"opportunity": "seller_intent"},
         },
+        {
+            "name": "Invalid numeric site criterion",
+            "borough": "all",
+            "filters": {
+                "opportunity": "all",
+                "min_lot_area_sqft": 0,
+            },
+        },
     ],
 )
 def test_saved_search_rejects_unrestorable_or_unimplemented_state(
@@ -1393,6 +1401,8 @@ def test_saved_search_preserves_compound_site_and_signal_filters(
                 "opportunity": "all",
                 "site_type": "uncommitted",
                 "signals": ["long_held", "transit_800m", "long_held"],
+                "min_lot_area_sqft": 5_000,
+                "min_unused_floor_area_sqft": 10_000,
                 "overlay": "priority",
             },
             "alert_frequency": "off",
@@ -1404,6 +1414,8 @@ def test_saved_search_preserves_compound_site_and_signal_filters(
     assert filters["opportunity"] == "all"
     assert filters["site_type"] == "uncommitted"
     assert filters["signals"] == ["long_held", "transit_800m"]
+    assert filters["min_lot_area_sqft"] == 5_000
+    assert filters["min_unused_floor_area_sqft"] == 10_000
 
     listed = client.get("/v1/parcel-intel/saved-searches")
     assert listed.status_code == 200

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
 from ..models.schemas import ParcelDecisionAudit, ParcelIntelRow
 
 AUDIT_SCHEMA = "citylens/parcel-decision-audit@v1"
+MODEL_METRICS_SOURCE_LABELS = {
+    "accepted_model_bundle.rolling_validation": (
+        "CityLens rolling-origin validation using NYC PLUTO and DOB filings"
+    ),
+}
 
 
 def _as_float(value: Any) -> float | None:
@@ -30,6 +36,24 @@ def _as_version_text(value: Any) -> str | None:
 def _joined_dates(*values: Any) -> str | None:
     dates = list(dict.fromkeys(value for value in map(_as_text, values) if value))
     return " / ".join(dates) if dates else None
+
+
+def _model_metrics_source(value: Any) -> str:
+    source = _as_text(value)
+    if source is None:
+        return "Accepted CityLens model bundle"
+    return MODEL_METRICS_SOURCE_LABELS.get(source, source)
+
+
+def _model_label_window(value: Any) -> str | None:
+    window = _as_text(value)
+    if window is None:
+        return None
+    match = re.fullmatch(r"(\d{4})-(\d{4})", window)
+    if match is None:
+        return window
+    start, end = match.groups()
+    return start if start == end else f"{start}\N{EN DASH}{end}"
 
 
 def build_parcel_decision_audit(
@@ -92,9 +116,8 @@ def build_parcel_decision_audit(
                 "sites using historical PLUTO and DOB evidence. Treat the score "
                 "as screening order, not a parcel-specific probability."
             ),
-            "source": _as_text(model.get("metrics_source"))
-            or "Accepted CityLens model bundle",
-            "as_of": _as_text(model.get("label_window")),
+            "source": _model_metrics_source(model.get("metrics_source")),
+            "as_of": _model_label_window(model.get("label_window")),
             "affects_model_rank": True,
             "affects_acquisition_eligibility": False,
         }

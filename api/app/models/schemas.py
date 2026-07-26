@@ -4,6 +4,7 @@ import math
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
@@ -1357,11 +1358,20 @@ class ParcelWorkflowReminderSnoozeResponse(BaseModel):
     is_snoozed: bool
 
 
+class ParcelWorkflowAlertSource(BaseModel):
+    source: str
+    as_of: Optional[str] = None
+    url: Optional[str] = None
+    supports: str
+
+
 class ParcelWorkflowAlert(BaseModel):
     bbl: str
     borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     code: Literal[
         "removed_from_current_feed",
+        "screened_out_of_current_feed",
+        "eligible_below_published_cutoff",
         "owner_changed",
         "newer_sale_record",
         "zoning_changed",
@@ -1383,19 +1393,120 @@ class ParcelWorkflowAlert(BaseModel):
     field: str
     before: Optional[Any] = None
     after: Optional[Any] = None
+    current_disposition: Optional[
+        Literal[
+            "published",
+            "eligible_below_cutoff",
+            "screened_out",
+            "not_evaluated",
+        ]
+    ] = None
+    reason_codes: list[str] = Field(default_factory=list)
+    recommended_action: Optional[str] = None
+    source_evidence: list[ParcelWorkflowAlertSource] = Field(
+        default_factory=list
+    )
+    parcel_available: bool = True
 
 
 class ParcelWorkflowAlerts(BaseModel):
-    schema_version: Literal["citylens/parcel-workflow-alerts@v1"]
+    schema_version: Literal[
+        "citylens/parcel-workflow-alerts@v1",
+        "citylens/parcel-workflow-alerts@v2",
+    ]
     generated_at: datetime
     feed_generated_at: Optional[datetime] = None
     watched_count: int
     changed_lead_count: int
     alert_count: int
     removed_from_feed_count: int
+    resolved_exit_count: int = 0
+    unresolved_exit_count: int = 0
+    screened_out_count: int = 0
+    eligible_below_cutoff_count: int = 0
     severity_counts: dict[str, int]
     alerts: list[ParcelWorkflowAlert] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class ParcelScreeningLedgerRow(BaseModel):
+    """Value-minimized current status for one evaluated model candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    model_rank: int = Field(ge=1)
+    acquisition_rank: Optional[int] = Field(default=None, ge=1)
+    acquisition_eligible: bool
+    acquisition_status: Literal[
+        "eligible",
+        "active_project",
+        "completed_project",
+        "constrained",
+        "incomplete_data",
+    ]
+    acquisition_exclusion_reasons: list[str] = Field(default_factory=list)
+    published: bool
+    latest_project_filing_year: Optional[int] = Field(
+        default=None, ge=1900, le=2100
+    )
+    latest_project_status: Optional[str] = None
+    latest_project_type: Optional[
+        Literal[
+            "new_building",
+            "alt_co_new_building",
+            "demolition",
+            "land_use_entitlement",
+        ]
+    ] = None
+    latest_project_job_number: Optional[str] = None
+    latest_project_url: Optional[str] = None
+    property_facts_as_of: Optional[str] = None
+    ownership_as_of: Optional[str] = None
+    project_activity_as_of: Optional[str] = None
+    land_use_activity_as_of: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_screening_classification(
+        self,
+    ) -> "ParcelScreeningLedgerRow":
+        if self.acquisition_eligible:
+            if (
+                self.acquisition_status != "eligible"
+                or self.acquisition_rank is None
+                or self.acquisition_exclusion_reasons
+            ):
+                raise ValueError(
+                    "eligible screening rows require eligible status, a "
+                    "positive acquisition rank, and no exclusion reasons"
+                )
+        elif (
+            self.acquisition_status == "eligible"
+            or self.acquisition_rank is not None
+            or not self.acquisition_exclusion_reasons
+        ):
+            raise ValueError(
+                "screened-out rows require a non-eligible status, no "
+                "acquisition rank, and at least one exclusion reason"
+            )
+        if self.latest_project_url is not None:
+            parsed = urlsplit(self.latest_project_url)
+            hostname = parsed.hostname
+            if (
+                parsed.scheme != "https"
+                or hostname is None
+                or not (
+                    hostname == "nyc.gov"
+                    or hostname.endswith(".nyc.gov")
+                )
+            ):
+                raise ValueError(
+                    "latest_project_url must be an official NYC HTTPS URL"
+                )
+        return self
 
 
 class ParcelSavedSearchFilters(BaseModel):

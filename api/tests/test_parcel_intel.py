@@ -310,6 +310,189 @@ def _make_atomic_fake_gcs(
     return FakeGcs(store)
 
 
+def _screening_row(bbl: str = "3020960069", **overrides) -> dict:
+    row = {
+        "bbl": bbl,
+        "borough": "brooklyn",
+        "model_rank": 72,
+        "acquisition_rank": None,
+        "acquisition_eligible": False,
+        "acquisition_status": "active_project",
+        "acquisition_exclusion_reasons": [
+            "approved_land_use_project",
+        ],
+        "published": False,
+        "latest_project_filing_year": 2023,
+        "latest_project_status": "Completed — approved",
+        "latest_project_type": "land_use_entitlement",
+        "latest_project_job_number": "2023K0205",
+        "latest_project_url": (
+            "https://zap.planning.nyc.gov/projects/2023K0205"
+        ),
+        "property_facts_as_of": "2026-07-19",
+        "ownership_as_of": "2026-07-15",
+        "project_activity_as_of": "2026-07-19",
+        "land_use_activity_as_of": "2026-07-24",
+    }
+    row.update(overrides)
+    return row
+
+
+def _add_screening_ledger(fake: FakeGcs, rows: list[dict]) -> None:
+    manifest = json.loads(
+        fake._store["parcel-intel/v1/manifest.json"].decode("utf-8")
+    )
+    body = (
+        "\n".join(json.dumps(row) for row in rows) + "\n"
+    ).encode("utf-8")
+    object_name = (
+        f"{manifest['artifact_prefix']}/screening-ledger.jsonl"
+    )
+    fake._store[object_name] = body
+    manifest["screening_ledger_schema"] = (
+        "citylens-parcel-intel/screening-ledger@v1"
+    )
+    manifest["screening_ledger_fields"] = [
+        "bbl",
+        "borough",
+        "model_rank",
+        "acquisition_rank",
+        "acquisition_eligible",
+        "acquisition_status",
+        "acquisition_exclusion_reasons",
+        "published",
+        "latest_project_filing_year",
+        "latest_project_status",
+        "latest_project_type",
+        "latest_project_job_number",
+        "latest_project_url",
+        "property_facts_as_of",
+        "ownership_as_of",
+        "project_activity_as_of",
+        "land_use_activity_as_of",
+    ]
+    manifest["screening_ledger_row_count"] = len(rows)
+    manifest["artifacts"]["screening-ledger.jsonl"] = {
+        "object_name": object_name,
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "size_bytes": len(body),
+        "row_count": len(rows),
+    }
+    fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
+        manifest
+    ).encode("utf-8")
+
+
+def test_screening_ledger_loads_strict_private_projection() -> None:
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [_screening_row()])
+
+    rows, manifest = (
+        parcel_intel_routes.ParcelIntelRegistry().screening_ledger(fake)
+    )
+
+    assert manifest["screening_ledger_row_count"] == 1
+    assert set(rows) == {"3020960069"}
+    assert rows["3020960069"].latest_project_job_number == "2023K0205"
+    serialized = rows["3020960069"].model_dump()
+    assert "owner_name" not in serialized
+    assert "address" not in serialized
+    assert "score_calibrated" not in serialized
+    assert fake.requests[-1].endswith("/screening-ledger.jsonl")
+
+
+def test_screening_ledger_rejects_unexpected_private_fields() -> None:
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(
+        fake,
+        [_screening_row(owner_name="MUST NOT LEAK LLC")],
+    )
+
+    with pytest.raises(
+        parcel_intel_routes.HTTPException,
+        match="screening ledger validation failed",
+    ) as exc_info:
+        parcel_intel_routes.ParcelIntelRegistry().screening_ledger(fake)
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _screening_row(
+            acquisition_eligible=True,
+            acquisition_status="eligible",
+            acquisition_rank=None,
+            acquisition_exclusion_reasons=[],
+        ),
+        _screening_row(
+            latest_project_url="https://example.com/lookalike-record",
+        ),
+    ],
+)
+def test_screening_ledger_rejects_inconsistent_or_unofficial_rows(
+    row: dict,
+) -> None:
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    _add_screening_ledger(fake, [row])
+
+    with pytest.raises(parcel_intel_routes.HTTPException) as exc_info:
+        parcel_intel_routes.ParcelIntelRegistry().screening_ledger(fake)
+
+    assert exc_info.value.status_code == 503
+    assert "screening ledger validation failed" in exc_info.value.detail
+
+
+def test_legacy_manifest_has_no_screening_ledger() -> None:
+    fake = _make_fake_gcs(["brooklyn"])
+
+    rows, _ = (
+        parcel_intel_routes.ParcelIntelRegistry().screening_ledger(fake)
+    )
+
+    assert rows == {}
+    assert fake.requests == ["parcel-intel/v1/manifest.json"]
+
+
+@pytest.mark.parametrize(
+    "partial_update",
+    [
+        {"screening_ledger_row_count": 1},
+        {
+            "artifacts": {
+                "screening-ledger.jsonl": {
+                    "object_name": "unexpected",
+                    "sha256": "a" * 64,
+                    "size_bytes": 1,
+                    "row_count": 1,
+                }
+            }
+        },
+    ],
+)
+def test_atomic_manifest_rejects_partial_screening_ledger_contract(
+    partial_update: dict,
+) -> None:
+    fake = _make_atomic_fake_gcs(["brooklyn"])
+    manifest = json.loads(
+        fake._store["parcel-intel/v1/manifest.json"].decode("utf-8")
+    )
+    if "artifacts" in partial_update:
+        manifest["artifacts"].update(partial_update["artifacts"])
+    else:
+        manifest.update(partial_update)
+    fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
+        manifest
+    ).encode("utf-8")
+
+    with pytest.raises(parcel_intel_routes.HTTPException) as exc_info:
+        parcel_intel_routes.ParcelIntelRegistry().screening_ledger(fake)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Parcel intelligence manifest is invalid"
+
+
 def _fresh_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 

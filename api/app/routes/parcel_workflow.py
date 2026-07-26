@@ -175,10 +175,25 @@ def workflow_alerts(
 ) -> dict:
     items = store.list_parcel_workflow(app_user_id=auth.app_user_id)
     rows, manifest = registry.citywide_map(gcs)
+    screening_rows, _ = registry.screening_ledger(
+        gcs,
+        manifest=manifest,
+    )
+    watched_bbls = {
+        str(item.get("bbl") or "")
+        for item in items
+        if item.get("watching") is True and item.get("archived_at") is None
+    }
     generated_at = (manifest or {}).get("generated_at")
     return build_workflow_alerts(
         items,
         [row.model_dump() for row in rows],
+        screening_rows={
+            bbl: row.model_dump()
+            for bbl, row in screening_rows.items()
+            if bbl in watched_bbls
+        },
+        data_sources=(manifest or {}).get("data_sources") or {},
         feed_generated_at=(
             generated_at if isinstance(generated_at, str) else None
         ),

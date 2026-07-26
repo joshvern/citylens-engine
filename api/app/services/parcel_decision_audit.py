@@ -52,6 +52,13 @@ def build_parcel_decision_audit(
         _as_text(model.get("performance_scope"))
         or "Forward-only historical evaluation scope unavailable"
     )
+    evaluation_evidence = model.get("evaluation_evidence")
+    evaluation_evidence = (
+        evaluation_evidence
+        if isinstance(evaluation_evidence, dict)
+        else {}
+    )
+    evaluation_status = _as_text(evaluation_evidence.get("status"))
     prospective_validated = model.get("prospective_2026_validated") is True
     validation = {
         "target": target,
@@ -61,8 +68,16 @@ def build_parcel_decision_audit(
         "base_rate": _as_float(model.get("spatial_cv_base_rate")),
         "prospective_validated": prospective_validated,
         "disclaimer": (
-            "Historical next-year DOB new-building filing performance is not "
-            "seller intent, transaction probability, or acquisition conversion."
+            (
+                "The historical benchmark has been inspected during model "
+                "development and is not an independent current-accuracy "
+                "estimate. "
+                if evaluation_status != "unexposed"
+                else ""
+            )
+            + "Historical next-year DOB new-building filing performance is "
+            "not seller intent, transaction probability, or acquisition "
+            "conversion."
         ),
     }
 

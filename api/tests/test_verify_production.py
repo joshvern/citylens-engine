@@ -358,6 +358,17 @@ def _index() -> dict:
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
             "prospective_2026_validated": False,
+            "performance_scope": (
+                "Rolling origin: PLUTO 2018/2020/2022 training; historical "
+                "rolling benchmark: 2024 features → 2025 DOB NB filings"
+            ),
+            "evaluation_evidence": {
+                "schema": "citylens_model_evaluation_evidence@v1",
+                "status": "development_exposed",
+                "independent_for_future_selection": False,
+                "production_promotion_eligible": False,
+                "reason": "Inspected during model development.",
+            },
             "ranking_policy": {
                 "primary_field": "score_calibrated",
                 "tiebreaker_field": "score_raw",
@@ -429,6 +440,36 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("days old" in failure for failure in failures)
     assert "index: queens project_leakage_count is not zero" in failures
     assert any("prospective 2026 validation flag" in failure for failure in failures)
+
+
+def test_index_validator_rejects_overstated_historical_benchmark() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    bad = deepcopy(_index())
+    bad["model_metadata"]["performance_scope"] = (
+        "Rolling origin: latest untouched test 2024 → 2025"
+    )
+    bad["model_metadata"]["evaluation_evidence"].update(
+        {
+            "status": "unexposed",
+            "independent_for_future_selection": True,
+            "production_promotion_eligible": True,
+        }
+    )
+
+    failures = validate_index(bad, max_age_days=35, now=now)
+
+    assert (
+        "index: accepted historical benchmark exposure is misclassified"
+        in failures
+    )
+    assert (
+        "index: exposed benchmark is incorrectly eligible for model selection"
+        in failures
+    )
+    assert (
+        "index: historical benchmark scope overstates evaluation independence"
+        in failures
+    )
 
 
 def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None:

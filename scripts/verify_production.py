@@ -1569,6 +1569,37 @@ def validate_index(
         "index: prospective 2026 validation flag must remain false until matured",
         failures,
     )
+    evaluation_evidence = model.get("evaluation_evidence")
+    evaluation_evidence = (
+        evaluation_evidence
+        if isinstance(evaluation_evidence, dict)
+        else {}
+    )
+    _expect(
+        evaluation_evidence.get("schema")
+        == "citylens_model_evaluation_evidence@v1",
+        "index: model evaluation evidence is missing or invalid",
+        failures,
+    )
+    _expect(
+        evaluation_evidence.get("status") == "development_exposed",
+        "index: accepted historical benchmark exposure is misclassified",
+        failures,
+    )
+    _expect(
+        evaluation_evidence.get("independent_for_future_selection") is False
+        and evaluation_evidence.get("production_promotion_eligible") is False,
+        "index: exposed benchmark is incorrectly eligible for model selection",
+        failures,
+    )
+    performance_scope = model.get("performance_scope")
+    _expect(
+        isinstance(performance_scope, str)
+        and "historical rolling benchmark" in performance_scope.lower()
+        and "untouched" not in performance_scope.lower(),
+        "index: historical benchmark scope overstates evaluation independence",
+        failures,
+    )
     _expect(
         model.get("ranking_policy")
         == {

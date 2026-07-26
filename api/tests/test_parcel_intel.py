@@ -602,6 +602,10 @@ def test_parcel_intel_index_recomputes_critical_source_freshness(
             "age_days": 0,
             "stale": False,
         },
+        "imagery": {
+            "source": "CityLens",
+            "baseline_year": 2017,
+        },
     }
     fake = _make_fake_gcs(["brooklyn"])
     fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
@@ -625,6 +629,10 @@ def test_parcel_intel_index_recomputes_critical_source_freshness(
     assert sources["property_facts"]["age_days"] == 14
     assert sources["property_facts"]["max_age_days"] == 45
     assert sources["property_facts"]["stale"] is False
+    assert sources["imagery"]["age_days"] is None
+    assert sources["imagery"]["max_age_days"] is None
+    assert sources["imagery"]["stale"] is False
+    assert sources["imagery"]["freshness_status"] == "not_applicable"
 
 
 def test_index_exposes_only_active_generation_prospective_status(

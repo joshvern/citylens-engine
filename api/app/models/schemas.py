@@ -939,6 +939,7 @@ ParcelWorkflowEvidenceCheckStatus = Literal[
 
 ParcelProductEventName = Literal[
     "parcel_opened",
+    "official_dossier_opened",
     "screening_lookup_completed",
     "comparison_opened",
     "saved_view_applied",
@@ -952,6 +953,7 @@ ParcelProductEventName = Literal[
 
 ParcelProductEventSource = Literal[
     "direct",
+    "official_dossier",
     "screening_lookup",
     "map",
     "ranking",
@@ -978,6 +980,7 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
         "comparison",
         "decision_peers",
     },
+    "official_dossier_opened": {"official_dossier"},
     "screening_lookup_completed": {"screening_lookup"},
     "comparison_opened": {"comparison", "decision_peers"},
     "saved_view_applied": {"saved_views"},
@@ -994,13 +997,14 @@ class ParcelProductEventCreate(BaseModel):
     """Value-minimized client event.
 
     Workflow and saved-view mutation counters are derived transactionally by
-    the API from canonical writes. Only parcel/comparison opens,
-    decision-audit opens, underwriting opens/first adjustments, and saved-view
-    applies, exact-BBL screening lookups, and coarse screen-audit interactions
-    remain client-reported.
-    Parcel, saved-screen, and screen-audit comparison events carry no parcel
-    or saved-view identifiers, filter values, queries, criteria, thresholds,
-    result counts, overlap measures, or compared values.
+    the API from canonical writes. Only parcel/comparison opens, official
+    dossier opens, decision-audit opens, underwriting opens/first adjustments,
+    saved-view applies, exact-BBL screening lookups, and coarse screen-audit
+    interactions remain client-reported.
+    Parcel, official-dossier, saved-screen, and screen-audit comparison events
+    carry no parcel or saved-view identifiers, addresses, owners, source facts,
+    filter values, queries, criteria, thresholds, result counts, overlap
+    measures, or compared values.
     """
 
     model_config = ConfigDict(extra="forbid")

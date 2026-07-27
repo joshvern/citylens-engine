@@ -82,6 +82,7 @@ def build_product_adoption_report(
     underwriting_adjustment_users: set[str] = set()
     evidence_review_users: set[str] = set()
     evidence_issue_users: set[str] = set()
+    official_dossier_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -128,6 +129,8 @@ def build_product_adoption_report(
                 evidence_review_users.add(user_id)
             if row_events.get("workflow_evidence_issue_submitted", 0) > 0:
                 evidence_issue_users.add(user_id)
+            if row_events.get("official_dossier_opened", 0) > 0:
+                official_dossier_users.add(user_id)
 
     workflow_users: set[str] = set()
     active_workflows = 0
@@ -188,6 +191,7 @@ def build_product_adoption_report(
         and len(workflow_users) >= minimum_workflow_users
     )
     parcel_opens = events.get("parcel_opened", 0)
+    official_dossier_opens = events.get("official_dossier_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
     saved_view_comparison_opens = events.get(
@@ -205,6 +209,12 @@ def build_product_adoption_report(
     evidence_reviews = events.get("workflow_evidence_reviewed", 0)
     evidence_issue_submissions = events.get(
         "workflow_evidence_issue_submitted", 0
+    )
+    minimum_official_dossier_opens = 10
+    minimum_official_dossier_users = 3
+    official_dossier_engagement_ready = (
+        official_dossier_opens >= minimum_official_dossier_opens
+        and len(official_dossier_users) >= minimum_official_dossier_users
     )
     minimum_decision_audit_opens = 10
     minimum_decision_audit_users = 3
@@ -317,13 +327,20 @@ def build_product_adoption_report(
             f"{evidence_reviews}/{minimum_evidence_reviews} review markers across "
             f"{len(evidence_review_users)}/{minimum_evidence_review_users} users."
         )
+    if not official_dossier_engagement_ready:
+        warnings.append(
+            "Official-dossier engagement evidence is still collecting: "
+            f"{official_dossier_opens}/{minimum_official_dossier_opens} opens "
+            f"across {len(official_dossier_users)}/"
+            f"{minimum_official_dossier_users} users."
+        )
     if pilot_statuses.get("new", 0):
         warnings.append(
             f"{pilot_statuses['new']} pilot request(s) are waiting for review."
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v11",
+        "schema_version": "citylens/product-adoption-report@v12",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -342,6 +359,38 @@ def build_product_adoption_report(
             if parcel_opens > 0
             else None
         ),
+        "official_dossier_engagement": {
+            "opened": official_dossier_opens,
+            "users": len(official_dossier_users),
+            "source": "official_dossier_opened:official_dossier",
+            "evidence_gate": {
+                "status": (
+                    "ready"
+                    if official_dossier_engagement_ready
+                    else "collecting"
+                ),
+                "minimum_opens": minimum_official_dossier_opens,
+                "minimum_users": minimum_official_dossier_users,
+                "opens_remaining": max(
+                    0,
+                    minimum_official_dossier_opens
+                    - official_dossier_opens,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_official_dossier_users
+                    - len(official_dossier_users),
+                ),
+                "claim": (
+                    "Directional dossier engagement only. Opens are "
+                    "best-effort aggregate counters containing no BBL, "
+                    "address, owner, source fact, readiness state, lead "
+                    "membership, or result. They are not diligence "
+                    "completion, lead quality, seller intent, or model "
+                    "accuracy."
+                ),
+            },
+        },
         "decision_audit_engagement": {
             "opened": decision_audit_opens,
             "users": len(decision_audit_users),

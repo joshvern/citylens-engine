@@ -887,6 +887,21 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
             "source": "ranking",
         }
     ]
+    dossier_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "official_dossier_opened",
+            "source": "official_dossier",
+        },
+    )
+    assert dossier_opened.status_code == 204
+    assert dossier_opened.headers["cache-control"] == "private, no-store"
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "official_dossier_opened",
+        "source": "official_dossier",
+    }
     screening_lookup = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1065,6 +1080,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched.status_code == 422
+    mismatched_dossier = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "official_dossier_opened",
+            "source": "map",
+        },
+    )
+    assert mismatched_dossier.status_code == 422
     mismatched_saved_view_comparison = client.post(
         "/v1/parcel-intel/product-events",
         json={

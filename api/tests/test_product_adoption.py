@@ -34,6 +34,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-24",
                 "events": {
                     "parcel_opened": 3,
+                    "official_dossier_opened": 2,
                     "comparison_opened": 2,
                     "decision_audit_opened": 2,
                     "underwriting_opened": 2,
@@ -48,6 +49,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "sources": {
                     "parcel_opened:map": 2,
                     "parcel_opened:ranking": 1,
+                    "official_dossier_opened:official_dossier": 2,
                     "comparison_opened:comparison": 1,
                     "comparison_opened:decision_peers": 1,
                     "decision_audit_opened:decision_posture": 1,
@@ -71,6 +73,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "day": "2026-07-23",
                 "events": {
                     "parcel_opened": 1,
+                    "official_dossier_opened": 1,
                     "comparison_opened": 1,
                     "decision_audit_opened": 1,
                     "underwriting_opened": 1,
@@ -81,6 +84,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 },
                 "sources": {
                     "parcel_opened:direct": 1,
+                    "official_dossier_opened:official_dossier": 1,
                     "comparison_opened:comparison": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 1,
@@ -157,10 +161,11 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 27
+    assert report["total_events"] == 30
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
+        "official_dossier_opened": 3,
         "parcel_opened": 4,
         "saved_view_applied": 3,
         "saved_view_comparison_opened": 1,
@@ -264,7 +269,26 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v11"
+    assert report["schema_version"] == "citylens/product-adoption-report@v12"
+    assert report["official_dossier_engagement"] == {
+        "opened": 3,
+        "users": 2,
+        "source": "official_dossier_opened:official_dossier",
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_opens": 10,
+            "minimum_users": 3,
+            "opens_remaining": 7,
+            "users_remaining": 1,
+            "claim": (
+                "Directional dossier engagement only. Opens are best-effort "
+                "aggregate counters containing no BBL, address, owner, source "
+                "fact, readiness state, lead membership, or result. They are "
+                "not diligence completion, lead quality, seller intent, or "
+                "model accuracy."
+            ),
+        },
+    }
     assert report["evidence_review_engagement"] == {
         "reviewed_versions": 3,
         "users": 2,

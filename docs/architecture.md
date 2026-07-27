@@ -41,6 +41,18 @@ owns the browser UI.
     no more than 20 candidates, and fails closed on manifest, digest, count,
     or schema drift. It neither echoes the submitted address nor silently
     resolves a one-to-many address.
+    Once a BBL is explicit, authenticated users can request
+    `/v1/parcel-intel/official-parcel/{bbl}`. This reader is deliberately
+    independent from the ranked inventory and can describe any current PLUTO
+    tax lot. It reads one of 256 private, deterministic gzip shards, verifies
+    the immutable generation manifest plus compressed and uncompressed
+    digests, validates every row in the selected shard, and returns only the
+    requested BBL. PLUTO and ACRIS recorded-owner names remain source-specific;
+    disagreement is surfaced, never resolved by inference. The dossier
+    excludes scores, ranks, lead membership, contacts, beneficial-owner
+    inference, workflow, and seller-intent fields. Responses are
+    authenticated, rate-limited, private/no-store, and fail closed on source,
+    schema, count, digest, privacy-manifest, or generation drift.
     Historical NYC DOF final lien-sale and current DOB
     Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
     station-complex proximity are premium diligence context and never exposed

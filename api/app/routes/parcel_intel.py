@@ -50,6 +50,8 @@ from ..models.schemas import (
     ParcelIntelParcelResponse,
     ParcelIntelRow,
     ParcelIntelSweepResponse,
+    ParcelOfficialDossierResponse,
+    ParcelOfficialLinks,
     ParcelProspectiveValidationHealth,
     ParcelProspectiveValidationStatus,
     ParcelScreeningLedgerRow,
@@ -60,6 +62,11 @@ from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_address_resolver import ParcelAddressResolver
 from ..services.parcel_decision_audit import build_parcel_decision_audit
+from ..services.parcel_official_dossier import (
+    ACRIS_DATASET_IDS,
+    PLUTO_DATASET_ID,
+    ParcelOfficialDossierStore,
+)
 from ..services.rate_limit import demo_rate_limit, enforce_token_bucket
 from ..services.settings import Settings, get_settings
 
@@ -769,6 +776,7 @@ class ParcelIntelRegistry:
 
 _REGISTRY = ParcelIntelRegistry()
 _ADDRESS_RESOLVER = ParcelAddressResolver()
+_OFFICIAL_DOSSIERS = ParcelOfficialDossierStore()
 
 
 def get_registry() -> ParcelIntelRegistry:
@@ -777,6 +785,10 @@ def get_registry() -> ParcelIntelRegistry:
 
 def get_address_resolver() -> ParcelAddressResolver:
     return _ADDRESS_RESOLVER
+
+
+def get_official_dossiers() -> ParcelOfficialDossierStore:
+    return _OFFICIAL_DOSSIERS
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -1150,6 +1162,116 @@ def parcel_intel_resolve_address(
         source_retrieved_at=resolved.source_retrieved_at,
         resolver_generation=resolved.generation,
         interpretation=interpretation,
+    )
+
+
+def _owner_source_status(
+    pluto_owner: str | None,
+    acris_owner: str | None,
+) -> str:
+    if pluto_owner and acris_owner:
+        return (
+            "match"
+            if " ".join(pluto_owner.upper().split())
+            == " ".join(acris_owner.upper().split())
+            else "different"
+        )
+    if pluto_owner:
+        return "pluto_only"
+    if acris_owner:
+        return "acris_only"
+    return "unavailable"
+
+
+@router.get(
+    "/parcel-intel/official-parcel/{bbl}",
+    response_model=ParcelOfficialDossierResponse,
+)
+def parcel_intel_official_parcel(
+    bbl: str,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    dossiers: ParcelOfficialDossierStore = Depends(get_official_dossiers),
+) -> ParcelOfficialDossierResponse:
+    """Return source-specific official facts for one authenticated tax lot."""
+
+    enforce_token_bucket(
+        key=f"parcel-official-dossier:{auth.app_user_id}",
+        capacity=30,
+        refill_per_second=0.25,
+    )
+    dossier = dossiers.get(gcs, bbl)
+    row = dossier.row
+    borough_number = int(bbl[0])
+    block = int(bbl[1:6])
+    lot = int(bbl[6:])
+    last_sale_date = (
+        datetime.fromisoformat(row["sd"].replace("Z", "+00:00")).date()
+        if row["sd"]
+        else None
+    )
+    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    return ParcelOfficialDossierResponse(
+        bbl=bbl,
+        borough=dossier.borough,
+        address=row["a"],
+        pluto_owner_name=row["po"],
+        acris_owner_name=row["ao"],
+        owner_source_status=_owner_source_status(row["po"], row["ao"]),
+        last_sale_date=last_sale_date,
+        last_sale_price=row["sp"],
+        years_held=row["yh"],
+        lot_area_sqft=row["la"],
+        building_area_sqft=row["ba"],
+        units=row["u"],
+        num_floors=row["nf"],
+        year_built=row["yb"],
+        land_use=row["lu"],
+        building_class=row["bc"],
+        zoning_district_1=row["z1"],
+        zoning_district_2=row["z2"],
+        built_far=row["bf"],
+        residential_far=row["rf"],
+        commercial_far=row["cf"],
+        facility_far=row["ff"],
+        assessed_land=row["al"],
+        assessed_building=row["ab"],
+        assessed_total=row["at"],
+        firm_2007_floodplain=row["f07"],
+        pfirm_2015_floodplain=row["f15"],
+        environmental_review_required=row["er"],
+        environmental_designation_kind=row["ek"],
+        environmental_designation_number=row["en"],
+        property_facts_dataset_id=PLUTO_DATASET_ID,
+        property_facts_retrieved_at=dossier.pluto_retrieved_at,
+        ownership_dataset_ids=ACRIS_DATASET_IDS,
+        ownership_features_updated_at=dossier.acris_updated_at,
+        dossier_generation=dossier.generation,
+        official_links=ParcelOfficialLinks(
+            zola=(
+                "https://zola.planning.nyc.gov/l/lot/"
+                f"{borough_number}/{block}/{lot}"
+            ),
+            acris=(
+                "https://a836-acris.nyc.gov/bblsearch/bblsearch.asp"
+                f"?borough={borough_number}&block={block}&lot={lot}"
+            ),
+            dob_bis=(
+                "https://a810-bisweb.nyc.gov/bisweb/"
+                "PropertyBrowseByBBLServlet"
+                f"?allborough={borough_number}&allblock={block}"
+                f"&alllot={lot}&go5=+GO+"
+            ),
+        ),
+        interpretation=(
+            "Current source-specific PLUTO and ACRIS facts for this tax lot. "
+            "This dossier is not a CityLens lead, title report, appraisal, "
+            "zoning determination, feasibility study, beneficial-owner "
+            "inference, or seller-intent signal. Verify controlling records "
+            "in the linked NYC systems."
+        ),
     )
 
 

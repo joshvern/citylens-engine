@@ -1289,8 +1289,9 @@ def parcel_intel_map(
         ge=1,
         le=1000,
         description=(
-            "Maximum rows per borough. Unauthenticated requests are silently "
-            f"capped at {_ANON_TOP_CAP}."
+            "Maximum preview rows per borough. Unauthenticated requests are "
+            f"silently capped at {_ANON_TOP_CAP}; authenticated requests "
+            "return the complete published inventory."
         ),
     ),
     auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),
@@ -1299,19 +1300,22 @@ def parcel_intel_map(
     registry: ParcelIntelRegistry = Depends(get_registry),
 ) -> ParcelIntelMapResponse:
     rows, manifest = registry.citywide_map(gcs)
-    cap = top_per_borough if auth is not None else min(
-        top_per_borough, _ANON_TOP_CAP
-    )
-    counts: dict[str, int] = {}
-    selected: list[ParcelIntelMapRow] = []
-    for row in rows:
-        count = counts.get(row.borough, 0)
-        if count >= cap:
-            continue
-        counts[row.borough] = count + 1
-        selected.append(
-            row if auth is not None else _strip_map_premium_fields(row)
-        )
+    if auth is not None:
+        # Authenticated citywide access means the complete published
+        # inventory. The publication policy may intentionally emit more than
+        # 1,000 rows in one borough, so applying the legacy per-borough cap
+        # here would silently truncate a verified 5,000-row generation.
+        selected = list(rows)
+    else:
+        cap = min(top_per_borough, _ANON_TOP_CAP)
+        counts: dict[str, int] = {}
+        selected = []
+        for row in rows:
+            count = counts.get(row.borough, 0)
+            if count >= cap:
+                continue
+            counts[row.borough] = count + 1
+            selected.append(_strip_map_premium_fields(row))
     response.headers["Cache-Control"] = (
         _MAP_CACHE_AUTHED if auth is not None else _MAP_CACHE
     )

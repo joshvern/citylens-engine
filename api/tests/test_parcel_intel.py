@@ -1090,14 +1090,14 @@ def test_parcel_intel_map_returns_full_authenticated_inventory(monkeypatch) -> N
     _authed()
 
     response = TestClient(app).get(
-        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+        "/v1/parcel-intel/map", params={"top_per_borough": 1}
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert len(body["rows"]) == 30
     assert body["access_scope"] == "authenticated_full"
-    assert body["requested_top_per_borough"] == 1000
+    assert body["requested_top_per_borough"] == 1
     assert body["returned_count"] == 30
     assert body["available_count"] == 30
     assert body["inventory_complete"] is True

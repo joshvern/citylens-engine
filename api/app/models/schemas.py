@@ -1019,6 +1019,10 @@ class ParcelIntelIndex(BaseModel):
 class ParcelIntelMapResponse(BaseModel):
     rows: list[ParcelIntelMapRow] = Field(default_factory=list)
     generated_at: Optional[datetime] = None
+    feed_generation: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$",
+    )
     access_scope: Literal["public_preview", "authenticated_full"]
     requested_top_per_borough: int = Field(ge=1, le=1000)
     returned_count: int = Field(ge=0)
@@ -2239,6 +2243,47 @@ class ParcelSavedSearchFilters(BaseModel):
         return self
 
 
+class ParcelSavedSearchSnapshot(BaseModel):
+    """Private, generation-bound baseline for an acquisition screen.
+
+    The snapshot stores only canonical BBL membership—not addresses, owner
+    names, notes, values, or other parcel facts—so a later complete inventory
+    can explain exactly which leads entered or left the user's saved thesis.
+    """
+
+    schema_version: Literal["citylens/parcel-saved-view-snapshot@v1"]
+    feed_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    feed_generated_at: datetime
+    match_count: int = Field(ge=0, le=5000)
+    matched_bbls: list[str] = Field(default_factory=list, max_length=5000)
+
+    @model_validator(mode="after")
+    def validate_membership(self) -> ParcelSavedSearchSnapshot:
+        if self.feed_generated_at.tzinfo is None:
+            raise PydanticCustomError(
+                "naive_saved_view_snapshot_time",
+                "feed_generated_at must include a timezone",
+            )
+        if any(not re.fullmatch(r"[1-5][0-9]{9}", bbl) for bbl in self.matched_bbls):
+            raise PydanticCustomError(
+                "invalid_saved_view_snapshot_bbl",
+                "matched_bbls must contain canonical 10-digit NYC BBLs",
+            )
+        if self.matched_bbls != sorted(set(self.matched_bbls)):
+            raise PydanticCustomError(
+                "noncanonical_saved_view_snapshot_membership",
+                "matched_bbls must be sorted and unique",
+            )
+        if self.match_count != len(self.matched_bbls):
+            raise PydanticCustomError(
+                "invalid_saved_view_snapshot_count",
+                "match_count must equal the number of matched_bbls",
+            )
+        return self
+
+
 class ParcelSavedSearchUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     borough: Literal[
@@ -2250,6 +2295,7 @@ class ParcelSavedSearchUpdate(BaseModel):
     # Saved views are persistence only. CityLens does not yet deliver scheduled
     # saved-search alerts, so accepting daily/weekly would be a false promise.
     alert_frequency: Literal["off"] = "off"
+    snapshot: Optional[ParcelSavedSearchSnapshot] = None
 
     @model_validator(mode="after")
     def normalize_name(self) -> ParcelSavedSearchUpdate:
@@ -2263,7 +2309,10 @@ class ParcelSavedSearchUpdate(BaseModel):
 
 
 class ParcelSavedSearch(ParcelSavedSearchUpdate):
-    schema_version: Literal["citylens/parcel-saved-view@v2"]
+    schema_version: Literal[
+        "citylens/parcel-saved-view@v2",
+        "citylens/parcel-saved-view@v3",
+    ]
     search_id: str
     created_at: datetime
     updated_at: datetime

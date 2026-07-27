@@ -1330,6 +1330,11 @@ def parcel_intel_map(
     return ParcelIntelMapResponse(
         rows=selected,
         generated_at=_parse_iso((manifest or {}).get("generated_at")),
+        feed_generation=(
+            manifest.get("artifact_generation")
+            if isinstance(manifest.get("artifact_generation"), str)
+            else None
+        ),
         access_scope=(
             "authenticated_full" if auth is not None else "public_preview"
         ),

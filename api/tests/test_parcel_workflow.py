@@ -1456,6 +1456,56 @@ def test_saved_search_crud(auth_override) -> None:
     assert removed.headers["cache-control"] == "private, no-store"
 
 
+def test_saved_search_persists_generation_bound_private_snapshot(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="monitor-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+    matched_bbls = ["1000010001", "3000010002", "5000010003"]
+
+    created = client.put(
+        "/v1/parcel-intel/saved-searches/citywide-thesis",
+        json={
+            "name": "Citywide acquisition thesis",
+            "borough": "all",
+            "filters": {
+                "query": "",
+                "priority": "high_or_better",
+                "opportunity": "all",
+                "site_type": "uncommitted",
+                "signals": ["long_held"],
+                "overlay": "priority",
+            },
+            "alert_frequency": "off",
+            "snapshot": {
+                "schema_version": (
+                    "citylens/parcel-saved-view-snapshot@v1"
+                ),
+                "feed_generation": (
+                    "20260727T030301358307Z-a32b245a82db"
+                ),
+                "feed_generated_at": "2026-07-27T03:03:01.358307Z",
+                "match_count": len(matched_bbls),
+                "matched_bbls": matched_bbls,
+            },
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["schema_version"] == "citylens/parcel-saved-view@v3"
+    assert body["snapshot"]["match_count"] == 3
+    assert body["snapshot"]["matched_bbls"] == matched_bbls
+    assert "owner_name" not in body["snapshot"]
+    assert "address" not in body["snapshot"]
+    assert "score" not in body["snapshot"]
+    listed = client.get("/v1/parcel-intel/saved-searches")
+    assert listed.status_code == 200
+    assert listed.json()[0]["snapshot"] == body["snapshot"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -1491,6 +1541,36 @@ def test_saved_search_crud(auth_override) -> None:
             "filters": {
                 "opportunity": "all",
                 "min_lot_area_sqft": 0,
+            },
+        },
+        {
+            "name": "Unsorted snapshot membership",
+            "borough": "all",
+            "snapshot": {
+                "schema_version": (
+                    "citylens/parcel-saved-view-snapshot@v1"
+                ),
+                "feed_generation": (
+                    "20260727T030301358307Z-a32b245a82db"
+                ),
+                "feed_generated_at": "2026-07-27T03:03:01.358307Z",
+                "match_count": 2,
+                "matched_bbls": ["3000010002", "1000010001"],
+            },
+        },
+        {
+            "name": "Mismatched snapshot count",
+            "borough": "all",
+            "snapshot": {
+                "schema_version": (
+                    "citylens/parcel-saved-view-snapshot@v1"
+                ),
+                "feed_generation": (
+                    "20260727T030301358307Z-a32b245a82db"
+                ),
+                "feed_generated_at": "2026-07-27T03:03:01.358307Z",
+                "match_count": 2,
+                "matched_bbls": ["1000010001"],
             },
         },
     ],

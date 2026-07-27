@@ -780,7 +780,11 @@ def upsert_saved_search(
         search_id=search_id,
         payload={
             **body.model_dump(),
-            "schema_version": "citylens/parcel-saved-view@v2",
+            "schema_version": (
+                "citylens/parcel-saved-view@v3"
+                if body.snapshot is not None
+                else "citylens/parcel-saved-view@v2"
+            ),
         },
     )
 

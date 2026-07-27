@@ -1473,6 +1473,10 @@ def test_atomic_manifest_reads_immutable_generation_not_legacy_files(
     assert sweep.json()["rows"][0]["address"] == "ATOMIC GENERATION"
     assert map_response.status_code == 200, map_response.text
     assert map_response.json()["rows"][0]["address"] == "ATOMIC GENERATION"
+    assert (
+        map_response.json()["feed_generation"]
+        == "20260723T230308737433Z-aaaaaaaaaaaa"
+    )
     assert "parcel-intel/v1/brooklyn.jsonl" not in fake.requests
     assert "parcel-intel/v1/map.jsonl" not in fake.requests
 

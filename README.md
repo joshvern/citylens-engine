@@ -298,7 +298,8 @@ Current pinned release tag:
   parcel-open, official-dossier-open, comparison-open, decision-audit-open,
   underwriting-open/first-adjustment, saved-view-apply/comparison,
   saved-thesis-change-review,
-  screen-audit-open, and screen-criterion-relaxed sources and rejects
+  screen-audit-open, screen-criterion-relaxed, and constrained-thesis-apply
+  sources and rejects
   workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
   values or results, notes, tags, assignees, contacts, and arbitrary
   properties. Comparison opens contain no shortlist identities or values.
@@ -314,6 +315,10 @@ Current pinned release tag:
   Saved-thesis change-review events likewise contain no view ID, BBL,
   generation, filter, membership, entered/exited count, address, owner, value,
   or note.
+  Constrained-thesis apply events contain no prompt text, parsed criterion,
+  threshold, geography, result count, parcel identity, address, owner, or
+  source fact. They establish only that a user applied a reviewed set of
+  browser-local filters.
   Decision-audit opens identify only whether the user entered through the
   overview posture or the Audit tab; underwriting events identify only the
   Underwrite tab or the first base-input adjustment for a parcel/session.
@@ -605,7 +610,7 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v13 report contains only window totals, event/source counts, active-user and
+The v14 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, comparison entry
@@ -613,11 +618,13 @@ points for manual shortlist and decision-peer launches, separate comparison
 engagement and handoff, decision-audit, underwriting-engagement,
 source-bound evidence-review, aggregate evidence-issue, official-dossier
 engagement, activation, saved-view-reuse, and saved-thesis-monitor evidence
-gates,
+gates, a separate constrained-thesis-composer engagement gate,
 and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, official-dossier opens, saved-view
 applies, and saved-screen comparison opens are best-effort client-side
-directional counters. Official-dossier events contain no parcel or source
+directional counters. Thesis-composer applies are also best-effort directional
+counters and contain no prompt, parsed criteria, threshold, geography, result
+count, parcel, address, owner, or source fact. Official-dossier events contain no parcel or source
 facts and cannot establish completed diligence or data correctness. Saved-screen
 comparison events contain no saved-view identity, filters, criteria, thresholds,
 counts, overlap/union measures, or compared values. Comparison-desk events

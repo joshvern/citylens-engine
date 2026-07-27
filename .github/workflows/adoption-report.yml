@@ -77,6 +77,7 @@ jobs:
           saved_views = report["saved_view_inventory"]
           reuse = report["saved_view_reuse"]
           thesis = report["thesis_monitor_engagement"]
+          composer = report["thesis_composer_engagement"]
           audit = report["decision_audit_engagement"]
           underwriting = report["underwriting_engagement"]
           pilot = report["pilot_intake"]
@@ -110,6 +111,11 @@ jobs:
               f"user(s), `{thesis['change_reviews']}` change review(s) "
               f"across `{thesis['change_review_users']}` user(s) "
               f"(`{thesis['evidence_gate']['status']}`)"
+          )
+          print(
+              f"- Constrained-thesis applies: `{composer['applied']}` across "
+              f"`{composer['users']}` user(s) "
+              f"(`{composer['evidence_gate']['status']}`)"
           )
           print(
               f"- Decision-audit opens: `{audit['opened']}` across "
@@ -152,6 +158,9 @@ jobs:
           thesis_gate = report["thesis_monitor_engagement"][
               "evidence_gate"
           ]
+          composer_gate = report["thesis_composer_engagement"][
+              "evidence_gate"
+          ]
           audit_gate = report["decision_audit_engagement"]["evidence_gate"]
           underwriting_gate = report["underwriting_engagement"][
               "evidence_gate"
@@ -180,6 +189,12 @@ jobs:
                   "review(s), and "
                   f"{thesis_gate['change_review_users_remaining']} "
                   "reviewing user(s) remain."
+              )
+          if composer_gate["status"] != "ready":
+              print(
+                  "::warning title=Constrained-thesis engagement is collecting::"
+                  f"{composer_gate['applies_remaining']} apply event(s) and "
+                  f"{composer_gate['users_remaining']} user(s) remain."
               )
           if audit_gate["status"] != "ready":
               print(

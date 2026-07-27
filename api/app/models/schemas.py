@@ -1085,6 +1085,7 @@ ParcelProductEventName = Literal[
     "underwriting_assumptions_changed",
     "screen_audit_opened",
     "screen_criterion_relaxed",
+    "thesis_composer_applied",
     "saved_view_comparison_opened",
     "saved_thesis_changes_opened",
 ]
@@ -1105,6 +1106,7 @@ ParcelProductEventSource = Literal[
     "base_assumptions",
     "screen_summary",
     "screen_audit",
+    "thesis_composer",
     "decision_peers",
 ]
 
@@ -1127,6 +1129,7 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "underwriting_assumptions_changed": {"base_assumptions"},
     "screen_audit_opened": {"screen_summary"},
     "screen_criterion_relaxed": {"screen_audit"},
+    "thesis_composer_applied": {"thesis_composer"},
     "saved_view_comparison_opened": {"saved_views"},
     "saved_thesis_changes_opened": {"saved_views"},
 }
@@ -1138,13 +1141,13 @@ class ParcelProductEventCreate(BaseModel):
     Workflow and saved-view mutation counters are derived transactionally by
     the API from canonical writes. Only parcel/comparison opens, official
     dossier opens, decision-audit opens, underwriting opens/first adjustments,
-    saved-view applies, exact-BBL screening lookups, and coarse screen-audit
-    interactions and coarse saved-thesis change-review opens remain
-    client-reported.
+    saved-view applies, exact-BBL screening lookups, coarse screen-audit
+    interactions, constrained-thesis applies, and coarse saved-thesis
+    change-review opens remain client-reported.
     Parcel, official-dossier, saved-screen, and screen-audit comparison events
-    carry no parcel or saved-view identifiers, addresses, owners, source facts,
-    filter values, queries, criteria, thresholds, result counts, overlap
-    measures, or compared values.
+    and thesis-composer events carry no parcel or saved-view identifiers,
+    addresses, owners, source facts, prompt text, filter values, queries,
+    criteria, thresholds, result counts, overlap measures, or compared values.
     """
 
     model_config = ConfigDict(extra="forbid")

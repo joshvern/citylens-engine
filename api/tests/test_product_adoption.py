@@ -36,6 +36,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "parcel_opened": 3,
                     "official_dossier_opened": 2,
                     "comparison_opened": 2,
+                    "thesis_composer_applied": 2,
                     "decision_audit_opened": 2,
                     "underwriting_opened": 2,
                     "underwriting_assumptions_changed": 1,
@@ -55,6 +56,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "official_dossier_opened:official_dossier": 2,
                     "comparison_opened:comparison": 1,
                     "comparison_opened:decision_peers": 1,
+                    "thesis_composer_applied:thesis_composer": 2,
                     "decision_audit_opened:decision_posture": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 2,
@@ -81,6 +83,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "parcel_opened": 1,
                     "official_dossier_opened": 1,
                     "comparison_opened": 1,
+                    "thesis_composer_applied": 1,
                     "decision_audit_opened": 1,
                     "underwriting_opened": 1,
                     "underwriting_assumptions_changed": 1,
@@ -94,6 +97,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "parcel_opened:direct": 1,
                     "official_dossier_opened:official_dossier": 1,
                     "comparison_opened:comparison": 1,
+                    "thesis_composer_applied:thesis_composer": 1,
                     "decision_audit_opened:audit_tab": 1,
                     "underwriting_opened:underwrite_tab": 1,
                     (
@@ -175,7 +179,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 36
+    assert report["total_events"] == 39
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
@@ -187,6 +191,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "saved_thesis_baseline_advanced": 2,
         "saved_thesis_baseline_created": 1,
         "saved_thesis_changes_opened": 3,
+        "thesis_composer_applied": 3,
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
         "workflow_created": 1,
@@ -286,7 +291,27 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v13"
+    assert report["schema_version"] == "citylens/product-adoption-report@v14"
+    assert report["thesis_composer_engagement"] == {
+        "applied": 3,
+        "users": 2,
+        "source": "thesis_composer_applied:thesis_composer",
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_applies": 10,
+            "minimum_users": 3,
+            "applies_remaining": 7,
+            "users_remaining": 1,
+            "claim": (
+                "Directional constrained-composer engagement only. "
+                "Applies are best-effort aggregate counters containing "
+                "no prompt text, parsed criteria, thresholds, geography, "
+                "result count, BBL, address, owner, value, or source fact. "
+                "They are not unique strategies, lead quality, seller "
+                "intent, acquisition outcomes, or model accuracy."
+            ),
+        },
+    }
     assert report["official_dossier_engagement"] == {
         "opened": 3,
         "users": 2,
@@ -592,6 +617,35 @@ def test_decision_audit_gate_requires_opens_across_multiple_users() -> None:
     assert engagement["evidence_gate"]["status"] == "ready"
     assert engagement["evidence_gate"]["opens_remaining"] == 0
     assert engagement["evidence_gate"]["users_remaining"] == 0
+
+
+def test_thesis_composer_gate_counts_only_coarse_applies_across_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {"thesis_composer_applied": 1},
+                "sources": {
+                    "thesis_composer_applied:thesis_composer": 1,
+                },
+                "prompt": "private text must never enter the report",
+                "criteria": ["private criterion"],
+            }
+            for index in range(10)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["thesis_composer_engagement"]
+    assert engagement["applied"] == 10
+    assert engagement["users"] == 3
+    assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["evidence_gate"]["applies_remaining"] == 0
+    assert engagement["evidence_gate"]["users_remaining"] == 0
+    serialized = json.dumps(report)
+    assert "private text" not in serialized
+    assert "private criterion" not in serialized
 
 
 def test_comparison_gate_requires_opens_across_multiple_users() -> None:

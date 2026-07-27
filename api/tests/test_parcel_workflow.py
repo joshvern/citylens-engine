@@ -1030,6 +1030,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "screen_criterion_relaxed",
         "source": "screen_audit",
     }
+    thesis_composer_applied = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "thesis_composer_applied",
+            "source": "thesis_composer",
+        },
+    )
+    assert thesis_composer_applied.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "thesis_composer_applied",
+        "source": "thesis_composer",
+    }
     comparison_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1149,6 +1163,25 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched_screen_audit_source.status_code == 422
+    mismatched_thesis_composer_source = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "thesis_composer_applied",
+            "source": "screen_audit",
+        },
+    )
+    assert mismatched_thesis_composer_source.status_code == 422
+    identifying_thesis_composer = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "thesis_composer_applied",
+            "source": "thesis_composer",
+            "prompt": "Brooklyn vacant lots",
+        },
+    )
+    assert identifying_thesis_composer.status_code == 422
     mismatched_comparison_source = client.post(
         "/v1/parcel-intel/product-events",
         json={

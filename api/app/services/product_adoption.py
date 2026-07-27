@@ -79,6 +79,7 @@ def build_product_adoption_report(
     saved_thesis_baseline_advanced_users: set[str] = set()
     saved_thesis_change_review_users: set[str] = set()
     decision_audit_users: set[str] = set()
+    thesis_composer_users: set[str] = set()
     comparison_users: set[str] = set()
     comparison_workflow_users: set[str] = set()
     underwriting_open_users: set[str] = set()
@@ -129,6 +130,8 @@ def build_product_adoption_report(
                 saved_thesis_change_review_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
+            if row_events.get("thesis_composer_applied", 0) > 0:
+                thesis_composer_users.add(user_id)
             if row_events.get("comparison_opened", 0) > 0:
                 comparison_users.add(user_id)
             if row_sources.get("workflow_created:comparison", 0) > 0:
@@ -229,6 +232,7 @@ def build_product_adoption_report(
         "saved_thesis_changes_opened", 0
     )
     decision_audit_opens = events.get("decision_audit_opened", 0)
+    thesis_composer_applies = events.get("thesis_composer_applied", 0)
     comparison_opens = events.get("comparison_opened", 0)
     comparison_workflow_creates = sources.get(
         "workflow_created:comparison", 0
@@ -252,6 +256,12 @@ def build_product_adoption_report(
     decision_audit_engagement_ready = (
         decision_audit_opens >= minimum_decision_audit_opens
         and len(decision_audit_users) >= minimum_decision_audit_users
+    )
+    minimum_thesis_composer_applies = 10
+    minimum_thesis_composer_users = 3
+    thesis_composer_engagement_ready = (
+        thesis_composer_applies >= minimum_thesis_composer_applies
+        and len(thesis_composer_users) >= minimum_thesis_composer_users
     )
     minimum_comparison_opens = 10
     minimum_comparison_users = 3
@@ -312,6 +322,9 @@ def build_product_adoption_report(
             "contain no membership or generation values. Saved-view applies, "
             "saved-screen comparison opens, and saved-thesis change-review "
             "opens are directional, value-minimized client-side counters. "
+            "Thesis-composer applies are also directional and contain no "
+            "prompt text, parsed criteria, thresholds, geography, result "
+            "counts, or parcel identifiers. "
             "Decision-audit/underwriting interactions "
             "are directional client-side counters. Comparison workspace opens "
             "are also directional and contain no parcel identifiers or values. "
@@ -355,6 +368,14 @@ def build_product_adoption_report(
             "Decision-audit engagement evidence is still collecting: "
             f"{decision_audit_opens}/{minimum_decision_audit_opens} opens across "
             f"{len(decision_audit_users)}/{minimum_decision_audit_users} users."
+        )
+    if not thesis_composer_engagement_ready:
+        warnings.append(
+            "Constrained-thesis composer evidence is still collecting: "
+            f"{thesis_composer_applies}/{minimum_thesis_composer_applies} "
+            "applies across "
+            f"{len(thesis_composer_users)}/{minimum_thesis_composer_users} "
+            "users."
         )
     if not comparison_engagement_ready:
         warnings.append(
@@ -400,7 +421,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v13",
+        "schema_version": "citylens/product-adoption-report@v14",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -487,6 +508,38 @@ def build_product_adoption_report(
                     "Directional evidence-audit engagement only; opens are "
                     "best-effort aggregate counters, not unique parcels, "
                     "completed diligence, lead quality, or model accuracy."
+                ),
+            },
+        },
+        "thesis_composer_engagement": {
+            "applied": thesis_composer_applies,
+            "users": len(thesis_composer_users),
+            "source": "thesis_composer_applied:thesis_composer",
+            "evidence_gate": {
+                "status": (
+                    "ready"
+                    if thesis_composer_engagement_ready
+                    else "collecting"
+                ),
+                "minimum_applies": minimum_thesis_composer_applies,
+                "minimum_users": minimum_thesis_composer_users,
+                "applies_remaining": max(
+                    0,
+                    minimum_thesis_composer_applies
+                    - thesis_composer_applies,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_thesis_composer_users
+                    - len(thesis_composer_users),
+                ),
+                "claim": (
+                    "Directional constrained-composer engagement only. "
+                    "Applies are best-effort aggregate counters containing "
+                    "no prompt text, parsed criteria, thresholds, geography, "
+                    "result count, BBL, address, owner, value, or source fact. "
+                    "They are not unique strategies, lead quality, seller "
+                    "intent, acquisition outcomes, or model accuracy."
                 ),
             },
         },

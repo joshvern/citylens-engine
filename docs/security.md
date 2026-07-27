@@ -85,4 +85,7 @@ CityLens has four different credentials. They protect different things and never
   `datastore.entities.get` and `datastore.entities.list`. The workload identity
   provider is restricted to `joshvern/citylens-engine` on
   `refs/heads/master`; the identity has no deploy, object-write, secret-read,
-  or service-account-key permissions.
+  or service-account-key permissions. Firestore users explicitly classified as
+  `adoption_measurement_class=synthetic_monitor` are excluded before aggregate
+  product-event, workflow, and saved-view measurement. This classification is
+  server-governed; product-event clients cannot self-exclude.

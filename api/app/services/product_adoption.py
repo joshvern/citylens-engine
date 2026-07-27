@@ -51,13 +51,15 @@ def build_product_adoption_report(
     workflow_rows: Iterable[dict[str, Any]] = (),
     saved_view_rows: Iterable[dict[str, Any]] = (),
     pilot_request_rows: Iterable[dict[str, Any]] = (),
+    excluded_user_ids: Iterable[str] = (),
     as_of: datetime | None = None,
     days: int = 30,
 ) -> dict[str, Any]:
     """Build a privacy-preserving, aggregate product-adoption report.
 
     Input rows may include an internal ``_user_id`` solely to count unique
-    active users. The returned report never includes row-level records or
+    active users and exclude server-governed synthetic monitors before
+    aggregation. The returned report never includes row-level records or
     identifiers.
     """
 
@@ -67,11 +69,17 @@ def build_product_adoption_report(
     generated_at = _as_utc(as_of or datetime.now(timezone.utc))
     window_end = generated_at.date()
     window_start = window_end - timedelta(days=days - 1)
+    synthetic_user_ids = frozenset(
+        value
+        for value in excluded_user_ids
+        if isinstance(value, str) and value
+    )
     events: Counter[str] = Counter()
     sources: Counter[str] = Counter()
     active_users: set[str] = set()
     active_user_days = 0
     rejected_rows = 0
+    excluded_synthetic_event_rows = 0
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
     saved_view_comparison_users: set[str] = set()
@@ -93,6 +101,10 @@ def build_product_adoption_report(
         if day is None or day < window_start or day > window_end:
             rejected_rows += 1
             continue
+        user_id = row.get("_user_id")
+        if user_id in synthetic_user_ids:
+            excluded_synthetic_event_rows += 1
+            continue
         row_events = _positive_counts(row.get("events"))
         row_sources = _positive_counts(row.get("sources"))
         if not row_events:
@@ -101,7 +113,6 @@ def build_product_adoption_report(
         events.update(row_events)
         sources.update(row_sources)
         active_user_days += 1
-        user_id = row.get("_user_id")
         if isinstance(user_id, str) and user_id:
             active_users.add(user_id)
             if any(
@@ -151,8 +162,12 @@ def build_product_adoption_report(
     active_workflows = 0
     archived_workflows = 0
     rejected_workflow_rows = 0
+    excluded_synthetic_workflow_rows = 0
     for row in workflow_rows:
         user_id = row.get("_user_id")
+        if user_id in synthetic_user_ids:
+            excluded_synthetic_workflow_rows += 1
+            continue
         if not isinstance(user_id, str) or not user_id:
             rejected_workflow_rows += 1
             continue
@@ -168,9 +183,13 @@ def build_product_adoption_report(
     saved_view_records = 0
     monitored_saved_view_records = 0
     rejected_saved_view_rows = 0
+    excluded_synthetic_saved_view_rows = 0
     for row in saved_view_rows:
         user_id = row.get("_user_id")
         schema_version = row.get("schema_version")
+        if user_id in synthetic_user_ids:
+            excluded_synthetic_saved_view_rows += 1
+            continue
         if (
             not isinstance(user_id, str)
             or not user_id
@@ -337,6 +356,13 @@ def build_product_adoption_report(
             "diligence, a valuation, or a unique-parcel count."
         )
     ]
+    if synthetic_user_ids:
+        warnings.append(
+            "Server-governed synthetic-monitor actors were excluded before "
+            "product-event, workflow, and saved-view aggregation. The report "
+            "contains only aggregate exclusion counts and never actor "
+            "identifiers."
+        )
     if not events:
         warnings.append("No qualifying product-adoption events were observed.")
     if not activation_ready:
@@ -421,14 +447,27 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v14",
+        "schema_version": "citylens/product-adoption-report@v15",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
             "start": window_start.isoformat(),
             "end": window_end.isoformat(),
         },
-        "measurement_scope": "authenticated web product adoption",
+        "measurement_scope": (
+            "authenticated web product adoption excluding governed "
+            "synthetic monitors"
+        ),
+        "measurement_governance": {
+            "synthetic_actor_class": "synthetic_monitor",
+            "synthetic_actors_excluded": len(synthetic_user_ids),
+            "product_usage_days_excluded": excluded_synthetic_event_rows,
+            "workflow_records_excluded": excluded_synthetic_workflow_rows,
+            "saved_view_records_excluded": (
+                excluded_synthetic_saved_view_rows
+            ),
+            "identifiers_reported": False,
+        },
         "model_accuracy_claim": False,
         "active_users": len(active_users),
         "active_user_days": active_user_days,

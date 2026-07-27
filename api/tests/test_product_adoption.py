@@ -8,6 +8,7 @@ import pytest
 from scripts.report_product_adoption import (
     _read_pilot_request_rows,
     _read_saved_view_rows,
+    _read_synthetic_actor_ids,
     _read_workflow_rows,
 )
 
@@ -291,7 +292,15 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v14"
+    assert report["schema_version"] == "citylens/product-adoption-report@v15"
+    assert report["measurement_governance"] == {
+        "synthetic_actor_class": "synthetic_monitor",
+        "synthetic_actors_excluded": 0,
+        "product_usage_days_excluded": 0,
+        "workflow_records_excluded": 0,
+        "saved_view_records_excluded": 0,
+        "identifiers_reported": False,
+    }
     assert report["thesis_composer_engagement"] == {
         "applied": 3,
         "users": 2,
@@ -929,6 +938,110 @@ def test_pilot_intake_query_reads_only_aggregate_fields() -> None:
     assert "private@example.com" not in rendered
     assert "PRIVATE COMPANY" not in rendered
     assert "must never enter" not in rendered
+
+
+def test_synthetic_monitor_is_excluded_before_aggregation() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": "real-user",
+                "day": "2026-07-27",
+                "events": {"parcel_opened": 2},
+                "sources": {"parcel_opened:map": 2},
+            },
+            {
+                "_user_id": "synthetic-user",
+                "day": "2026-07-27",
+                "events": {
+                    "parcel_opened": 99,
+                    "thesis_composer_applied": 99,
+                },
+                "sources": {
+                    "parcel_opened:map": 99,
+                    "thesis_composer_applied:thesis_composer": 99,
+                },
+            },
+        ],
+        workflow_rows=[
+            {"_user_id": "real-user", "archived_at": None},
+            {"_user_id": "synthetic-user", "archived_at": None},
+        ],
+        saved_view_rows=[
+            {
+                "_user_id": "real-user",
+                "schema_version": "citylens/parcel-saved-view@v3",
+            },
+            {
+                "_user_id": "synthetic-user",
+                "schema_version": "citylens/parcel-saved-view@v3",
+            },
+        ],
+        excluded_user_ids={"synthetic-user"},
+        as_of=datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert report["active_users"] == 1
+    assert report["active_user_days"] == 1
+    assert report["events"] == {"parcel_opened": 2}
+    assert report["workflow_inventory"]["records"] == 1
+    assert report["saved_view_inventory"]["records"] == 1
+    assert report["thesis_composer_engagement"]["applied"] == 0
+    assert report["measurement_governance"] == {
+        "synthetic_actor_class": "synthetic_monitor",
+        "synthetic_actors_excluded": 1,
+        "product_usage_days_excluded": 1,
+        "workflow_records_excluded": 1,
+        "saved_view_records_excluded": 1,
+        "identifiers_reported": False,
+    }
+    rendered = json.dumps(report)
+    assert "synthetic-user" not in rendered
+    assert "real-user" not in rendered
+    assert any(
+        "synthetic-monitor actors were excluded" in warning
+        for warning in report["warnings"]
+    )
+
+
+def test_synthetic_actor_query_reads_only_governance_class() -> None:
+    class FakeSnapshot:
+        id = "private-synthetic-user"
+
+    class FakeQuery:
+        def __init__(self) -> None:
+            self.field_paths: list[str] | None = None
+            self.filter = None
+
+        def where(self, *, filter: object) -> "FakeQuery":
+            self.filter = filter
+            return self
+
+        def select(self, field_paths: list[str]) -> "FakeQuery":
+            self.field_paths = field_paths
+            return self
+
+        @staticmethod
+        def stream() -> list[FakeSnapshot]:
+            return [FakeSnapshot()]
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.query = FakeQuery()
+            self.collection_id: str | None = None
+
+        def collection(self, collection_id: str) -> FakeQuery:
+            self.collection_id = collection_id
+            return self.query
+
+    client = FakeClient()
+    user_ids = _read_synthetic_actor_ids(client)  # type: ignore[arg-type]
+
+    assert client.collection_id == "users"
+    assert client.query.field_paths == ["adoption_measurement_class"]
+    assert client.query.filter.field_path == "adoption_measurement_class"
+    assert client.query.filter.op_string == "=="
+    assert client.query.filter.value == "synthetic_monitor"
+    assert user_ids == {"private-synthetic-user"}
 
 
 @pytest.mark.parametrize("days", [0, 91])

@@ -18,6 +18,9 @@ if str(API_ROOT) not in sys.path:
 
 from app.services.product_adoption import build_product_adoption_report
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+
+SYNTHETIC_ACTOR_CLASS = "synthetic_monitor"
 
 
 def _default_project() -> str | None:
@@ -101,6 +104,23 @@ def _read_pilot_request_rows(
     return rows
 
 
+def _read_synthetic_actor_ids(client: firestore.Client) -> set[str]:
+    """Read only IDs carrying the server-governed synthetic classification."""
+
+    query = (
+        client.collection("users")
+        .where(
+            filter=FieldFilter(
+                "adoption_measurement_class",
+                "==",
+                SYNTHETIC_ACTOR_CLASS,
+            )
+        )
+        .select(["adoption_measurement_class"])
+    )
+    return {snapshot.id for snapshot in query.stream() if snapshot.id}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=_default_project())
@@ -111,11 +131,13 @@ def main() -> int:
         parser.error("--project or GOOGLE_CLOUD_PROJECT is required")
 
     client = firestore.Client(project=args.project)
+    excluded_user_ids = _read_synthetic_actor_ids(client)
     report = build_product_adoption_report(
         _read_rows(client),
         workflow_rows=_read_workflow_rows(client),
         saved_view_rows=_read_saved_view_rows(client),
         pilot_request_rows=_read_pilot_request_rows(client),
+        excluded_user_ids=excluded_user_ids,
         days=args.days,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True)

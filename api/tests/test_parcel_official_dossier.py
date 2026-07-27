@@ -207,7 +207,16 @@ def test_official_dossier_returns_source_specific_facts_privately(
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
-    assert "Authorization" in response.headers["vary"]
+    vary = {
+        value.strip().lower()
+        for value in response.headers["vary"].split(",")
+        if value.strip()
+    }
+    assert {
+        "authorization",
+        "x-api-key",
+        "x-citylens-parcel-smoke-key",
+    } <= vary
     payload = response.json()
     assert payload["schema_version"] == "citylens/parcel-official-dossier@v1"
     assert payload["bbl"] == "3058920038"

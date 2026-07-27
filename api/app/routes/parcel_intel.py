@@ -40,6 +40,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import ValidationError
 
 from ..models.schemas import (
+    ParcelAddressCandidate,
+    ParcelAddressResolveRequest,
+    ParcelAddressResolveResponse,
     ParcelIntelBorough,
     ParcelIntelIndex,
     ParcelIntelMapResponse,
@@ -55,6 +58,7 @@ from ..models.schemas import (
 from ..services.auth import maybe_parcel_read_auth, require_auth
 from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
+from ..services.parcel_address_resolver import ParcelAddressResolver
 from ..services.parcel_decision_audit import build_parcel_decision_audit
 from ..services.rate_limit import demo_rate_limit, enforce_token_bucket
 from ..services.settings import Settings, get_settings
@@ -764,10 +768,15 @@ class ParcelIntelRegistry:
 
 
 _REGISTRY = ParcelIntelRegistry()
+_ADDRESS_RESOLVER = ParcelAddressResolver()
 
 
 def get_registry() -> ParcelIntelRegistry:
     return _REGISTRY
+
+
+def get_address_resolver() -> ParcelAddressResolver:
+    return _ADDRESS_RESOLVER
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -1077,6 +1086,69 @@ def parcel_intel_screening_status(
             feed_generation if isinstance(feed_generation, str) else None
         ),
         feed_generated_at=generated_at,
+        interpretation=interpretation,
+    )
+
+
+@router.post(
+    "/parcel-intel/resolve-address",
+    response_model=ParcelAddressResolveResponse,
+)
+def parcel_intel_resolve_address(
+    input: ParcelAddressResolveRequest,
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    resolver: ParcelAddressResolver = Depends(get_address_resolver),
+) -> ParcelAddressResolveResponse:
+    """Resolve an official NYC address without guessing among tax lots."""
+
+    enforce_token_bucket(
+        key=f"parcel-address-resolver:{auth.app_user_id}",
+        capacity=12,
+        refill_per_second=0.1,
+    )
+    resolved = resolver.resolve(gcs, input.address)
+    if resolved.candidate_count == 0:
+        match_status = "not_found"
+        interpretation = (
+            "No exact tax-lot address match was found in the current official "
+            "NYC address directory. CityLens did not substitute a similar "
+            "address or infer a parcel."
+        )
+    elif resolved.candidate_count == 1:
+        match_status = "unique"
+        interpretation = (
+            "The current official NYC address directory maps this normalized "
+            "street address to one tax lot. Continue to the separate screening "
+            "receipt before treating it as a CityLens acquisition lead."
+        )
+    else:
+        match_status = "ambiguous"
+        interpretation = (
+            "The current official NYC address directory maps this normalized "
+            f"street address to {resolved.candidate_count} tax lots. CityLens "
+            "did not choose one automatically; select the intended BBL."
+        )
+    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    response.headers["Vary"] = "Authorization, X-API-Key"
+    return ParcelAddressResolveResponse(
+        match_status=match_status,
+        candidate_count=resolved.candidate_count,
+        truncated=resolved.truncated,
+        candidates=[
+            ParcelAddressCandidate(
+                bbl=candidate.bbl,
+                borough=candidate.borough,
+            )
+            for candidate in resolved.candidates
+        ],
+        unit_designator_ignored=resolved.unit_removed,
+        locality_ignored=resolved.locality_removed,
+        source_name=resolved.source_name,
+        source_dataset_id=resolved.source_dataset_id,
+        source_retrieved_at=resolved.source_retrieved_at,
+        resolver_generation=resolved.generation,
         interpretation=interpretation,
     )
 

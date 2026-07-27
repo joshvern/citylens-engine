@@ -92,6 +92,16 @@ Current pinned release tag:
   sweep, and detail responses vary on authentication credentials; authenticated
   responses are private/no-store so a cached 125-row preview cannot be reused
   as the signed-in inventory. Large JSON responses are gzip-compressed.
+- After that complete authenticated inventory is verified, signed-in users may
+  submit an unmatched NYC street address to
+  `POST /v1/parcel-intel/resolve-address`. The API normalizes and SHA-256
+  hashes the address in memory, reads only one private two-hex GCS shard, and
+  returns exact official PAD/PLUTO BBL candidates. It never logs or echoes the
+  address, never fuzzy-matches, and never chooses among ambiguous lots.
+  Responses expose at most 20 BBL/borough pairs plus a PAD source receipt and
+  are rate-limited, private/no-store, and credential-varying. The underlying
+  index contains no plaintext address, owner, score, rank, or
+  candidate-membership field.
 - The public index carries a strict, parcel-free
   `prospective-validation-status@v1` only when its source generation matches
   the active atomic feed. It separates the live cohort's

@@ -31,6 +31,16 @@ owns the browser UI.
     reason codes, official project reference, and evidence dates. It never
     exposes a bulk ledger, address, owner, calibrated score, or model rank;
     every response is private/no-store.
+    An authenticated unmatched-address flow uses
+    `POST /v1/parcel-intel/resolve-address` to map an exact normalized NYC
+    street address to official BBL candidates before invoking that screening
+    receipt. The complete PAD/PLUTO-derived resolver is independent from the
+    lead universe and stored as 256 private SHA-256 shards whose only row
+    fields are address hash, BBL, and source class. The server loads one
+    integrity-checked shard, keeps a bounded generation-keyed cache, returns
+    no more than 20 candidates, and fails closed on manifest, digest, count,
+    or schema drift. It neither echoes the submitted address nor silently
+    resolves a one-to-many address.
     Historical NYC DOF final lien-sale and current DOB
     Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
     station-complex proximity are premium diligence context and never exposed

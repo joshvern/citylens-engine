@@ -70,6 +70,10 @@ owns the browser UI.
     `readiness` block converts those same checks into a conservative next
     diligence state and suggested workflow action without changing the rank or
     making a purchase, seller-intent, or transaction-probability claim.
+    A versioned `citylens_historical_benchmark_receipt@v1` may accompany the
+    historical layer. The engine validates exact cohort counts, hit-rate
+    numerators and denominators, Wilson bounds, target/window identity, and
+    explicit non-current/non-parcel claim boundaries before serialization.
   - Parcel feed generations are immutable. A stable GCS manifest pointer names
     the active generation and records each object's SHA-256, byte size, and row
     count; readers validate all of these and retain a legacy-flat fallback.

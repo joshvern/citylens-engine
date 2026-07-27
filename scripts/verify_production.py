@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import math
 import sys
 import time
 from dataclasses import dataclass
@@ -198,6 +199,165 @@ def _json(result: HttpResult, label: str, failures: list[str]) -> dict[str, Any]
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def _wilson_95(successes: int, trials: int) -> tuple[float, float]:
+    z = 1.959963984540054
+    proportion = successes / trials
+    z_squared = z**2
+    denominator = 1.0 + z_squared / trials
+    center = (proportion + z_squared / (2 * trials)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            proportion * (1.0 - proportion) / trials
+            + z_squared / (4 * trials**2)
+        )
+        / denominator
+    )
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def validate_historical_benchmark_receipt(
+    receipt: Any,
+    *,
+    label: str = "index",
+) -> list[str]:
+    """Validate exact historical counts, intervals, and claim boundaries."""
+
+    failures: list[str] = []
+    _expect(
+        isinstance(receipt, dict),
+        f"{label}: historical benchmark receipt is missing",
+        failures,
+    )
+    receipt = receipt if isinstance(receipt, dict) else {}
+    _expect(
+        receipt.get("schema")
+        == "citylens_historical_benchmark_receipt@v1",
+        f"{label}: historical benchmark receipt schema is invalid",
+        failures,
+    )
+    _expect(
+        receipt.get("target") == "dob_nb_job_filing"
+        and receipt.get("feature_origin") == 2024
+        and receipt.get("outcome_window") == "2025-2025",
+        f"{label}: historical benchmark cohort identity is invalid",
+        failures,
+    )
+    rows = receipt.get("evaluation_rows")
+    positives = receipt.get("observed_positive_rows")
+    base_rate = receipt.get("base_rate")
+    counts_valid = (
+        isinstance(rows, int)
+        and not isinstance(rows, bool)
+        and rows >= 1000
+        and isinstance(positives, int)
+        and not isinstance(positives, bool)
+        and 0 <= positives <= rows
+    )
+    _expect(
+        counts_valid,
+        f"{label}: historical benchmark counts are invalid",
+        failures,
+    )
+    _expect(
+        counts_valid
+        and isinstance(base_rate, (int, float))
+        and not isinstance(base_rate, bool)
+        and math.isclose(float(base_rate), positives / rows, abs_tol=1e-12),
+        f"{label}: historical benchmark base rate disagrees with counts",
+        failures,
+    )
+    for key, expected_k in (("top_100", 100), ("top_1000", 1000)):
+        metric = receipt.get(key)
+        _expect(
+            isinstance(metric, dict),
+            f"{label}: historical benchmark {key} is missing",
+            failures,
+        )
+        metric = metric if isinstance(metric, dict) else {}
+        evaluated = metric.get("evaluated_rows")
+        hits = metric.get("observed_hits")
+        precision = metric.get("precision")
+        interval = metric.get("precision_95ci")
+        metric_counts_valid = (
+            counts_valid
+            and metric.get("k") == expected_k
+            and evaluated == min(expected_k, rows)
+            and isinstance(hits, int)
+            and not isinstance(hits, bool)
+            and 0 <= hits <= evaluated
+            and hits <= positives
+        )
+        _expect(
+            metric_counts_valid,
+            f"{label}: historical benchmark {key} counts are invalid",
+            failures,
+        )
+        _expect(
+            metric_counts_valid
+            and isinstance(precision, (int, float))
+            and not isinstance(precision, bool)
+            and math.isclose(
+                float(precision),
+                hits / evaluated,
+                abs_tol=1e-12,
+            ),
+            f"{label}: historical benchmark {key} precision disagrees with counts",
+            failures,
+        )
+        expected_interval = (
+            _wilson_95(hits, evaluated) if metric_counts_valid else None
+        )
+        _expect(
+            expected_interval is not None
+            and isinstance(interval, list)
+            and len(interval) == 2
+            and all(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for value in interval
+            )
+            and all(
+                math.isclose(
+                    float(observed),
+                    expected,
+                    abs_tol=1e-12,
+                )
+                for observed, expected in zip(
+                    interval,
+                    expected_interval,
+                    strict=True,
+                )
+            ),
+            f"{label}: historical benchmark {key} interval is invalid",
+            failures,
+        )
+    interval_meta = receipt.get("interval")
+    interval_meta = interval_meta if isinstance(interval_meta, dict) else {}
+    limitations = str(interval_meta.get("limitations") or "").lower()
+    _expect(
+        interval_meta.get("method") == "wilson_score_observed_top_k"
+        and interval_meta.get("confidence_level") == 0.95
+        and interval_meta.get("scope") == "fixed_historical_ranked_list",
+        f"{label}: historical interval method is invalid",
+        failures,
+    )
+    for phrase in ("model", "spatial", "current"):
+        _expect(
+            phrase in limitations,
+            f"{label}: historical interval limitations omit {phrase}",
+            failures,
+        )
+    _expect(
+        receipt.get("evidence_status") == "development_exposed"
+        and receipt.get("not_current_accuracy") is True
+        and receipt.get("not_parcel_confidence") is True,
+        f"{label}: historical benchmark claim boundaries are invalid",
+        failures,
+    )
+    return failures
 
 
 def validate_web_copy(html: str) -> list[str]:
@@ -1599,6 +1759,12 @@ def validate_index(
         "index: exposed benchmark is incorrectly eligible for model selection",
         failures,
     )
+    failures.extend(
+        validate_historical_benchmark_receipt(
+            model.get("historical_benchmark_receipt"),
+            label="index",
+        )
+    )
     performance_scope = model.get("performance_scope")
     _expect(
         isinstance(performance_scope, str)
@@ -1807,6 +1973,19 @@ def validate_public_decision_audit(
             f"parcel detail: {audit_key} does not match accepted model metadata",
             failures,
         )
+    audit_receipt = validation.get("historical_benchmark_receipt")
+    model_receipt = model_metadata.get("historical_benchmark_receipt")
+    failures.extend(
+        validate_historical_benchmark_receipt(
+            audit_receipt,
+            label="parcel detail",
+        )
+    )
+    _expect(
+        audit_receipt == model_receipt,
+        "parcel detail: historical benchmark receipt does not match accepted model metadata",
+        failures,
+    )
 
     checks = audit.get("checks")
     _expect(

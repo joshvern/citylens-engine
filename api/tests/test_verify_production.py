@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from scripts.verify_production import (
     evaluate_source_slas,
+    validate_historical_benchmark_receipt,
     validate_index,
     validate_map,
     validate_pilot_probe_response,
@@ -15,6 +16,53 @@ from scripts.verify_production import (
     validate_web_copy,
     validate_workflow_methodology,
 )
+
+
+def _historical_benchmark_receipt() -> dict:
+    return {
+        "schema": "citylens_historical_benchmark_receipt@v1",
+        "target": "dob_nb_job_filing",
+        "feature_origin": 2024,
+        "outcome_window": "2025-2025",
+        "evaluation_scope": "rolling_origin_latest_out_of_time",
+        "evaluation_rows": 768514,
+        "observed_positive_rows": 956,
+        "base_rate": 956 / 768514,
+        "auc": 0.9232830323176429,
+        "pr_auc": 0.054015618548797745,
+        "top_100": {
+            "k": 100,
+            "evaluated_rows": 100,
+            "observed_hits": 34,
+            "precision": 0.34,
+            "precision_95ci": [
+                0.25461520797348164,
+                0.43722271145275377,
+            ],
+        },
+        "top_1000": {
+            "k": 1000,
+            "evaluated_rows": 1000,
+            "observed_hits": 104,
+            "precision": 0.104,
+            "precision_95ci": [
+                0.08657102809826807,
+                0.12445976462229157,
+            ],
+        },
+        "interval": {
+            "method": "wilson_score_observed_top_k",
+            "confidence_level": 0.95,
+            "scope": "fixed_historical_ranked_list",
+            "limitations": (
+                "Observed uncertainty only; not model selection, spatial "
+                "dependence, or current outcomes."
+            ),
+        },
+        "evidence_status": "development_exposed",
+        "not_current_accuracy": True,
+        "not_parcel_confidence": True,
+    }
 
 
 def _security_headers(*, browser_page: bool) -> dict[str, str]:
@@ -362,6 +410,9 @@ def _index() -> dict:
             "precision_at_100": 0.34,
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
+            "historical_benchmark_receipt": (
+                _historical_benchmark_receipt()
+            ),
             "prospective_2026_validated": False,
             "performance_scope": (
                 "Rolling origin: PLUTO 2018/2020/2022 training; historical "
@@ -477,6 +528,23 @@ def test_index_validator_rejects_overstated_historical_benchmark() -> None:
         "index: historical benchmark scope overstates evaluation independence"
         in failures
     )
+
+
+def test_historical_benchmark_receipt_rejects_tampered_counts_and_interval() -> None:
+    assert (
+        validate_historical_benchmark_receipt(
+            _historical_benchmark_receipt()
+        )
+        == []
+    )
+    bad = _historical_benchmark_receipt()
+    bad["top_100"]["observed_hits"] = 35
+    bad["top_1000"]["precision_95ci"][0] = 0.0
+
+    failures = validate_historical_benchmark_receipt(bad)
+
+    assert any("top_100 precision disagrees" in failure for failure in failures)
+    assert any("top_1000 interval is invalid" in failure for failure in failures)
 
 
 def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None:
@@ -944,6 +1012,9 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
             "precision_at_100": 0.34,
             "precision_at_1000": 0.104,
             "base_rate": 0.0012439591,
+            "historical_benchmark_receipt": (
+                _historical_benchmark_receipt()
+            ),
             "prospective_validated": False,
             "disclaimer": (
                 "Historical performance is not seller intent or transaction "

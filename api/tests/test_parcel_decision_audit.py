@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.models.schemas import ParcelIntelRow
+import pytest
+from pydantic import ValidationError
+
+from app.models.schemas import ParcelIntelIndex, ParcelIntelRow
 from app.services.parcel_decision_audit import build_parcel_decision_audit
 
 
@@ -35,6 +38,50 @@ def _manifest() -> dict:
             "precision_at_100": 0.34,
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
+            "historical_benchmark_receipt": {
+                "schema": "citylens_historical_benchmark_receipt@v1",
+                "target": "dob_nb_job_filing",
+                "feature_origin": 2024,
+                "outcome_window": "2025-2025",
+                "evaluation_scope": "rolling_origin_latest_out_of_time",
+                "evaluation_rows": 768514,
+                "observed_positive_rows": 956,
+                "base_rate": 956 / 768514,
+                "auc": 0.9232830323176429,
+                "pr_auc": 0.054015618548797745,
+                "top_100": {
+                    "k": 100,
+                    "evaluated_rows": 100,
+                    "observed_hits": 34,
+                    "precision": 0.34,
+                    "precision_95ci": [
+                        0.25461520797348164,
+                        0.43722271145275377,
+                    ],
+                },
+                "top_1000": {
+                    "k": 1000,
+                    "evaluated_rows": 1000,
+                    "observed_hits": 104,
+                    "precision": 0.104,
+                    "precision_95ci": [
+                        0.08657102809826807,
+                        0.12445976462229157,
+                    ],
+                },
+                "interval": {
+                    "method": "wilson_score_observed_top_k",
+                    "confidence_level": 0.95,
+                    "scope": "fixed_historical_ranked_list",
+                    "limitations": (
+                        "Observed binomial uncertainty only; not model "
+                        "selection, spatial dependence, or current outcomes."
+                    ),
+                },
+                "evidence_status": "development_exposed",
+                "not_current_accuracy": True,
+                "not_parcel_confidence": True,
+            },
             "prospective_2026_validated": False,
             "evaluation_evidence": {
                 "status": "development_exposed",
@@ -71,6 +118,12 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert audit.overall_status == "screened_with_flags"
     assert audit.validation.precision_at_100 == 0.34
     assert audit.validation.precision_at_1000 == 0.104
+    receipt = audit.validation.historical_benchmark_receipt
+    assert receipt is not None
+    assert receipt.top_100.observed_hits == 34
+    assert receipt.top_1000.observed_hits == 104
+    assert receipt.not_current_accuracy is True
+    assert receipt.not_parcel_confidence is True
     assert audit.validation.prospective_validated is False
     assert "not an independent current-accuracy estimate" in (
         audit.validation.disclaimer
@@ -102,6 +155,28 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
         "MIH applicability" in item for item in audit.readiness.review_items
     )
     assert "purchase recommendation" in audit.readiness.disclaimer
+
+
+def test_index_rejects_internally_inconsistent_historical_receipt() -> None:
+    metadata = _manifest()["model_metadata"]
+    metadata["historical_benchmark_receipt"]["top_100"]["observed_hits"] = 99
+
+    with pytest.raises(ValidationError, match="precision does not match"):
+        ParcelIntelIndex.model_validate({"model_metadata": metadata})
+
+
+def test_decision_audit_rejects_malformed_historical_receipt() -> None:
+    manifest = _manifest()
+    manifest["model_metadata"]["historical_benchmark_receipt"][
+        "not_parcel_confidence"
+    ] = False
+
+    with pytest.raises(ValidationError):
+        build_parcel_decision_audit(
+            _row(),
+            manifest,
+            premium_access=True,
+        )
 
 
 def test_decision_audit_formats_multi_year_model_window_for_people() -> None:

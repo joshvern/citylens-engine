@@ -88,10 +88,11 @@ Current pinned release tag:
   CSV/export and compatibility. Public inventory is capped at 25 rows per
   borough with premium fields stripped; authenticated users can load 1,000
   rows per borough. The compact map response includes an explicit access scope,
-  returned/available counts, and an inventory-complete receipt. Tiered map,
-  sweep, and detail responses vary on authentication credentials; authenticated
-  responses are private/no-store so a cached 125-row preview cannot be reused
-  as the signed-in inventory. Large JSON responses are gzip-compressed.
+  returned/available counts, an inventory-complete receipt, and the immutable
+  feed generation used to produce the rows. Tiered map, sweep, and detail
+  responses vary on authentication credentials; authenticated responses are
+  private/no-store so a cached 125-row preview cannot be reused as the
+  signed-in inventory. Large JSON responses are gzip-compressed.
 - After that complete authenticated inventory is verified, signed-in users may
   submit an unmatched NYC street address to
   `POST /v1/parcel-intel/resolve-address`. The API normalizes and SHA-256
@@ -282,6 +283,13 @@ Current pinned release tag:
   restore correctly. Responses are private/no-store.
   `alert_frequency` is intentionally limited to `off`; scheduled saved-search
   delivery is not implemented and the API does not imply otherwise.
+  A client with a verified complete inventory may write the v3 contract with a
+  strict generation-bound snapshot of the exact sorted matching BBLs. That
+  private baseline lets the browser identify which ranked leads entered or
+  left the same acquisition thesis after a later feed is published. The
+  snapshot stores no address, owner, score, value, notes, or seller-intent
+  inference; a same-generation membership disagreement must fail
+  conservatively rather than being labeled a market change.
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse

@@ -20,9 +20,10 @@ owns the browser UI.
     `/v1/parcel-intel/sweep` for CSV/export and compatibility. Public inventory
     is capped at 25 rows per borough with premium fields stripped;
     authenticated users can load 1,000 per borough. The compact map returns a
-    machine-verifiable access scope and inventory receipt, authenticated reads
-    bypass shared caches, and `Vary` preserves credential-specific
-    representations across CORS. Large JSON responses are gzip-compressed.
+    machine-verifiable access scope, inventory receipt, and immutable feed
+    generation. Authenticated reads bypass shared caches, and `Vary` preserves
+    credential-specific representations across CORS. Large JSON responses are
+    gzip-compressed.
     When an authenticated user searches one canonical 10-digit BBL that is
     absent from the complete inventory,
     `/v1/parcel-intel/screening/{bbl}` performs a rate-limited exact lookup
@@ -79,6 +80,14 @@ owns the browser UI.
     count; readers validate all of these and retain a legacy-flat fallback.
     Generation-keyed caches prevent an in-flight old reader from repopulating a
     new generation's cache.
+  - Private saved acquisition screens may include a v3 membership snapshot
+    bound to that immutable generation. The snapshot is limited to a sorted,
+    unique set of at most 5,000 canonical BBLs plus its exact count and source
+    timestamp. It contains no parcel facts or workflow notes. Clients may
+    compare that set only against a verified complete later generation; a
+    disagreement within one generation is an integrity condition, not an
+    entered/left lead event. Monitoring is evaluated in-app and does not imply
+    notifications, seller intent, or a new model prediction.
   - The public index may include one
     `prospective-validation-status@v1` projection produced by the independent
     weekly ranking monitor. The API validates the complete maturity contract,

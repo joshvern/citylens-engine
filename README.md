@@ -340,8 +340,8 @@ Current pinned release tag:
   read-only credential. The raw key lives only in the GitHub Actions
   `CITYLENS_PARCEL_SMOKE_KEY` secret; the API receives only its SHA-256 in
   `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. It is accepted only by the tiered
-  Parcel Intelligence map, sweep, and detail routes—not run creation or
-  acquisition workflow routes.
+  Parcel Intelligence map, sweep, detail, and one-BBL official-dossier
+  routes—not run creation or acquisition workflow routes.
 
 See [docs/security.md](docs/security.md) for the full credential model.
 
@@ -403,9 +403,14 @@ six hours and on demand. The authenticated check proves that production
 returns exactly 5,000 unique parcels (1,000 per borough), preserves owner
 context, requires all 5,000 map rows to carry plausible NYC coordinates,
 serves a full selected-parcel decision audit, compresses the map payload, and
-marks both reads `private, no-store`. The workflow publishes a
+marks both reads `private, no-store`. It also verifies the fixed Brooklyn
+official-dossier reference lot through the API and browser-facing proxy,
+including source identities/dates, useful fact coverage, HTTPS official
+links, evidence limitations, prohibited-field absence, and private caching.
+The workflow publishes a
 job summary and retains both sanitized JSON reports for 30 days; neither
-report contains the smoke credential, owner names, or parcel identifiers.
+report contains the smoke credential, owner names, addresses, or parcel
+identifiers.
 Scheduled failures create or update one
 deduplicated `[Production] Scheduled verification failing` issue; the next
 successful scheduled run records recovery and closes it. Manual checks do not

@@ -279,9 +279,9 @@ API (Cloud Run service):
 - Scheduled authenticated Parcel Intelligence verification:
   - API: `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES=<sha256 of raw smoke key>`
   - GitHub Actions secret: `CITYLENS_PARCEL_SMOKE_KEY=<raw smoke key>`
-  - The credential is accepted only by the tiered parcel map, sweep, and
-    detail routes; acquisition workflow and run endpoints remain protected by
-    normal user/admin auth.
+  - The credential is accepted only by the tiered parcel map, sweep, detail,
+    and one-BBL official-dossier routes; acquisition workflow and run
+    endpoints remain protected by normal user/admin auth.
 - Optional: `CITYLENS_SIGN_URLS=1` and `CITYLENS_SIGN_URL_TTL_SECONDS=300`
 
 Use Secret Manager for any value that resolves to a real secret (`CITYLENS_DOCS_ACCESS_KEY_SHA256`, `CITYLENS_ADMIN_API_KEY_HASHES`). The literal `*_SHA256` is a hash, not a secret, but treat it conservatively. Never set `CITYLENS_API_KEYS` for normal users — that path is deprecated and the auth dependency ignores it.
@@ -339,7 +339,9 @@ audit statement that transit is diligence-only. The repository workflow
 `scripts/verify_authenticated_inventory.py`, which proves that the live API
 serves exactly 5,000 unique authenticated parcels, 1,000 per borough, with
 owner context, a full selected-parcel audit, gzip, and private/no-store cache
-controls. The raw smoke key exists only as the repository Actions secret
+controls. It also verifies the fixed Brooklyn official dossier through both
+the API and browser-facing proxy while omitting its BBL, address, and owner
+names from the report. The raw smoke key exists only as the repository Actions secret
 `CITYLENS_PARCEL_SMOKE_KEY`; only its SHA-256 is deployed in
 `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. The workflow stores sanitized
 machine-readable reports that omit credentials, owners, and parcel IDs. A

@@ -10,6 +10,7 @@ from app.models.schemas import ParcelIntelRow
 from app.routes import parcel_workflow
 from app.services.firestore_store import (
     PRODUCT_EVENT_DAILY_LIMIT,
+    StaleSavedSearchSnapshot,
     _product_usage_day_payload,
     _workflow_effective_payload,
 )
@@ -945,6 +946,20 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         "event": "saved_view_comparison_opened",
         "source": "saved_views",
     }
+    thesis_changes_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "saved_thesis_changes_opened",
+            "source": "saved_views",
+        },
+    )
+    assert thesis_changes_opened.status_code == 204
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "saved_thesis_changes_opened",
+        "source": "saved_views",
+    }
     audit_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1098,6 +1113,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched_saved_view_comparison.status_code == 422
+    mismatched_thesis_changes = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "saved_thesis_changes_opened",
+            "source": "comparison",
+        },
+    )
+    assert mismatched_thesis_changes.status_code == 422
     mismatched_audit_source = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1504,6 +1528,64 @@ def test_saved_search_persists_generation_bound_private_snapshot(
     listed = client.get("/v1/parcel-intel/saved-searches")
     assert listed.status_code == 200
     assert listed.json()[0]["snapshot"] == body["snapshot"]
+
+
+def test_saved_search_rejects_a_stale_baseline_without_disclosing_generations(
+    auth_override,
+) -> None:
+    auth_override(app_user_id="monitor-user")
+
+    class StaleBaselineStore(FakeWorkflowStore):
+        def upsert_parcel_saved_search(
+            self,
+            *,
+            app_user_id: str,
+            search_id: str,
+            payload: dict,
+        ) -> dict:
+            raise StaleSavedSearchSnapshot(
+                existing_generation=(
+                    "20260728T030301358307Z-b32b245a82db"
+                ),
+                incoming_generation=(
+                    "20260727T030301358307Z-a32b245a82db"
+                ),
+            )
+
+    app.dependency_overrides[parcel_workflow.get_store] = (
+        lambda: StaleBaselineStore()
+    )
+    client = TestClient(app)
+    response = client.put(
+        "/v1/parcel-intel/saved-searches/citywide-thesis",
+        json={
+            "name": "Citywide acquisition thesis",
+            "borough": "all",
+            "alert_frequency": "off",
+            "snapshot": {
+                "schema_version": (
+                    "citylens/parcel-saved-view-snapshot@v1"
+                ),
+                "feed_generation": (
+                    "20260727T030301358307Z-a32b245a82db"
+                ),
+                "feed_generated_at": "2026-07-27T03:03:01.358307Z",
+                "match_count": 1,
+                "matched_bbls": ["3000010001"],
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.json() == {
+        "detail": (
+            "This saved thesis has a newer baseline. Refresh the inventory "
+            "before updating it."
+        )
+    }
+    assert "202607" not in response.text
+    assert "3000010001" not in response.text
 
 
 @pytest.mark.parametrize(

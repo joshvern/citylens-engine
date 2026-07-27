@@ -75,6 +75,9 @@ def build_product_adoption_report(
     saved_view_event_users: set[str] = set()
     saved_view_apply_users: set[str] = set()
     saved_view_comparison_users: set[str] = set()
+    saved_thesis_baseline_created_users: set[str] = set()
+    saved_thesis_baseline_advanced_users: set[str] = set()
+    saved_thesis_change_review_users: set[str] = set()
     decision_audit_users: set[str] = set()
     comparison_users: set[str] = set()
     comparison_workflow_users: set[str] = set()
@@ -108,6 +111,9 @@ def build_product_adoption_report(
                     "saved_view_deleted",
                     "saved_view_applied",
                     "saved_view_comparison_opened",
+                    "saved_thesis_baseline_created",
+                    "saved_thesis_baseline_advanced",
+                    "saved_thesis_changes_opened",
                 )
             ):
                 saved_view_event_users.add(user_id)
@@ -115,6 +121,12 @@ def build_product_adoption_report(
                 saved_view_apply_users.add(user_id)
             if row_events.get("saved_view_comparison_opened", 0) > 0:
                 saved_view_comparison_users.add(user_id)
+            if row_events.get("saved_thesis_baseline_created", 0) > 0:
+                saved_thesis_baseline_created_users.add(user_id)
+            if row_events.get("saved_thesis_baseline_advanced", 0) > 0:
+                saved_thesis_baseline_advanced_users.add(user_id)
+            if row_events.get("saved_thesis_changes_opened", 0) > 0:
+                saved_thesis_change_review_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
             if row_events.get("comparison_opened", 0) > 0:
@@ -149,19 +161,29 @@ def build_product_adoption_report(
 
     workflow_records = active_workflows + archived_workflows
     saved_view_users: set[str] = set()
+    monitored_saved_view_users: set[str] = set()
     saved_view_records = 0
+    monitored_saved_view_records = 0
     rejected_saved_view_rows = 0
     for row in saved_view_rows:
         user_id = row.get("_user_id")
+        schema_version = row.get("schema_version")
         if (
             not isinstance(user_id, str)
             or not user_id
-            or row.get("schema_version") != "citylens/parcel-saved-view@v2"
+            or schema_version
+            not in {
+                "citylens/parcel-saved-view@v2",
+                "citylens/parcel-saved-view@v3",
+            }
         ):
             rejected_saved_view_rows += 1
             continue
         saved_view_users.add(user_id)
         saved_view_records += 1
+        if schema_version == "citylens/parcel-saved-view@v3":
+            monitored_saved_view_users.add(user_id)
+            monitored_saved_view_records += 1
 
     pilot_statuses: Counter[str] = Counter()
     pilot_plans: Counter[str] = Counter()
@@ -196,6 +218,15 @@ def build_product_adoption_report(
     saved_view_applies = events.get("saved_view_applied", 0)
     saved_view_comparison_opens = events.get(
         "saved_view_comparison_opened", 0
+    )
+    saved_thesis_baselines_created = events.get(
+        "saved_thesis_baseline_created", 0
+    )
+    saved_thesis_baselines_advanced = events.get(
+        "saved_thesis_baseline_advanced", 0
+    )
+    saved_thesis_change_reviews = events.get(
+        "saved_thesis_changes_opened", 0
     )
     decision_audit_opens = events.get("decision_audit_opened", 0)
     comparison_opens = events.get("comparison_opened", 0)
@@ -258,13 +289,30 @@ def build_product_adoption_report(
         saved_view_applies >= minimum_saved_view_applies
         and len(saved_view_apply_users) >= minimum_saved_view_apply_users
     )
+    minimum_saved_thesis_advances = 5
+    minimum_saved_thesis_advance_users = 3
+    minimum_saved_thesis_change_reviews = 10
+    minimum_saved_thesis_change_review_users = 3
+    saved_thesis_engagement_ready = (
+        saved_thesis_baselines_advanced
+        >= minimum_saved_thesis_advances
+        and len(saved_thesis_baseline_advanced_users)
+        >= minimum_saved_thesis_advance_users
+        and saved_thesis_change_reviews
+        >= minimum_saved_thesis_change_reviews
+        and len(saved_thesis_change_review_users)
+        >= minimum_saved_thesis_change_review_users
+    )
     warnings: list[str] = [
         (
             "Parcel opens are directional client-side counters; workflow "
             "lifecycle and saved-view mutation counts are derived "
-            "transactionally from canonical mutations. Saved-view applies "
-            "and saved-screen comparison opens are directional, value-minimized "
-            "client-side counters. Decision-audit/underwriting interactions "
+            "transactionally from canonical mutations. Saved-thesis baseline "
+            "creation/advancement counts are also transactionally derived and "
+            "contain no membership or generation values. Saved-view applies, "
+            "saved-screen comparison opens, and saved-thesis change-review "
+            "opens are directional, value-minimized client-side counters. "
+            "Decision-audit/underwriting interactions "
             "are directional client-side counters. Comparison workspace opens "
             "are also directional and contain no parcel identifiers or values. "
             "Evidence-review "
@@ -289,6 +337,18 @@ def build_product_adoption_report(
             "Saved-view reuse evidence is still collecting: "
             f"{saved_view_applies}/{minimum_saved_view_applies} applies across "
             f"{len(saved_view_apply_users)}/{minimum_saved_view_apply_users} users."
+        )
+    if not saved_thesis_engagement_ready:
+        warnings.append(
+            "Saved-thesis monitor evidence is still collecting: "
+            f"{saved_thesis_baselines_advanced}/"
+            f"{minimum_saved_thesis_advances} canonical baseline advances "
+            f"across {len(saved_thesis_baseline_advanced_users)}/"
+            f"{minimum_saved_thesis_advance_users} users and "
+            f"{saved_thesis_change_reviews}/"
+            f"{minimum_saved_thesis_change_reviews} change-review opens "
+            f"across {len(saved_thesis_change_review_users)}/"
+            f"{minimum_saved_thesis_change_review_users} users."
         )
     if not decision_audit_engagement_ready:
         warnings.append(
@@ -340,7 +400,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v12",
+        "schema_version": "citylens/product-adoption-report@v13",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -605,6 +665,8 @@ def build_product_adoption_report(
         "saved_view_inventory": {
             "records": saved_view_records,
             "users": len(saved_view_users),
+            "monitored_records": monitored_saved_view_records,
+            "monitored_users": len(monitored_saved_view_users),
             "excluded_or_invalid_rows": rejected_saved_view_rows,
         },
         "saved_view_reuse": {
@@ -632,6 +694,68 @@ def build_product_adoption_report(
                     "Directional repeat-use evidence only; applies are "
                     "best-effort client counters, not unique views, leads, "
                     "users, or model outcomes."
+                ),
+            },
+        },
+        "thesis_monitor_engagement": {
+            "monitored_views": monitored_saved_view_records,
+            "monitored_view_users": len(monitored_saved_view_users),
+            "baselines_created": saved_thesis_baselines_created,
+            "baseline_creation_users": len(
+                saved_thesis_baseline_created_users
+            ),
+            "baselines_advanced": saved_thesis_baselines_advanced,
+            "baseline_advance_users": len(
+                saved_thesis_baseline_advanced_users
+            ),
+            "change_reviews": saved_thesis_change_reviews,
+            "change_review_users": len(saved_thesis_change_review_users),
+            "evidence_gate": {
+                "status": (
+                    "ready"
+                    if saved_thesis_engagement_ready
+                    else "collecting"
+                ),
+                "minimum_baseline_advances": (
+                    minimum_saved_thesis_advances
+                ),
+                "minimum_baseline_advance_users": (
+                    minimum_saved_thesis_advance_users
+                ),
+                "minimum_change_reviews": (
+                    minimum_saved_thesis_change_reviews
+                ),
+                "minimum_change_review_users": (
+                    minimum_saved_thesis_change_review_users
+                ),
+                "baseline_advances_remaining": max(
+                    0,
+                    minimum_saved_thesis_advances
+                    - saved_thesis_baselines_advanced,
+                ),
+                "baseline_advance_users_remaining": max(
+                    0,
+                    minimum_saved_thesis_advance_users
+                    - len(saved_thesis_baseline_advanced_users),
+                ),
+                "change_reviews_remaining": max(
+                    0,
+                    minimum_saved_thesis_change_reviews
+                    - saved_thesis_change_reviews,
+                ),
+                "change_review_users_remaining": max(
+                    0,
+                    minimum_saved_thesis_change_review_users
+                    - len(saved_thesis_change_review_users),
+                ),
+                "claim": (
+                    "Directional saved-thesis engagement only. Baseline "
+                    "lifecycle counters are transactionally derived and "
+                    "change-review opens are best-effort aggregate counters. "
+                    "They contain no view IDs, BBLs, filters, result counts, "
+                    "generations, addresses, owners, values, or notes and do "
+                    "not establish lead quality, seller intent, transaction "
+                    "evidence, acquisition outcomes, or model accuracy."
                 ),
             },
         },

@@ -32,7 +32,10 @@ from ..models.schemas import (
 )
 from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
-from ..services.firestore_store import FirestoreStore
+from ..services.firestore_store import (
+    FirestoreStore,
+    StaleSavedSearchSnapshot,
+)
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_decision_audit import build_parcel_decision_audit
 from ..services.parcel_workflow_actions import (
@@ -775,18 +778,27 @@ def upsert_saved_search(
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", search_id):
         raise HTTPException(status_code=422, detail="Invalid search id")
     response.headers["Cache-Control"] = "private, no-store"
-    return store.upsert_parcel_saved_search(
-        app_user_id=auth.app_user_id,
-        search_id=search_id,
-        payload={
-            **body.model_dump(),
-            "schema_version": (
-                "citylens/parcel-saved-view@v3"
-                if body.snapshot is not None
-                else "citylens/parcel-saved-view@v2"
+    try:
+        return store.upsert_parcel_saved_search(
+            app_user_id=auth.app_user_id,
+            search_id=search_id,
+            payload={
+                **body.model_dump(),
+                "schema_version": (
+                    "citylens/parcel-saved-view@v3"
+                    if body.snapshot is not None
+                    else "citylens/parcel-saved-view@v2"
+                ),
+            },
+        )
+    except StaleSavedSearchSnapshot as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This saved thesis has a newer baseline. Refresh the "
+                "inventory before updating it."
             ),
-        },
-    )
+        ) from exc
 
 
 @router.delete(

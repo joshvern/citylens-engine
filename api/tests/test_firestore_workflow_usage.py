@@ -4,8 +4,13 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pytest
+
 from app.services import firestore_store
-from app.services.firestore_store import FirestoreStore
+from app.services.firestore_store import (
+    FirestoreStore,
+    StaleSavedSearchSnapshot,
+)
 
 
 class _Snapshot:
@@ -524,6 +529,150 @@ def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
         search_id="private-search-id",
     )
     assert client.documents[usage_path]["events"]["saved_view_deleted"] == 1
+
+
+def test_saved_thesis_baselines_are_monotonic_private_and_transactional(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 27, 4, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+    first_generation = "20260727T030301358307Z-a32b245a82db"
+    next_generation = "20260728T030301358307Z-b32b245a82db"
+    base_payload = {
+        "schema_version": "citylens/parcel-saved-view@v3",
+        "name": "Private monitored thesis",
+        "borough": "all",
+        "filters": {
+            "priority": "high_or_better",
+            "opportunity": "all",
+            "site_type": "uncommitted",
+            "signals": ["long_held"],
+            "overlay": "priority",
+        },
+        "alert_frequency": "off",
+        "snapshot": {
+            "schema_version": "citylens/parcel-saved-view-snapshot@v1",
+            "feed_generation": first_generation,
+            "feed_generated_at": now,
+            "match_count": 1,
+            "matched_bbls": ["3000010001"],
+        },
+    }
+
+    created = store.upsert_parcel_saved_search(
+        app_user_id="private-monitor-user",
+        search_id="private-monitor-id",
+        payload=base_payload,
+    )
+    usage_path = (
+        "users",
+        "private-monitor-user",
+        "product_usage_days",
+        "2026-07-27",
+    )
+    usage = client.documents[usage_path]
+    assert created["snapshot"]["feed_generation"] == first_generation
+    assert usage["events"] == {
+        "saved_thesis_baseline_created": 1,
+        "saved_view_created": 1,
+    }
+    assert usage["sources"] == {
+        "saved_thesis_baseline_created:saved_views": 1,
+        "saved_view_created:saved_views": 1,
+    }
+    assert not {
+        "search_id",
+        "snapshot",
+        "feed_generation",
+        "matched_bbls",
+        "match_count",
+        "filters",
+        "name",
+    }.intersection(usage)
+
+    retried = store.upsert_parcel_saved_search(
+        app_user_id="private-monitor-user",
+        search_id="private-monitor-id",
+        payload=base_payload,
+    )
+    assert retried["updated_at"] == created["updated_at"]
+    assert client.documents[usage_path]["total_events"] == 2
+
+    renamed = store.upsert_parcel_saved_search(
+        app_user_id="private-monitor-user",
+        search_id="private-monitor-id",
+        payload={**base_payload, "name": "Renamed monitored thesis"},
+    )
+    assert renamed["name"] == "Renamed monitored thesis"
+    assert client.documents[usage_path]["events"] == {
+        "saved_thesis_baseline_created": 1,
+        "saved_view_created": 1,
+        "saved_view_updated": 1,
+    }
+
+    advanced_payload = {
+        **base_payload,
+        "name": "Renamed monitored thesis",
+        "snapshot": {
+            **base_payload["snapshot"],
+            "feed_generation": next_generation,
+            "feed_generated_at": now + timedelta(days=1),
+            "match_count": 2,
+            "matched_bbls": ["3000010001", "4000010002"],
+        },
+    }
+    advanced = store.upsert_parcel_saved_search(
+        app_user_id="private-monitor-user",
+        search_id="private-monitor-id",
+        payload=advanced_payload,
+    )
+    assert advanced["snapshot"]["feed_generation"] == next_generation
+    assert client.documents[usage_path]["events"] == {
+        "saved_thesis_baseline_advanced": 1,
+        "saved_thesis_baseline_created": 1,
+        "saved_view_created": 1,
+        "saved_view_updated": 2,
+    }
+
+    preserved = store.upsert_parcel_saved_search(
+        app_user_id="private-monitor-user",
+        search_id="private-monitor-id",
+        payload={
+            **{
+                key: value
+                for key, value in base_payload.items()
+                if key != "snapshot"
+            },
+            "schema_version": "citylens/parcel-saved-view@v2",
+            "name": "Metadata-only edit",
+        },
+    )
+    assert preserved["schema_version"] == "citylens/parcel-saved-view@v3"
+    assert preserved["snapshot"]["feed_generation"] == next_generation
+
+    with pytest.raises(StaleSavedSearchSnapshot):
+        store.upsert_parcel_saved_search(
+            app_user_id="private-monitor-user",
+            search_id="private-monitor-id",
+            payload=base_payload,
+        )
+    saved_path = (
+        "users",
+        "private-monitor-user",
+        "parcel_saved_searches",
+        "private-monitor-id",
+    )
+    assert (
+        client.documents[saved_path]["snapshot"]["feed_generation"]
+        == next_generation
+    )
 
 
 def test_pilot_request_storage_is_idempotent_and_expires(

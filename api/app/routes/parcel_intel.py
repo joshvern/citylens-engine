@@ -1216,7 +1216,9 @@ def parcel_intel_official_parcel(
         else None
     )
     response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
-    response.headers["Vary"] = "Authorization, X-API-Key"
+    response.headers["Vary"] = (
+        "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
+    )
     return ParcelOfficialDossierResponse(
         bbl=bbl,
         borough=dossier.borough,

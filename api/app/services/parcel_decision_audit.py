@@ -4,7 +4,11 @@ import re
 from datetime import datetime
 from typing import Any
 
-from ..models.schemas import ParcelDecisionAudit, ParcelIntelRow
+from ..models.schemas import (
+    ParcelDecisionAudit,
+    ParcelHistoricalBenchmarkReceipt,
+    ParcelIntelRow,
+)
 
 AUDIT_SCHEMA = "citylens/parcel-decision-audit@v1"
 MODEL_METRICS_SOURCE_LABELS = {
@@ -84,12 +88,21 @@ def build_parcel_decision_audit(
     )
     evaluation_status = _as_text(evaluation_evidence.get("status"))
     prospective_validated = model.get("prospective_2026_validated") is True
+    historical_benchmark_raw = model.get("historical_benchmark_receipt")
+    historical_benchmark = (
+        ParcelHistoricalBenchmarkReceipt.model_validate(
+            historical_benchmark_raw
+        )
+        if historical_benchmark_raw is not None
+        else None
+    )
     validation = {
         "target": target,
         "evaluation_scope": evaluation_scope,
         "precision_at_100": _as_float(model.get("precision_at_100")),
         "precision_at_1000": _as_float(model.get("precision_at_1000")),
         "base_rate": _as_float(model.get("spatial_cv_base_rate")),
+        "historical_benchmark_receipt": historical_benchmark,
         "prospective_validated": prospective_validated,
         "disclaimer": (
             (

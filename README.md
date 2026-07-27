@@ -167,6 +167,13 @@ Current pinned release tag:
   historical validation block reports the accepted next-year DOB
   new-building-filing target and its forward-test precision; it explicitly is
   not seller intent, transaction probability, or acquisition conversion.
+  When the feed carries
+  `citylens_historical_benchmark_receipt@v1`, the API validates and returns
+  exact cohort rows, positives, top-k hits, observed 95% Wilson intervals,
+  AUC/PR-AUC, and evidence-exposure status. Counts, rates, and interval bounds
+  must reconcile exactly. The receipt explicitly excludes parcel confidence,
+  model-selection uncertainty, spatial dependence, dataset shift, and current
+  acquisition outcomes.
   Anonymous audit responses explain the policy while withholding owner,
   diligence, and workflow evidence. Authenticated clients may show those
   private facts without changing the stored score or rank. The same response

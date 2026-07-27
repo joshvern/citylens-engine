@@ -207,8 +207,123 @@ class ParcelDecisionAuditValidation(BaseModel):
     precision_at_100: Optional[float] = Field(default=None, ge=0, le=1)
     precision_at_1000: Optional[float] = Field(default=None, ge=0, le=1)
     base_rate: Optional[float] = Field(default=None, ge=0, le=1)
+    historical_benchmark_receipt: Optional[
+        "ParcelHistoricalBenchmarkReceipt"
+    ] = None
     prospective_validated: bool = False
     disclaimer: str
+
+
+class ParcelHistoricalTopKReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    k: Literal[100, 1000]
+    evaluated_rows: int = Field(ge=1)
+    observed_hits: int = Field(ge=0)
+    precision: float = Field(ge=0, le=1)
+    precision_95ci: tuple[float, float]
+
+    @model_validator(mode="after")
+    def validate_observed_rate(self) -> "ParcelHistoricalTopKReceipt":
+        if self.evaluated_rows > self.k:
+            raise PydanticCustomError(
+                "historical_top_k_rows",
+                "evaluated rows cannot exceed k",
+            )
+        if self.observed_hits > self.evaluated_rows:
+            raise PydanticCustomError(
+                "historical_top_k_hits",
+                "observed hits cannot exceed evaluated rows",
+            )
+        expected = self.observed_hits / self.evaluated_rows
+        if not math.isclose(self.precision, expected, abs_tol=1e-12):
+            raise PydanticCustomError(
+                "historical_top_k_precision",
+                "precision does not match exact observed counts",
+            )
+        low, high = self.precision_95ci
+        if not 0 <= low <= self.precision <= high <= 1:
+            raise PydanticCustomError(
+                "historical_top_k_interval",
+                "precision interval must contain the point estimate",
+            )
+        return self
+
+
+class ParcelHistoricalIntervalReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["wilson_score_observed_top_k"]
+    confidence_level: Literal[0.95]
+    scope: Literal["fixed_historical_ranked_list"]
+    limitations: str = Field(min_length=1, max_length=500)
+
+
+class ParcelHistoricalBenchmarkReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: Literal[
+        "citylens_historical_benchmark_receipt@v1"
+    ] = Field(alias="schema", serialization_alias="schema")
+    target: str = Field(min_length=1, max_length=128)
+    feature_origin: int = Field(ge=2000, le=2100)
+    outcome_window: str = Field(pattern=r"^\d{4}-\d{4}$")
+    evaluation_scope: str = Field(min_length=1, max_length=128)
+    evaluation_rows: int = Field(ge=1000)
+    observed_positive_rows: int = Field(ge=0)
+    base_rate: float = Field(ge=0, le=1)
+    auc: float = Field(ge=0, le=1)
+    pr_auc: float = Field(ge=0, le=1)
+    top_100: ParcelHistoricalTopKReceipt
+    top_1000: ParcelHistoricalTopKReceipt
+    interval: ParcelHistoricalIntervalReceipt
+    evidence_status: Literal[
+        "unexposed",
+        "development_exposed",
+        "retired",
+        "unclassified",
+    ]
+    not_current_accuracy: Literal[True]
+    not_parcel_confidence: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_counts_and_top_k(self) -> "ParcelHistoricalBenchmarkReceipt":
+        if self.observed_positive_rows > self.evaluation_rows:
+            raise PydanticCustomError(
+                "historical_positive_rows",
+                "observed positive rows exceed evaluation rows",
+            )
+        expected_base_rate = (
+            self.observed_positive_rows / self.evaluation_rows
+        )
+        if not math.isclose(self.base_rate, expected_base_rate, abs_tol=1e-12):
+            raise PydanticCustomError(
+                "historical_base_rate",
+                "base rate does not match exact observed counts",
+            )
+        if self.top_100.k != 100 or self.top_1000.k != 1000:
+            raise PydanticCustomError(
+                "historical_top_k_identity",
+                "top-k receipt keys do not match their k values",
+            )
+        if (
+            self.top_100.evaluated_rows != min(100, self.evaluation_rows)
+            or self.top_1000.evaluated_rows
+            != min(1000, self.evaluation_rows)
+        ):
+            raise PydanticCustomError(
+                "historical_top_k_denominator",
+                "top-k denominator does not match evaluation rows",
+            )
+        if (
+            self.top_100.observed_hits > self.observed_positive_rows
+            or self.top_1000.observed_hits > self.observed_positive_rows
+        ):
+            raise PydanticCustomError(
+                "historical_top_k_total_hits",
+                "top-k hits exceed total observed positive rows",
+            )
+        return self
 
 
 class ParcelDecisionAuditCheck(BaseModel):
@@ -881,6 +996,24 @@ class ParcelIntelIndex(BaseModel):
     # Defaults keep older clients (and cached responses) unaffected.
     age_days: Optional[float] = None
     stale: bool = False
+
+    @field_validator("model_metadata")
+    @classmethod
+    def validate_historical_benchmark_receipt(
+        cls,
+        value: dict[str, Any],
+    ) -> dict[str, Any]:
+        receipt = value.get("historical_benchmark_receipt")
+        if receipt is None:
+            return value
+        parsed = ParcelHistoricalBenchmarkReceipt.model_validate(receipt)
+        return {
+            **value,
+            "historical_benchmark_receipt": parsed.model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+        }
 
 
 class ParcelIntelMapResponse(BaseModel):

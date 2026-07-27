@@ -289,12 +289,15 @@ Current pinned release tag:
   left the same acquisition thesis after a later feed is published. The
   snapshot stores no address, owner, score, value, notes, or seller-intent
   inference; a same-generation membership disagreement must fail
-  conservatively rather than being labeled a market change.
+  conservatively rather than being labeled a market change. Baselines are
+  monotonic: a stale browser cannot overwrite a newer feed generation, and a
+  metadata-only update cannot silently remove an existing baseline.
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse
   parcel-open, official-dossier-open, comparison-open, decision-audit-open,
   underwriting-open/first-adjustment, saved-view-apply/comparison,
+  saved-thesis-change-review,
   screen-audit-open, and screen-criterion-relaxed sources and rejects
   workflow lifecycle claims, parcel IDs, addresses, owners, URLs, underwriting
   values or results, notes, tags, assignees, contacts, and arbitrary
@@ -308,10 +311,13 @@ Current pinned release tag:
   Screen-audit events contain no criterion, threshold, query, result count,
   parcel, owner, or relaxed value. Saved-screen comparison events contain no
   saved-view identity, filter, count, overlap, union, or compared value.
+  Saved-thesis change-review events likewise contain no view ID, BBL,
+  generation, filter, membership, entered/exited count, address, owner, value,
+  or note.
   Decision-audit opens identify only whether the user entered through the
   overview posture or the Audit tab; underwriting events identify only the
   Underwrite tab or the first base-input adjustment for a parcel/session.
-  Workflow and saved-view lifecycle
+  Workflow, saved-view lifecycle, and thesis-baseline creation/advancement
   counters are instead derived by the API inside the same Firestore
   transaction as the canonical mutation. Effective no-op retries do not add
   events or counters. Firestore stores one aggregate counter document per
@@ -599,14 +605,15 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v12 report contains only window totals, event/source counts, active-user and
+The v13 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, comparison entry
 points for manual shortlist and decision-peer launches, separate comparison
 engagement and handoff, decision-audit, underwriting-engagement,
 source-bound evidence-review, aggregate evidence-issue, official-dossier
-engagement, activation, and saved-view-reuse evidence gates,
+engagement, activation, saved-view-reuse, and saved-thesis-monitor evidence
+gates,
 and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, official-dossier opens, saved-view
 applies, and saved-screen comparison opens are best-effort client-side
@@ -621,16 +628,19 @@ review outcome; they measure consideration of exact cited versions, not
 completed or cleared diligence. Evidence-issue counts contain no parcel,
 citation, source, reason, note, request, or outcome values; they measure
 aggregate data-quality friction only. Workflow
-lifecycle and saved-view create/update/delete counts are
-transactionally derived from their canonical server mutations, so a dropped
-follow-up browser request cannot erase a real save and an unchanged retry
-cannot inflate the counters. The workflow
+lifecycle, saved-view create/update/delete, and saved-thesis baseline
+create/advance counts are transactionally derived from their canonical server
+mutations, so a dropped follow-up browser request cannot erase a real save and
+an unchanged retry cannot inflate the counters. Change-review opens remain
+identifier-free directional counters. The workflow
 [adoption-report.yml](.github/workflows/adoption-report.yml) runs this report
 daily through a repository- and branch-restricted keyless Google identity,
 publishes warnings while evidence is collecting, and retains the aggregate-only
 artifact for 90 days. The inventory query projects only saved-view schema
-version and derives user counts from the document parent; it never reads view
-names, search text, filters, or owners. The pilot-intake query selects only
+version and derives user counts from the document parent; v3 marks monitored
+inventory without reading its private snapshot. It never reads view names,
+search text, filters, memberships, generations, or owners. The pilot-intake
+query selects only
 status, plan, and creation time, raises a workflow warning when requests await
 review, and never reads contact fields, request IDs, boroughs, or workflow
 text. Do not publish raw `product_usage_days`, `parcel_workflow`,

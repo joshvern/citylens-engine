@@ -76,6 +76,7 @@ jobs:
           inventory = report["workflow_inventory"]
           saved_views = report["saved_view_inventory"]
           reuse = report["saved_view_reuse"]
+          thesis = report["thesis_monitor_engagement"]
           audit = report["decision_audit_engagement"]
           underwriting = report["underwriting_engagement"]
           pilot = report["pilot_intake"]
@@ -94,12 +95,21 @@ jobs:
           print(f"- Workflow users: `{inventory['users']}`")
           print(
               f"- Saved views: `{saved_views['records']}` across "
-              f"`{saved_views['users']}` user(s)"
+              f"`{saved_views['users']}` user(s); "
+              f"`{saved_views['monitored_records']}` monitored across "
+              f"`{saved_views['monitored_users']}` user(s)"
           )
           print(
               f"- Saved-view applies: `{reuse['applied']}` across "
               f"`{reuse['apply_users']}` user(s) "
               f"(`{reuse['evidence_gate']['status']}`)"
+          )
+          print(
+              f"- Thesis monitor: `{thesis['baselines_advanced']}` baseline "
+              f"advance(s) across `{thesis['baseline_advance_users']}` "
+              f"user(s), `{thesis['change_reviews']}` change review(s) "
+              f"across `{thesis['change_review_users']}` user(s) "
+              f"(`{thesis['evidence_gate']['status']}`)"
           )
           print(
               f"- Decision-audit opens: `{audit['opened']}` across "
@@ -139,6 +149,9 @@ jobs:
           )
           gate = report["activation_evidence_gate"]
           reuse_gate = report["saved_view_reuse"]["evidence_gate"]
+          thesis_gate = report["thesis_monitor_engagement"][
+              "evidence_gate"
+          ]
           audit_gate = report["decision_audit_engagement"]["evidence_gate"]
           underwriting_gate = report["underwriting_engagement"][
               "evidence_gate"
@@ -155,6 +168,18 @@ jobs:
                   "::warning title=Saved-view reuse evidence is collecting::"
                   f"{reuse_gate['applies_remaining']} apply event(s) and "
                   f"{reuse_gate['users_remaining']} user(s) remain."
+              )
+          if thesis_gate["status"] != "ready":
+              print(
+                  "::warning title=Thesis-monitor evidence is collecting::"
+                  f"{thesis_gate['baseline_advances_remaining']} baseline "
+                  "advance(s), "
+                  f"{thesis_gate['baseline_advance_users_remaining']} "
+                  "advancing user(s), "
+                  f"{thesis_gate['change_reviews_remaining']} change "
+                  "review(s), and "
+                  f"{thesis_gate['change_review_users_remaining']} "
+                  "reviewing user(s) remain."
               )
           if audit_gate["status"] != "ready":
               print(

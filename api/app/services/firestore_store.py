@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,9 @@ PRODUCT_EVENT_RETENTION_DAYS = 90
 PRODUCT_EVENT_DAILY_LIMIT = 1_000
 PILOT_REQUEST_RETENTION_DAYS = 365
 EVIDENCE_ISSUE_RETENTION_DAYS = 730
+_SAVED_VIEW_GENERATION_RE = re.compile(
+    r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+)
 
 
 def _hash_api_key(plaintext: str) -> str:
@@ -63,6 +67,65 @@ class MonthlyQuotaExceeded(Exception):
         self.runs_used = runs_used
         self.monthly_run_limit = monthly_run_limit
         self.month_key = month_key
+
+
+class StaleSavedSearchSnapshot(Exception):
+    """A saved thesis update attempted to move its baseline backwards."""
+
+    def __init__(
+        self,
+        *,
+        existing_generation: str,
+        incoming_generation: str,
+    ) -> None:
+        super().__init__("Saved thesis baseline is newer than this request")
+        self.existing_generation = existing_generation
+        self.incoming_generation = incoming_generation
+
+
+def _saved_view_snapshot_generation(payload: dict[str, Any]) -> str | None:
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    generation = snapshot.get("feed_generation")
+    if (
+        not isinstance(generation, str)
+        or _SAVED_VIEW_GENERATION_RE.fullmatch(generation) is None
+    ):
+        return None
+    return generation
+
+
+def _saved_thesis_baseline_event(
+    *,
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+) -> str | None:
+    """Classify one private saved-thesis baseline transition.
+
+    Only the event name enters aggregate usage. Generations and membership
+    remain confined to the private saved-view document.
+    """
+
+    incoming_generation = _saved_view_snapshot_generation(incoming)
+    if incoming_generation is None:
+        return None
+    existing_generation = _saved_view_snapshot_generation(existing)
+    if existing_generation is None:
+        return "saved_thesis_baseline_created"
+    if incoming_generation == existing_generation:
+        return None
+
+    existing_timestamp = existing_generation.split("-", 1)[0]
+    incoming_timestamp = incoming_generation.split("-", 1)[0]
+    if incoming_timestamp <= existing_timestamp:
+        # Equal timestamps with different content hashes are conflicting
+        # generations, not a legitimate forward advance.
+        raise StaleSavedSearchSnapshot(
+            existing_generation=existing_generation,
+            incoming_generation=incoming_generation,
+        )
+    return "saved_thesis_baseline_advanced"
 
 
 def _product_usage_day_payload(
@@ -1426,14 +1489,30 @@ class FirestoreStore:
             snap = ref.get(transaction=transaction)
             usage_snap = usage_ref.get(transaction=transaction)
             existing = (snap.to_dict() or {}) if snap.exists else {}
+            effective_payload = dict(payload)
+            if (
+                isinstance(existing.get("snapshot"), dict)
+                and not isinstance(effective_payload.get("snapshot"), dict)
+            ):
+                # Omitting an optional snapshot must not silently erase or
+                # downgrade a newer private baseline from another browser.
+                effective_payload["snapshot"] = existing["snapshot"]
+                effective_payload["schema_version"] = (
+                    "citylens/parcel-saved-view@v3"
+                )
+            baseline_event = _saved_thesis_baseline_event(
+                existing=existing,
+                incoming=effective_payload,
+            )
             changed = not snap.exists or any(
-                existing.get(key) != value for key, value in payload.items()
+                existing.get(key) != value
+                for key, value in effective_payload.items()
             )
             if not changed:
                 return existing
             doc = {
                 **existing,
-                **payload,
+                **effective_payload,
                 "search_id": search_id,
                 "user_id": app_user_id,
                 "created_at": existing.get("created_at") or now,
@@ -1453,6 +1532,15 @@ class FirestoreStore:
                 source="saved_views",
                 occurred_at=now,
             )
+            if usage_payload is not None and baseline_event is not None:
+                baseline_payload = _product_usage_day_payload(
+                    existing=usage_payload,
+                    event=baseline_event,
+                    source="saved_views",
+                    occurred_at=now,
+                )
+                if baseline_payload is not None:
+                    usage_payload = baseline_payload
             if usage_payload is not None:
                 transaction.set(usage_ref, usage_payload)
             return doc

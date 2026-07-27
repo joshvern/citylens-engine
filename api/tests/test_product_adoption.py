@@ -42,6 +42,9 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_applied": 2,
                     "saved_view_comparison_opened": 1,
                     "saved_view_created": 1,
+                    "saved_thesis_baseline_created": 1,
+                    "saved_thesis_baseline_advanced": 1,
+                    "saved_thesis_changes_opened": 2,
                     "workflow_created": 1,
                     "workflow_evidence_reviewed": 2,
                     "workflow_evidence_issue_submitted": 1,
@@ -62,6 +65,9 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_view_applied:saved_views": 2,
                     "saved_view_comparison_opened:saved_views": 1,
                     "saved_view_created:saved_views": 1,
+                    "saved_thesis_baseline_created:saved_views": 1,
+                    "saved_thesis_baseline_advanced:saved_views": 1,
+                    "saved_thesis_changes_opened:saved_views": 2,
                     "workflow_created:comparison": 1,
                     "workflow_evidence_reviewed:workflow": 2,
                     "workflow_evidence_issue_submitted:workflow": 1,
@@ -79,6 +85,8 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "underwriting_opened": 1,
                     "underwriting_assumptions_changed": 1,
                     "saved_view_applied": 1,
+                    "saved_thesis_baseline_advanced": 1,
+                    "saved_thesis_changes_opened": 1,
                     "workflow_updated": 2,
                     "workflow_evidence_reviewed": 1,
                 },
@@ -93,6 +101,8 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                         "base_assumptions"
                     ): 1,
                     "saved_view_applied:saved_views": 1,
+                    "saved_thesis_baseline_advanced:saved_views": 1,
+                    "saved_thesis_changes_opened:saved_views": 1,
                     "workflow_updated:workflow": 2,
                     "workflow_evidence_reviewed:workflow": 1,
                 },
@@ -121,6 +131,10 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "schema_version": "citylens/parcel-saved-view@v2",
             },
             {"_user_id": "", "schema_version": "citylens/parcel-saved-view@v2"},
+            {
+                "_user_id": "private-user-c",
+                "schema_version": "citylens/parcel-saved-view@v3",
+            },
             {
                 "_user_id": "private-user-c",
                 "schema_version": "citylens/parcel-saved-search@v1",
@@ -161,7 +175,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 30
+    assert report["total_events"] == 36
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
@@ -170,6 +184,9 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "saved_view_applied": 3,
         "saved_view_comparison_opened": 1,
         "saved_view_created": 1,
+        "saved_thesis_baseline_advanced": 2,
+        "saved_thesis_baseline_created": 1,
+        "saved_thesis_changes_opened": 3,
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
         "workflow_created": 1,
@@ -269,7 +286,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v12"
+    assert report["schema_version"] == "citylens/product-adoption-report@v13"
     assert report["official_dossier_engagement"] == {
         "opened": 3,
         "users": 2,
@@ -327,8 +344,10 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "excluded_or_invalid_rows": 1,
     }
     assert report["saved_view_inventory"] == {
-        "records": 2,
-        "users": 2,
+        "records": 3,
+        "users": 3,
+        "monitored_records": 1,
+        "monitored_users": 1,
         "excluded_or_invalid_rows": 2,
     }
     assert report["saved_view_reuse"]["created"] == 1
@@ -340,6 +359,36 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     assert report["saved_view_reuse"]["apply_users"] == 2
     assert report["saved_view_reuse"]["comparison_users"] == 1
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"
+    assert report["thesis_monitor_engagement"] == {
+        "monitored_views": 1,
+        "monitored_view_users": 1,
+        "baselines_created": 1,
+        "baseline_creation_users": 1,
+        "baselines_advanced": 2,
+        "baseline_advance_users": 2,
+        "change_reviews": 3,
+        "change_review_users": 2,
+        "evidence_gate": {
+            "status": "collecting",
+            "minimum_baseline_advances": 5,
+            "minimum_baseline_advance_users": 3,
+            "minimum_change_reviews": 10,
+            "minimum_change_review_users": 3,
+            "baseline_advances_remaining": 3,
+            "baseline_advance_users_remaining": 1,
+            "change_reviews_remaining": 7,
+            "change_review_users_remaining": 1,
+            "claim": (
+                "Directional saved-thesis engagement only. Baseline "
+                "lifecycle counters are transactionally derived and "
+                "change-review opens are best-effort aggregate counters. "
+                "They contain no view IDs, BBLs, filters, result counts, "
+                "generations, addresses, owners, values, or notes and do "
+                "not establish lead quality, seller intent, transaction "
+                "evidence, acquisition outcomes, or model accuracy."
+            ),
+        },
+    }
     assert report["pilot_intake"] == {
         "records": 2,
         "recent_requests": 1,
@@ -460,6 +509,52 @@ def test_saved_view_reuse_gate_requires_applies_across_multiple_users() -> None:
     assert gate["status"] == "ready"
     assert gate["applies_remaining"] == 0
     assert gate["users_remaining"] == 0
+
+
+def test_thesis_monitor_gate_requires_advances_and_reviews_across_users() -> None:
+    rows = [
+        {
+            "_user_id": f"user-{index % 3}",
+            "day": "2026-07-24",
+            "events": {
+                "saved_thesis_baseline_advanced": (
+                    1 if index < 5 else 0
+                ),
+                "saved_thesis_changes_opened": 1,
+            },
+            "sources": {
+                "saved_thesis_changes_opened:saved_views": 1,
+                **(
+                    {"saved_thesis_baseline_advanced:saved_views": 1}
+                    if index < 5
+                    else {}
+                ),
+            },
+        }
+        for index in range(10)
+    ]
+    report = build_product_adoption_report(
+        rows,
+        saved_view_rows=[
+            {
+                "_user_id": f"user-{index}",
+                "schema_version": "citylens/parcel-saved-view@v3",
+            }
+            for index in range(3)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["thesis_monitor_engagement"]
+    assert engagement["monitored_views"] == 3
+    assert engagement["monitored_view_users"] == 3
+    assert engagement["baselines_advanced"] == 5
+    assert engagement["baseline_advance_users"] == 3
+    assert engagement["change_reviews"] == 10
+    assert engagement["change_review_users"] == 3
+    assert engagement["evidence_gate"]["status"] == "ready"
+    assert engagement["evidence_gate"]["baseline_advances_remaining"] == 0
+    assert engagement["evidence_gate"]["change_reviews_remaining"] == 0
 
 
 def test_decision_audit_gate_requires_opens_across_multiple_users() -> None:
@@ -680,7 +775,7 @@ def test_saved_view_inventory_query_reads_only_schema_and_user_parent() -> None:
         @staticmethod
         def to_dict() -> dict[str, str]:
             return {
-                "schema_version": "citylens/parcel-saved-view@v2",
+                "schema_version": "citylens/parcel-saved-view@v3",
                 "name": "must never enter the report",
                 "query": "confidential owner",
                 "owner": "PRIVATE OWNER LLC",
@@ -715,7 +810,7 @@ def test_saved_view_inventory_query_reads_only_schema_and_user_parent() -> None:
     assert rows == [
         {
             "_user_id": "private-user-a",
-            "schema_version": "citylens/parcel-saved-view@v2",
+            "schema_version": "citylens/parcel-saved-view@v3",
         }
     ]
     rendered = json.dumps(rows)

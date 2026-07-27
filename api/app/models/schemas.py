@@ -1086,6 +1086,7 @@ ParcelProductEventName = Literal[
     "screen_audit_opened",
     "screen_criterion_relaxed",
     "saved_view_comparison_opened",
+    "saved_thesis_changes_opened",
 ]
 
 ParcelProductEventSource = Literal[
@@ -1127,6 +1128,7 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "screen_audit_opened": {"screen_summary"},
     "screen_criterion_relaxed": {"screen_audit"},
     "saved_view_comparison_opened": {"saved_views"},
+    "saved_thesis_changes_opened": {"saved_views"},
 }
 
 
@@ -1137,7 +1139,8 @@ class ParcelProductEventCreate(BaseModel):
     the API from canonical writes. Only parcel/comparison opens, official
     dossier opens, decision-audit opens, underwriting opens/first adjustments,
     saved-view applies, exact-BBL screening lookups, and coarse screen-audit
-    interactions remain client-reported.
+    interactions and coarse saved-thesis change-review opens remain
+    client-reported.
     Parcel, official-dossier, saved-screen, and screen-audit comparison events
     carry no parcel or saved-view identifiers, addresses, owners, source facts,
     filter values, queries, criteria, thresholds, result counts, overlap

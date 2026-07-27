@@ -848,14 +848,16 @@ lifecycle so the submitting user can see the request outcome.
 
 Separately, the API writes only aggregate daily event/source counts to each
 user's `product_usage_days` collection.
-Parcel opens and saved-view applies are value-minimized client counters.
+Parcel opens, saved-view applies, and saved-thesis change-review opens are
+value-minimized client counters.
 Workflow lifecycle, source-bound evidence-review, evidence-issue submission,
-and saved-view
-create/update/delete counters are written transactionally with their canonical
-mutations, so dropped browser telemetry cannot erase a real save and unchanged
-retries cannot inflate it. Do not add BBLs, addresses, check keys, citations,
-source dates, review times, owners, URLs, workflow text, saved-view
-names/search/filter state, or event-level rows.
+saved-view create/update/delete, and saved-thesis baseline create/advance
+counters are written transactionally with their canonical mutations, so
+dropped browser telemetry cannot erase a real save and unchanged retries
+cannot inflate it. Do not add BBLs, addresses, check keys, citations, source
+dates, review times, owners, URLs, workflow text, saved-view
+names/search/filter/membership/generation state, result counts, or event-level
+rows.
 Generate the aggregate operator report with:
 
 ```bash
@@ -864,16 +866,19 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The v11 report includes aggregate canonical workflow and saved-view inventory,
+The v13 report includes aggregate canonical workflow and saved-view inventory,
 an activation-evidence gate, source-bound review engagement, and a
-saved-view-reuse evidence gate, plus directional saved-screen comparison opens
-and unique comparison users. No saved-view identity, filter, threshold, search,
-count, overlap/union measure, or compared value is collected. Activation
+saved-view-reuse evidence gate, plus a saved-thesis-monitor gate and
+directional saved-screen comparison opens. No saved-view identity, filter,
+threshold, search, membership, generation, count, overlap/union measure, or
+compared value is collected. Activation
 remains `collecting` until at least 30 workflow records exist across at least
 three users. Saved-view reuse remains `collecting` until at least 10
 best-effort apply events exist across at least three users. The source-bound
 review gate remains `collecting` until at least 10 canonical review markers
-exist across at least three users. A review marker means only that an exact
+exist across at least three users. Thesis-monitor evidence remains `collecting`
+until at least five canonical baseline advances and 10 change-review opens
+exist, each across at least three users. A review marker means only that an exact
 cited version was considered; it is not completed or cleared diligence. The saved-view
 inventory query selects only the schema marker and never reads names, search
 text, filters, or owners. These are product-use signals only; they do not

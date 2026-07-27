@@ -158,10 +158,12 @@ owns the browser UI.
     submitted requests until they are resolved, dismissed, or withdrawn.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
-    and saved-view mutation counters are updated in the same transaction as
-    their canonical mutations; parcel opens, official-dossier opens,
+    saved-view mutation, and saved-thesis baseline lifecycle counters are
+    updated in the same transaction as their canonical mutations; parcel
+    opens, official-dossier opens,
     comparison opens, decision-audit opens, underwriting opens/first
-    adjustments, and saved-view applies remain directional client counters.
+    adjustments, saved-view applies, and saved-thesis change-review opens
+    remain directional client counters.
     Official-dossier events contain no BBL, address, owner, source fact,
     readiness state, lead membership, or result. Comparison events contain no
     parcel IDs or compared values. Decision-audit events identify only the posture or tab
@@ -184,9 +186,11 @@ owns the browser UI.
     check, citation, source date, or review time. The report labels the activation gate
     `collecting` until at least 30 workflow records exist across at least three
     users, and the saved-view-reuse gate `collecting` until at least 10 applies
-    exist across at least three users. No user, parcel, saved-view name, search
-    text, filter, or owner identifier is emitted, and neither gate is a model
-    or lead-quality metric.
+    exist across at least three users. A separate thesis-monitor gate requires
+    at least five canonical baseline advances and 10 change-review opens, each
+    across at least three users. No user, parcel, saved-view name, search text,
+    filter, membership, generation, result count, or owner identifier is
+    emitted, and none of these gates is a model or lead-quality metric.
   - Public pilot intake is a separate bounded conversion contract. An opaque
     idempotency key produces a non-identifying request ID; explicit consent,
     honeypot filtering, per-IP throttling, field length limits, and a 365-day

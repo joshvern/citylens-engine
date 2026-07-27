@@ -220,9 +220,10 @@ def maybe_parcel_read_auth(
     """Optional auth plus a least-privilege production-smoke credential.
 
     The smoke key is intentionally a separate header and dependency rather
-    than another general API credential. Only Parcel Intelligence's tiered
-    map, sweep, and selected-parcel read routes use this dependency, so the
-    key cannot create runs or read/write private workflow state.
+    than another general API credential. Only Parcel Intelligence's bounded
+    map, sweep, selected-parcel, and official-dossier read routes use this
+    dependency, so the key cannot create runs or read/write private workflow
+    state.
     """
 
     if parcel_smoke_key:
@@ -246,4 +247,14 @@ def maybe_parcel_read_auth(
             plan_type="smoke_read_only",
         )
 
+    return auth
+
+
+def require_parcel_read_auth(
+    auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),
+) -> AuthContext:
+    """Require a user credential or least-privilege parcel smoke key."""
+
+    if auth is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
     return auth

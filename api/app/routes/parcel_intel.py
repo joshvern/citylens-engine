@@ -57,7 +57,11 @@ from ..models.schemas import (
     ParcelScreeningLedgerRow,
     ParcelScreeningStatusResponse,
 )
-from ..services.auth import maybe_parcel_read_auth, require_auth
+from ..services.auth import (
+    maybe_parcel_read_auth,
+    require_auth,
+    require_parcel_read_auth,
+)
 from ..services.auth_context import AuthContext
 from ..services.gcs_artifacts import GcsArtifacts
 from ..services.parcel_address_resolver import ParcelAddressResolver
@@ -1190,7 +1194,7 @@ def _owner_source_status(
 def parcel_intel_official_parcel(
     bbl: str,
     response: Response,
-    auth: AuthContext = Depends(require_auth),
+    auth: AuthContext = Depends(require_parcel_read_auth),
     gcs: GcsArtifacts = Depends(get_gcs),
     dossiers: ParcelOfficialDossierStore = Depends(get_official_dossiers),
 ) -> ParcelOfficialDossierResponse:

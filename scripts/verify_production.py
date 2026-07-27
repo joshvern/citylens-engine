@@ -1768,9 +1768,36 @@ def validate_index(
         failures,
     )
     feature_gate = feature_drift.get("gate")
-    feature_gate = feature_gate if isinstance(feature_gate, dict) else {}
     _expect(
-        feature_gate.get("passed") is True,
+        isinstance(feature_gate, dict),
+        "index: inference feature drift gate is missing",
+        failures,
+    )
+    feature_gate = feature_gate if isinstance(feature_gate, dict) else {}
+    feature_failures = feature_gate.get("failures")
+    feature_failures = (
+        [str(item) for item in feature_failures]
+        if isinstance(feature_failures, list)
+        else []
+    )
+    diff_failures = diff_gate.get("failures")
+    diff_failures = (
+        {str(item) for item in diff_failures}
+        if isinstance(diff_failures, list)
+        else set()
+    )
+    reviewed_feature_override = (
+        feature_gate.get("passed") is False
+        and bool(feature_failures)
+        and set(feature_failures).issubset(diff_failures)
+        and diff_gate.get("passed") is True
+        and diff_gate.get("thresholds_passed") is False
+        and diff_gate.get("override_applied") is True
+        and isinstance(diff_gate.get("override_reason"), str)
+        and bool(diff_gate["override_reason"].strip())
+    )
+    _expect(
+        feature_gate.get("passed") is True or reviewed_feature_override,
         "index: inference feature drift gate did not pass",
         failures,
     )

@@ -972,6 +972,41 @@ def test_index_validator_requires_reviewed_generation_diff_override() -> None:
     assert validate_index(bad, max_age_days=35, now=now) == []
 
 
+def test_index_validator_accepts_nested_feature_drift_only_under_matching_override() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    reviewed = deepcopy(_index())
+    reviewed["generation_diff"]["inference_feature_drift"]["gate"].update(
+        {
+            "passed": False,
+            "failures": ["categorical_feature_drift_exceeded"],
+        }
+    )
+    reviewed["generation_diff"]["gate"].update(
+        {
+            "passed": True,
+            "thresholds_passed": False,
+            "override_applied": True,
+            "override_reason": "Reviewed borough-floor selection release PI-64.",
+            "failures": [
+                "score_psi_exceeded",
+                "categorical_feature_drift_exceeded",
+            ],
+        }
+    )
+
+    assert validate_index(reviewed, max_age_days=35, now=now) == []
+
+    unaccounted = deepcopy(reviewed)
+    unaccounted["generation_diff"]["inference_feature_drift"]["gate"][
+        "failures"
+    ] = ["feature_psi_exceeded"]
+
+    assert (
+        "index: inference feature drift gate did not pass"
+        in validate_index(unaccounted, max_age_days=35, now=now)
+    )
+
+
 def test_index_validator_requires_full_feature_drift_and_score_replay() -> None:
     now = datetime(2026, 7, 24, tzinfo=timezone.utc)
     bad = deepcopy(_index())

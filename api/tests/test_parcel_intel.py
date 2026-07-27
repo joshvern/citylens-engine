@@ -1329,15 +1329,44 @@ def test_parcel_intel_rejects_unknown_borough(monkeypatch) -> None:
     assert "borough" in r.json()["detail"].lower()
 
 
-def test_parcel_intel_clamps_top_to_1000(monkeypatch) -> None:
+def test_parcel_intel_rejects_top_above_published_inventory_limit(
+    monkeypatch,
+) -> None:
     _set_required_env(monkeypatch)
     fake = _make_fake_gcs(["brooklyn"])
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
     client = TestClient(app)
-    # FastAPI Query(le=1000) returns 422 for top=1001.
-    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 1001})
+    r = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 5001},
+    )
     assert r.status_code == 422
+
+
+def test_authenticated_sweep_returns_more_than_legacy_borough_quota(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            f"3021{index:06d}",
+            acquisition_rank=index + 1,
+            citywide_rank=index + 1,
+        )
+        for index in range(1_501)
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed()
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 5000},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["rows"]) == 1_501
 
 
 def test_parcel_intel_503_when_no_data_published(monkeypatch) -> None:
@@ -1613,7 +1642,10 @@ def test_anon_sweep_capped_at_25_rows(monkeypatch) -> None:
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
     client = TestClient(app)
-    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 1000})
+    r = client.get(
+        "/v1/parcel-intel/sweep",
+        params={"borough": "brooklyn", "top": 5000},
+    )
     assert r.status_code == 200, r.text
     # Silently clamped, not an error.
     assert len(r.json()["rows"]) == 25

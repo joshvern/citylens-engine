@@ -91,6 +91,12 @@ _MAP_CACHE_AUTHED = "private, no-store"
 # Anonymous preview cap: unauthenticated callers get at most this many
 # rows per borough (silently clamped, not an error).
 _ANON_TOP_CAP = 25
+# One borough may contain well over the former 1,000-row quota now that
+# publication uses a citywide merit order with only a borough floor. Keep the
+# authenticated sweep ceiling aligned with the complete published inventory
+# so explicit CSV exports and legacy recovery cannot silently truncate a
+# borough.
+_PUBLISHED_INVENTORY_LIMIT = 5_000
 
 # Data older than this is flagged stale on the index (the sweep cadence
 # is monthly; 45 days means a missed retrain/publish cycle).
@@ -1391,10 +1397,11 @@ def parcel_intel_sweep(
     top: int = Query(
         20,
         ge=1,
-        le=1000,
+        le=_PUBLISHED_INVENTORY_LIMIT,
         description=(
-            "How many rows to return (1-1000). Unauthenticated requests are "
-            f"silently capped at {_ANON_TOP_CAP}."
+            "How many rows to return (1-5000). Unauthenticated requests are "
+            f"silently capped at {_ANON_TOP_CAP}; authenticated requests may "
+            "retrieve a complete unequal-borough publication."
         ),
     ),
     auth: Optional[AuthContext] = Depends(maybe_parcel_read_auth),

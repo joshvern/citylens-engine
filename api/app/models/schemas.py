@@ -1893,6 +1893,80 @@ class ParcelAddressResolveResponse(BaseModel):
         return self
 
 
+class ParcelOfficialLinks(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    zola: str = Field(pattern=r"^https://")
+    acris: str = Field(pattern=r"^https://")
+    dob_bis: str = Field(pattern=r"^https://")
+
+
+class ParcelOfficialDossierResponse(BaseModel):
+    """Authenticated current official facts for one NYC tax lot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[
+        "citylens/parcel-official-dossier@v1"
+    ] = "citylens/parcel-official-dossier@v1"
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+    address: Optional[str] = Field(default=None, max_length=200)
+    pluto_owner_name: Optional[str] = Field(default=None, max_length=200)
+    acris_owner_name: Optional[str] = Field(default=None, max_length=200)
+    owner_source_status: Literal[
+        "match",
+        "different",
+        "pluto_only",
+        "acris_only",
+        "unavailable",
+    ]
+    last_sale_date: Optional[date] = None
+    last_sale_price: Optional[float] = Field(default=None, ge=0)
+    years_held: Optional[int] = Field(default=None, ge=0, le=500)
+    lot_area_sqft: Optional[float] = Field(default=None, ge=0)
+    building_area_sqft: Optional[float] = Field(default=None, ge=0)
+    units: Optional[int] = Field(default=None, ge=0)
+    num_floors: Optional[float] = Field(default=None, ge=0, le=200)
+    year_built: Optional[int] = Field(default=None, ge=1600, le=2200)
+    land_use: Optional[str] = Field(default=None, max_length=8)
+    building_class: Optional[str] = Field(default=None, max_length=12)
+    zoning_district_1: Optional[str] = Field(default=None, max_length=40)
+    zoning_district_2: Optional[str] = Field(default=None, max_length=40)
+    built_far: Optional[float] = Field(default=None, ge=0)
+    residential_far: Optional[float] = Field(default=None, ge=0)
+    commercial_far: Optional[float] = Field(default=None, ge=0)
+    facility_far: Optional[float] = Field(default=None, ge=0)
+    assessed_land: Optional[float] = Field(default=None, ge=0)
+    assessed_building: Optional[float] = Field(default=None, ge=0)
+    assessed_total: Optional[float] = Field(default=None, ge=0)
+    firm_2007_floodplain: bool
+    pfirm_2015_floodplain: bool
+    environmental_review_required: bool
+    environmental_designation_kind: Optional[str] = Field(
+        default=None,
+        max_length=60,
+    )
+    environmental_designation_number: Optional[str] = Field(
+        default=None,
+        max_length=60,
+    )
+    property_facts_dataset_id: Literal["64uk-42ks"]
+    property_facts_retrieved_at: datetime
+    ownership_dataset_ids: dict[
+        Literal["master", "legals", "parties"],
+        str,
+    ]
+    ownership_features_updated_at: datetime
+    dossier_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    official_links: ParcelOfficialLinks
+    interpretation: str = Field(min_length=1, max_length=1200)
+
+
 class ParcelSavedSearchFilters(BaseModel):
     """The complete, restorable state of the citywide parcel explorer.
 

@@ -35,6 +35,7 @@ from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
 _PRIVATE_PARCEL_ROUTE_PREFIXES = (
     "/v1/parcel-intel/evidence-issues",
+    "/v1/parcel-intel/official-parcel",
     "/v1/parcel-intel/product-events",
     "/v1/parcel-intel/resolve-address",
     "/v1/parcel-intel/saved-searches",

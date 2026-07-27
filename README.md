@@ -102,6 +102,16 @@ Current pinned release tag:
   are rate-limited, private/no-store, and credential-varying. The underlying
   index contains no plaintext address, owner, score, rank, or
   candidate-membership field.
+- Once a BBL is known, authenticated users can request
+  `GET /v1/parcel-intel/official-parcel/{bbl}` for a source-dated dossier on
+  any current NYC PLUTO tax lot, independent of the ranked 5,000-lead
+  inventory. The response preserves PLUTO and ACRIS recorded-owner fields
+  separately, adds deed, physical, mapped-zoning, assessment, flood, and
+  environmental facts, and links the underlying NYC systems. It contains no
+  model score, rank, lead-membership flag, contact information,
+  beneficial-owner inference, workflow data, or seller-intent claim. The API
+  reads and integrity-checks one private SHA-256 BBL shard, returns one lot,
+  rate-limits the user, and marks every response private/no-store.
 - The public index carries a strict, parcel-free
   `prospective-validation-status@v1` only when its source generation matches
   the active atomic feed. It separates the live cohort's

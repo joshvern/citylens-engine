@@ -179,6 +179,13 @@ def _other_bbl_in_same_shard(bbl: str) -> str:
     raise AssertionError("failed to find test BBL in target shard")
 
 
+def _authenticate(auth_override) -> None:
+    context = auth_override()
+    app.dependency_overrides[
+        parcel_intel_routes.require_parcel_read_auth
+    ] = lambda: context
+
+
 @pytest.fixture(autouse=True)
 def _reset_store() -> None:
     parcel_intel_routes._OFFICIAL_DOSSIERS = ParcelOfficialDossierStore()
@@ -190,7 +197,7 @@ def _reset_store() -> None:
 def test_official_dossier_returns_source_specific_facts_privately(
     auth_override,
 ) -> None:
-    auth_override()
+    _authenticate(auth_override)
     fake = FakeGcs(_store([_row()]))
     app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
 
@@ -221,7 +228,7 @@ def test_official_dossier_returns_source_specific_facts_privately(
 def test_owner_disagreement_is_preserved_not_reconciled(
     auth_override,
 ) -> None:
-    auth_override()
+    _authenticate(auth_override)
     fake = FakeGcs(
         _store(
             [
@@ -253,7 +260,7 @@ def test_official_dossier_requires_auth_and_marks_early_error_private() -> None:
 
 
 def test_missing_tax_lot_is_explicit(auth_override) -> None:
-    auth_override()
+    _authenticate(auth_override)
     missing_bbl = "3058920039"
     fake = FakeGcs(
         _store([_row(), _row(_other_bbl_in_same_shard(missing_bbl))])
@@ -270,7 +277,7 @@ def test_missing_tax_lot_is_explicit(auth_override) -> None:
 
 
 def test_dossier_integrity_failure_fails_closed(auth_override) -> None:
-    auth_override()
+    _authenticate(auth_override)
     store = _store([_row()])
     generation = "20260727T005131244552Z-9624c5a2e365"
     shard = hashlib.sha256(b"3058920038").hexdigest()[:2]
@@ -288,3 +295,30 @@ def test_dossier_integrity_failure_fails_closed(auth_override) -> None:
 
     assert response.status_code == 503
     assert "integrity check" in response.json()["detail"]
+
+
+def test_read_only_parcel_smoke_key_can_verify_dossier_but_not_workflow(
+    monkeypatch,
+) -> None:
+    smoke_key = "production-smoke-test-key"
+    monkeypatch.setenv(
+        "CITYLENS_PARCEL_SMOKE_API_KEY_HASHES",
+        hashlib.sha256(smoke_key.encode()).hexdigest(),
+    )
+    fake = FakeGcs(_store([_row()]))
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    headers = {"X-CityLens-Parcel-Smoke-Key": smoke_key}
+    client = TestClient(app)
+
+    dossier = client.get(
+        "/v1/parcel-intel/official-parcel/3058920038",
+        headers=headers,
+    )
+    workflow = client.get(
+        "/v1/parcel-intel/workflow",
+        headers=headers,
+    )
+
+    assert dossier.status_code == 200
+    assert dossier.json()["bbl"] == "3058920038"
+    assert workflow.status_code == 401

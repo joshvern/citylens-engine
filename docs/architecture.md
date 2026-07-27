@@ -146,10 +146,12 @@ owns the browser UI.
   - Aggregate product-adoption evidence is stored as one value-minimized
     `product_usage_days` counter document per user/day. Workflow lifecycle
     and saved-view mutation counters are updated in the same transaction as
-    their canonical mutations; parcel opens, comparison opens, decision-audit
-    opens, underwriting opens/first adjustments, and saved-view applies remain
-    directional client counters. Comparison events contain no parcel IDs or
-    compared values. Decision-audit events identify only the posture or tab
+    their canonical mutations; parcel opens, official-dossier opens,
+    comparison opens, decision-audit opens, underwriting opens/first
+    adjustments, and saved-view applies remain directional client counters.
+    Official-dossier events contain no BBL, address, owner, source fact,
+    readiness state, lead membership, or result. Comparison events contain no
+    parcel IDs or compared values. Decision-audit events identify only the posture or tab
     entry point. Underwriting events identify only the Underwrite tab or first
     base-assumption adjustment and never contain a parcel, input value, range,
     or result. A daily keyless GitHub workflow

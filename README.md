@@ -429,8 +429,10 @@ environmental, MIH, transit, or imagery signals.
 [production-smoke.yml](.github/workflows/production-smoke.yml) runs the
 same public verifier plus `scripts/verify_authenticated_inventory.py` every
 six hours and on demand. The authenticated check proves that production
-returns exactly 5,000 unique parcels (1,000 per borough), preserves owner
-context, requires all 5,000 map rows to carry plausible NYC coordinates,
+returns exactly 5,000 unique parcels under the manifest's versioned selection
+policy (currently a 250-lead minimum per borough with the remainder selected
+citywide), preserves owner context, requires all 5,000 map rows to carry
+plausible NYC coordinates,
 serves a full selected-parcel decision audit, compresses the map payload, and
 marks both reads `private, no-store`. It also verifies the fixed Brooklyn
 official-dossier reference lot through the API and browser-facing proxy,

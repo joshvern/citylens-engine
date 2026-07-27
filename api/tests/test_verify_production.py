@@ -500,6 +500,79 @@ def test_index_validator_enforces_freshness_quality_and_model_governance() -> No
     assert any("prospective 2026 validation flag" in failure for failure in failures)
 
 
+def test_index_validator_accepts_versioned_variable_borough_selection() -> None:
+    now = datetime(2026, 7, 24, tzinfo=timezone.utc)
+    index = _index()
+    counts = {
+        "manhattan": 250,
+        "brooklyn": 1339,
+        "queens": 1520,
+        "bronx": 672,
+        "staten_island": 1219,
+    }
+    eligible_counts = {
+        "manhattan": 2059,
+        "brooklyn": 2468,
+        "queens": 2375,
+        "bronx": 2971,
+        "staten_island": 2531,
+    }
+    index["boroughs"] = [
+        {"slug": slug, "display_name": slug.title(), "count": count}
+        for slug, count in counts.items()
+    ]
+    quality = index["quality_gate"]
+    quality["selection_policy"] = {
+        "schema": "citylens-parcel-intel/selection-policy@v1",
+        "policy_id": "borough_floor_250",
+        "target_count": 5000,
+        "selected_count": 5000,
+        "eligible_selected_count": 5000,
+        "minimum_per_borough": 250,
+        "effective_minimum_per_borough": 250,
+        "eligible_candidate_count": 12404,
+        "by_borough": {
+            slug: {
+                "eligible_count": eligible_counts[slug],
+                "selected_count": count,
+                "requested_minimum": 250,
+                "effective_minimum": 250,
+                "requested_minimum_satisfied": True,
+            }
+            for slug, count in counts.items()
+        },
+        "membership_sha256": "d" * 64,
+        "passed": True,
+        "failures": [],
+    }
+    tie_audit = quality["ranking_tie_audit"]
+    tie_audit["deterministic_fallback"] = ["bbl"]
+    tie_audit["borough_deterministic_fallback"] = ["model_rank", "bbl"]
+    for slug, count in counts.items():
+        tie_audit["boroughs"][slug]["row_count"] = count
+        tie_audit["boroughs"][slug]["tiebreaker_count"] = count
+        quality["boroughs"][slug]["row_count"] = count
+    index["model_metadata"]["ranking_policy"] = {
+        "primary_field": "score_calibrated",
+        "tiebreaker_field": "score_raw",
+        "tiebreaker_scope": "equal_calibrated_probability_only",
+        "tiebreaker_is_public": False,
+        "deterministic_fallback": ["bbl"],
+        "borough_rank_fallback": ["model_rank", "bbl"],
+    }
+
+    assert validate_index(index, max_age_days=35, now=now) == []
+
+    index["quality_gate"]["selection_policy"]["by_borough"]["manhattan"][
+        "selected_count"
+    ] = 249
+    failures = validate_index(index, max_age_days=35, now=now)
+    assert (
+        "index: manhattan selection count/floor receipt is invalid"
+        in failures
+    )
+
+
 def test_index_validator_rejects_overstated_historical_benchmark() -> None:
     now = datetime(2026, 7, 24, tzinfo=timezone.utc)
     bad = deepcopy(_index())

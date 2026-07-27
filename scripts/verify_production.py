@@ -1038,13 +1038,94 @@ def validate_index(
         row.get("slug"): row for row in borough_rows if isinstance(row, dict)
     }
     _expect(set(by_slug) == set(BOROUGHS), "index: expected exactly five NYC boroughs", failures)
-    for slug in BOROUGHS:
-        row = by_slug.get(slug) or {}
-        _expect(row.get("count") == 1000, f"index: {slug} count is not 1000", failures)
 
     quality = index.get("quality_gate")
     _expect(isinstance(quality, dict), "index: quality_gate is missing", failures)
     quality = quality if isinstance(quality, dict) else {}
+    selection_policy = quality.get("selection_policy")
+    selection_policy = (
+        selection_policy if isinstance(selection_policy, dict) else None
+    )
+    if selection_policy is None:
+        # Transitional support for the already-active v5 equal-borough feed.
+        for slug in BOROUGHS:
+            row = by_slug.get(slug) or {}
+            _expect(
+                row.get("count") == 1000,
+                f"index: legacy {slug} count is not 1000",
+                failures,
+            )
+    else:
+        _expect(
+            selection_policy.get("schema")
+            == "citylens-parcel-intel/selection-policy@v1",
+            "index: selection policy schema is invalid",
+            failures,
+        )
+        _expect(
+            selection_policy.get("policy_id") == "borough_floor_250",
+            "index: selection policy ID is not borough_floor_250",
+            failures,
+        )
+        _expect(
+            selection_policy.get("target_count") == 5000
+            and selection_policy.get("selected_count") == 5000
+            and selection_policy.get("eligible_selected_count") == 5000,
+            "index: selection policy did not produce 5,000 eligible leads",
+            failures,
+        )
+        _expect(
+            selection_policy.get("minimum_per_borough") == 250
+            and selection_policy.get("effective_minimum_per_borough") == 250,
+            "index: selection policy borough floor is invalid",
+            failures,
+        )
+        _expect(
+            selection_policy.get("passed") is True
+            and selection_policy.get("failures") == [],
+            "index: selection policy receipt did not pass",
+            failures,
+        )
+        membership_sha = selection_policy.get("membership_sha256")
+        _expect(
+            isinstance(membership_sha, str)
+            and len(membership_sha) == 64
+            and all(
+                character in "0123456789abcdef"
+                for character in membership_sha
+            ),
+            "index: selection membership digest is invalid",
+            failures,
+        )
+        selection_boroughs = selection_policy.get("by_borough")
+        selection_boroughs = (
+            selection_boroughs
+            if isinstance(selection_boroughs, dict)
+            else {}
+        )
+        _expect(
+            sum(
+                int((by_slug.get(slug) or {}).get("count") or 0)
+                for slug in BOROUGHS
+            )
+            == 5000,
+            "index: selected borough counts do not sum to 5,000",
+            failures,
+        )
+        for slug in BOROUGHS:
+            index_count = (by_slug.get(slug) or {}).get("count")
+            policy_borough = selection_boroughs.get(slug)
+            policy_borough = (
+                policy_borough if isinstance(policy_borough, dict) else {}
+            )
+            _expect(
+                isinstance(index_count, int)
+                and index_count >= 250
+                and policy_borough.get("selected_count") == index_count
+                and policy_borough.get("requested_minimum_satisfied") is True,
+                f"index: {slug} selection count/floor receipt is invalid",
+                failures,
+            )
     _expect(quality.get("passed") is True, "index: quality gate did not pass", failures)
     _expect(quality.get("failures") == [], "index: quality gate has failures", failures)
     _expect(
@@ -1511,8 +1592,22 @@ def validate_index(
         and ranking_tie_audit.get("tiebreaker_scope")
         == "equal_calibrated_probability_only"
         and ranking_tie_audit.get("tiebreaker_is_public") is False
-        and ranking_tie_audit.get("deterministic_fallback")
-        == ["model_rank", "bbl"],
+        and (
+            (
+                selection_policy is None
+                and ranking_tie_audit.get("deterministic_fallback")
+                == ["model_rank", "bbl"]
+            )
+            or (
+                selection_policy is not None
+                and ranking_tie_audit.get("deterministic_fallback")
+                == ["bbl"]
+                and ranking_tie_audit.get(
+                    "borough_deterministic_fallback"
+                )
+                == ["model_rank", "bbl"]
+            )
+        ),
         "index: ranking tie policy is invalid",
         failures,
     )
@@ -1531,9 +1626,10 @@ def validate_index(
     for slug in BOROUGHS:
         tie_stats = ranking_tie_boroughs.get(slug)
         tie_stats = tie_stats if isinstance(tie_stats, dict) else {}
+        expected_borough_count = (by_slug.get(slug) or {}).get("count")
         _expect(
-            tie_stats.get("row_count") == 1000
-            and tie_stats.get("tiebreaker_count") == 1000
+            tie_stats.get("row_count") == expected_borough_count
+            and tie_stats.get("tiebreaker_count") == expected_borough_count
             and tie_stats.get("tiebreaker_coverage") == 1.0,
             f"index: {slug} ranking tie-break coverage is incomplete",
             failures,
@@ -1559,8 +1655,8 @@ def validate_index(
         row = row if isinstance(row, dict) else {}
         _expect(row.get("passed") is True, f"index: {slug} quality gate failed", failures)
         _expect(
-            row.get("row_count") == 1000,
-            f"index: {slug} quality row_count is not 1000",
+            row.get("row_count") == (by_slug.get(slug) or {}).get("count"),
+            f"index: {slug} quality row_count does not match manifest",
             failures,
         )
         for field in (
@@ -1773,15 +1869,32 @@ def validate_index(
         "index: historical benchmark scope overstates evaluation independence",
         failures,
     )
+    model_ranking_policy = model.get("ranking_policy")
+    model_ranking_policy = (
+        model_ranking_policy
+        if isinstance(model_ranking_policy, dict)
+        else {}
+    )
     _expect(
-        model.get("ranking_policy")
-        == {
-            "primary_field": "score_calibrated",
-            "tiebreaker_field": "score_raw",
-            "tiebreaker_scope": "equal_calibrated_probability_only",
-            "tiebreaker_is_public": False,
-            "deterministic_fallback": ["model_rank", "bbl"],
-        },
+        model_ranking_policy.get("primary_field") == "score_calibrated"
+        and model_ranking_policy.get("tiebreaker_field") == "score_raw"
+        and model_ranking_policy.get("tiebreaker_scope")
+        == "equal_calibrated_probability_only"
+        and model_ranking_policy.get("tiebreaker_is_public") is False
+        and (
+            (
+                selection_policy is None
+                and model_ranking_policy.get("deterministic_fallback")
+                == ["model_rank", "bbl"]
+            )
+            or (
+                selection_policy is not None
+                and model_ranking_policy.get("deterministic_fallback")
+                == ["bbl"]
+                and model_ranking_policy.get("borough_rank_fallback")
+                == ["model_rank", "bbl"]
+            )
+        ),
         "index: model ranking policy is invalid",
         failures,
     )

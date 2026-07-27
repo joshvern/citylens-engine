@@ -12,6 +12,7 @@ import argparse
 import gzip
 import json
 import os
+import re
 import sys
 import time
 from collections import Counter
@@ -32,6 +33,10 @@ BOROUGHS = (
 EXPECTED_TOTAL = 5_000
 EXPECTED_PER_BOROUGH = 1_000
 SMOKE_HEADER = "X-CityLens-Parcel-Smoke-Key"
+OFFICIAL_DOSSIER_SMOKE_BBL = "3058920038"
+_DOSSIER_GENERATION_RE = re.compile(
+    r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+)
 
 
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
@@ -268,6 +273,178 @@ def validate_authenticated_detail(
     return failures
 
 
+def validate_official_dossier(
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    expected_bbl: str,
+) -> list[str]:
+    """Validate useful source facts without returning them in the report."""
+
+    failures: list[str] = []
+    _expect(
+        payload.get("schema_version")
+        == "citylens/parcel-official-dossier@v1",
+        "official dossier: schema is invalid",
+        failures,
+    )
+    _expect(
+        payload.get("bbl") == expected_bbl,
+        "official dossier: response BBL does not match the request",
+        failures,
+    )
+    _expect(
+        payload.get("borough") == "brooklyn",
+        "official dossier: reference borough is invalid",
+        failures,
+    )
+    _expect(
+        payload.get("address") == "464 OVINGTON AVENUE",
+        "official dossier: reference official address is invalid",
+        failures,
+    )
+    _expect(
+        payload.get("property_facts_dataset_id") == "64uk-42ks",
+        "official dossier: PLUTO dataset identity is invalid",
+        failures,
+    )
+    _expect(
+        payload.get("ownership_dataset_ids")
+        == {
+            "master": "bnx9-e6tj",
+            "legals": "8h5j-fqxa",
+            "parties": "636b-3b5g",
+        },
+        "official dossier: ACRIS dataset identities are invalid",
+        failures,
+    )
+    _expect(
+        payload.get("owner_source_status")
+        in {
+            "match",
+            "different",
+            "pluto_only",
+            "acris_only",
+            "unavailable",
+        },
+        "official dossier: owner-source status is invalid",
+        failures,
+    )
+    _expect(
+        any(
+            isinstance(payload.get(key), str)
+            and bool(payload[key].strip())
+            for key in ("pluto_owner_name", "acris_owner_name")
+        ),
+        "official dossier: both recorded-owner sources are empty",
+        failures,
+    )
+    _expect(
+        isinstance(payload.get("lot_area_sqft"), (int, float))
+        and not isinstance(payload.get("lot_area_sqft"), bool)
+        and float(payload["lot_area_sqft"]) > 0,
+        "official dossier: lot area is unavailable or invalid",
+        failures,
+    )
+    _expect(
+        isinstance(payload.get("zoning_district_1"), str)
+        and bool(payload["zoning_district_1"].strip()),
+        "official dossier: mapped zoning reference is unavailable",
+        failures,
+    )
+    generation = payload.get("dossier_generation")
+    _expect(
+        isinstance(generation, str)
+        and _DOSSIER_GENERATION_RE.fullmatch(generation) is not None,
+        "official dossier: generation is invalid",
+        failures,
+    )
+    for key in (
+        "property_facts_retrieved_at",
+        "ownership_features_updated_at",
+    ):
+        value = payload.get(key)
+        try:
+            parsed = datetime.fromisoformat(
+                str(value).replace("Z", "+00:00")
+            )
+            valid_date = (
+                parsed.tzinfo is not None
+                and parsed <= datetime.now(timezone.utc)
+            )
+        except ValueError:
+            valid_date = False
+        _expect(
+            valid_date,
+            f"official dossier: {key} is invalid or future-dated",
+            failures,
+        )
+    links = payload.get("official_links")
+    _expect(
+        isinstance(links, dict)
+        and set(links) == {"zola", "acris", "dob_bis"}
+        and all(
+            isinstance(value, str) and value.startswith("https://")
+            for value in links.values()
+        ),
+        "official dossier: official links are invalid",
+        failures,
+    )
+    forbidden_fields = {
+        "score",
+        "rank",
+        "lead_membership",
+        "phone",
+        "email",
+        "contact",
+        "beneficial_owner",
+        "workflow",
+        "seller_intent",
+    }
+    _expect(
+        not (forbidden_fields & set(payload)),
+        "official dossier: a prohibited inference or workflow field leaked",
+        failures,
+    )
+    interpretation = payload.get("interpretation")
+    _expect(
+        isinstance(interpretation, str)
+        and all(
+            phrase in interpretation.lower()
+            for phrase in (
+                "not a citylens lead",
+                "not",
+                "title report",
+                "seller-intent",
+            )
+        ),
+        "official dossier: evidence limitations are incomplete",
+        failures,
+    )
+    cache_control = headers.get("cache-control", "").lower()
+    _expect(
+        "private" in cache_control and "no-store" in cache_control,
+        "official dossier: authenticated response is not private, no-store",
+        failures,
+    )
+    vary = {
+        value.strip().lower()
+        for value in headers.get("vary", "").split(",")
+        if value.strip()
+    }
+    _expect(
+        {
+            "authorization",
+            "x-api-key",
+            "x-citylens-parcel-smoke-key",
+        }
+        <= vary,
+        "official dossier: response does not vary on every credential",
+        failures,
+    )
+    return failures
+
+
 def run_checks(
     *,
     api_base: str,
@@ -345,9 +522,42 @@ def run_checks(
                         expected_owner=str(detail_row["owner_name"]),
                     )
                 )
+
+        dossier_url = (
+            f"{api_base.rstrip('/')}/v1/parcel-intel/official-parcel/"
+            f"{quote(OFFICIAL_DOSSIER_SMOKE_BBL)}"
+        )
+        (
+            dossier_status,
+            dossier_headers,
+            dossier_payload,
+            dossier_elapsed,
+        ) = _request_json(
+            dossier_url,
+            smoke_key=smoke_key,
+            timeout=timeout,
+        )
+        timings["official_dossier"] = dossier_elapsed
+        _expect(
+            dossier_status == 200,
+            (
+                "official dossier: expected HTTP 200, "
+                f"got {dossier_status}"
+            ),
+            failures,
+        )
+        if dossier_status == 200:
+            failures.extend(
+                validate_official_dossier(
+                    dossier_payload,
+                    dossier_headers,
+                    expected_bbl=OFFICIAL_DOSSIER_SMOKE_BBL,
+                )
+            )
     except (RuntimeError, TypeError) as exc:
         failures.append(str(exc))
         map_payload = {}
+        dossier_payload = {}
 
     return {
         "schema_version": "citylens/authenticated-production-verification@v1",
@@ -370,6 +580,19 @@ def run_checks(
                 if _is_mappable_nyc_row(row)
             ),
             "generated_at": map_payload.get("generated_at"),
+        },
+        "official_dossier": {
+            "verified": (
+                dossier_payload.get("schema_version")
+                == "citylens/parcel-official-dossier@v1"
+            ),
+            "generation": dossier_payload.get("dossier_generation"),
+            "property_facts_retrieved_at": dossier_payload.get(
+                "property_facts_retrieved_at"
+            ),
+            "ownership_features_updated_at": dossier_payload.get(
+                "ownership_features_updated_at"
+            ),
         },
         "timings_seconds": timings,
     }

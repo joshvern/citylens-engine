@@ -81,12 +81,23 @@ jobs:
           audit = report["decision_audit_engagement"]
           underwriting = report["underwriting_engagement"]
           pilot = report["pilot_intake"]
+          governance = report["measurement_governance"]
           icon = "✅" if gate["status"] == "ready" else "🟡"
           print(f"## {icon} CityLens adoption evidence")
           print()
           print(f"- Status: `{gate['status']}`")
           print(f"- Active users: `{report['active_users']}`")
           print(f"- Active user-days: `{report['active_user_days']}`")
+          print(
+              "- Governed synthetic monitors excluded: "
+              f"`{governance['synthetic_actors_excluded']}` actor(s), "
+              f"`{governance['product_usage_days_excluded']}` product "
+              "usage day(s), "
+              f"`{governance['workflow_records_excluded']}` workflow "
+              "record(s), and "
+              f"`{governance['saved_view_records_excluded']}` saved "
+              "view record(s)"
+          )
           print(f"- Parcel opens: `{report['events'].get('parcel_opened', 0)}`")
           print(
               f"- Canonical workflow records: `{inventory['records']}` "

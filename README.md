@@ -610,7 +610,7 @@ can inspect aggregate adoption without exporting user or parcel identifiers:
   --output product-adoption-report.json
 ```
 
-The v14 report contains only window totals, event/source counts, active-user and
+The v15 report contains only window totals, event/source counts, active-user and
 active-user-day counts, aggregate canonical workflow and saved-view inventory,
 directional parcel-open to comparison, decision-audit, and workflow-create
 ratios, a canonical comparison-to-workflow handoff ratio, comparison entry
@@ -619,7 +619,15 @@ engagement and handoff, decision-audit, underwriting-engagement,
 source-bound evidence-review, aggregate evidence-issue, official-dossier
 engagement, activation, saved-view-reuse, and saved-thesis-monitor evidence
 gates, a separate constrained-thesis-composer engagement gate,
-and aggregate pilot-intake plan/status counts. Parcel opens, comparison opens, decision-audit opens,
+and aggregate pilot-intake plan/status counts. Before aggregation it excludes
+any Firestore user explicitly classified with
+`adoption_measurement_class=synthetic_monitor`, including that actor's product
+usage days, workflow records, and saved views. The report reveals only aggregate
+exclusion counts, never the classified user IDs or emails. This keeps scheduled
+production verification from masquerading as customer adoption while preserving
+the verifier's real API behavior.
+
+Parcel opens, comparison opens, decision-audit opens,
 underwriting opens/first adjustments, official-dossier opens, saved-view
 applies, and saved-screen comparison opens are best-effort client-side
 directional counters. Thesis-composer applies are also best-effort directional

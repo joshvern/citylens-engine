@@ -164,6 +164,11 @@ owns the browser UI.
     comparison opens, decision-audit opens, underwriting opens/first
     adjustments, saved-view applies, and saved-thesis change-review opens
     remain directional client counters.
+    Firestore user records explicitly classified as
+    `adoption_measurement_class=synthetic_monitor` are excluded before
+    aggregation so scheduled production verification cannot inflate product
+    adoption. The aggregate report exposes only exclusion counts, not actor
+    identities.
     Official-dossier events contain no BBL, address, owner, source fact,
     readiness state, lead membership, or result. Comparison events contain no
     parcel IDs or compared values. Decision-audit events identify only the posture or tab

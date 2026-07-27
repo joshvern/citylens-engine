@@ -904,6 +904,15 @@ or service-account-key permissions. The workflow warns rather than fails when
 the activation gate is still collecting; query/authentication failures remain
 real workflow failures.
 
+Production monitors that authenticate as normal users must be classified on
+their Firestore user document with
+`adoption_measurement_class=synthetic_monitor`. The v15 reporter resolves that
+server-governed class, excludes the actor before product-event, workflow, and
+saved-view aggregation, and emits only aggregate exclusion counts. Do not add a
+client-provided "synthetic" event flag: allowing callers to classify their own
+events would weaken measurement integrity. Remove the classification if an
+account becomes a real pilot user.
+
 Example for your project:
 
 ```bash

@@ -1813,6 +1813,86 @@ class ParcelScreeningStatusResponse(BaseModel):
     interpretation: str = Field(min_length=1, max_length=1000)
 
 
+class ParcelAddressResolveRequest(BaseModel):
+    """Private address input; the raw value is never returned or persisted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[
+        "citylens/parcel-address-resolve-request@v1"
+    ] = "citylens/parcel-address-resolve-request@v1"
+    address: str = Field(min_length=5, max_length=200)
+
+    @field_validator("address")
+    @classmethod
+    def normalize_input_whitespace(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 5:
+            raise ValueError("address must contain at least 5 characters")
+        return normalized
+
+
+class ParcelAddressCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    borough: Literal[
+        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
+    ]
+
+
+class ParcelAddressResolveResponse(BaseModel):
+    """Ambiguity-preserving official address-directory result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[
+        "citylens/parcel-address-resolve-response@v1"
+    ] = "citylens/parcel-address-resolve-response@v1"
+    match_status: Literal["unique", "ambiguous", "not_found"]
+    match_method: Literal[
+        "exact_normalized_official_address"
+    ] = "exact_normalized_official_address"
+    candidate_count: int = Field(ge=0)
+    truncated: bool
+    candidates: list[ParcelAddressCandidate] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    unit_designator_ignored: bool = False
+    locality_ignored: bool = False
+    source_name: str = Field(min_length=1, max_length=160)
+    source_dataset_id: Literal["bc8t-ecyu"]
+    source_retrieved_at: datetime
+    resolver_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    address_normalization_schema: Literal[
+        "citylens/address-normalization@v1"
+    ] = "citylens/address-normalization@v1"
+    interpretation: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_match_contract(self) -> "ParcelAddressResolveResponse":
+        returned = len(self.candidates)
+        if self.match_status == "not_found":
+            if self.candidate_count != 0 or returned != 0 or self.truncated:
+                raise ValueError("not-found address results cannot contain candidates")
+        elif self.match_status == "unique":
+            if self.candidate_count != 1 or returned != 1 or self.truncated:
+                raise ValueError("unique address results require exactly one candidate")
+        elif (
+            self.candidate_count < 2
+            or returned < 2
+            or returned > self.candidate_count
+            or self.truncated != (returned < self.candidate_count)
+        ):
+            raise ValueError(
+                "ambiguous address results require a consistent candidate count"
+            )
+        return self
+
+
 class ParcelSavedSearchFilters(BaseModel):
     """The complete, restorable state of the citywide parcel explorer.
 

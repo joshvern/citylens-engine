@@ -354,6 +354,26 @@ remain diagnostic unless an operator explicitly enables the
 scheduled failures before the feed crosses the API's 45-day stale threshold
 or the prospective monitor crosses its eight-day observation-lag limit.
 
+The same six-hourly workflow runs
+`scripts/verify_demo_artifacts.py` against every entry returned by
+`/v1/demo/featured`. It downloads `preview.png`, `change.geojson`, `mesh.ply`,
+and `run_summary.json` through the public API proxy; verifies media types,
+byte counts, SHA-256/ETag/Content-Digest receipts, CORS-exposed headers,
+immutable caching, and parseable nonempty content; and reconciles the summary
+against the delivered change and artifact receipts. Run it directly after a
+demo publish:
+
+```bash
+./.venv/bin/python scripts/verify_demo_artifacts.py \
+  --output demo-artifact-verification.json
+```
+
+Missing, corrupt, toy-sized, pixel-space, or internally inconsistent artifacts
+fail the production check. Pipeline-parity metrics remain visible as advisory
+warnings because they are not present-day accuracy, seller intent, or
+transaction probability. The retained report is value-minimized and omits run
+IDs, addresses, owners, and artifact URLs.
+
 ### 10.1) Independent Google Cloud uptime monitoring
 
 The GitHub production smoke is comprehensive, but it is not the only
@@ -1077,6 +1097,9 @@ Notes:
 - `scripts/precompute_demo_runs.py` rejects incomplete runs. It writes `deploy/demo_runs.json` only after verifying `preview.png`, `change.geojson`, `mesh.ply`, and `run_summary.json`, including each artifact's expected media type, positive byte count, and 64-character SHA-256 receipt.
 - Commit the updated `deploy/demo_runs.json` after precompute if you want the allowlist versioned in git.
 - Redeploy the API after committing the new allowlist so `/v1/demo/featured` reflects it.
+- Run `scripts/verify_demo_artifacts.py` after redeploy. The scheduled
+  production smoke repeats the same all-demo delivery and structural checks
+  every six hours and retains the sanitized report for 30 days.
 
 If demo runs load but artifacts do not render in the browser, verify that the run is
 allowlisted and that `GET /v1/demo/runs/{run_id}` returns same-origin artifact paths

@@ -406,6 +406,27 @@ payload against that receipt before serving it, returns the contract media
 type, and exposes `Content-Digest`, `ETag`, and `X-Content-SHA256` to browser
 clients.
 
+Every curated demo is also reverified from the public browser contract every
+six hours:
+
+```bash
+./.venv/bin/python scripts/verify_demo_artifacts.py \
+  --output demo-artifact-verification.json
+```
+
+The gate downloads all four required artifacts for every featured run and
+fails on an empty registry, an incomplete run, a metadata or digest mismatch,
+wrong media type, missing browser CORS/integrity headers, an implausibly small
+payload, unparseable PNG/GeoJSON/PLY, pixel-space change geometry, or an
+incoherent run summary. The retained report contains only demo ordinals,
+artifact receipts, structural counts, timings, and aggregate pipeline-parity
+metrics—not run IDs, addresses, owners, or artifact paths.
+
+The pipeline-parity metrics are reported as advisory warnings. They are not
+current real-world accuracy, seller intent, or transaction probability, and
+being below a documented parity target does not hide or relabel an otherwise
+valid artifact-delivery result.
+
 ## Production verification
 
 The secret-free production verifier exercises the live API, all five parcel

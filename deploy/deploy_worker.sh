@@ -53,6 +53,7 @@ echo "Ensuring worker SA has Firestore permissions (${WORKER_SA_EMAIL})"
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member "serviceAccount:${WORKER_SA_EMAIL}" \
   --role "roles/datastore.user" \
+  --condition=None \
   --quiet >/dev/null
 
 # Required for uploading artifacts into the configured GCS bucket.
@@ -60,6 +61,7 @@ echo "Ensuring worker SA can write artifacts to ${BUCKET_NAME} (${WORKER_SA_EMAI
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member "serviceAccount:${WORKER_SA_EMAIL}" \
   --role "roles/storage.objectAdmin" \
+  --condition=None \
   --quiet >/dev/null
 
 if [[ -n "${DEPLOYER_MEMBER}" ]]; then
@@ -67,11 +69,12 @@ if [[ -n "${DEPLOYER_MEMBER}" ]]; then
   if ! gcloud iam service-accounts add-iam-policy-binding "${WORKER_SA_EMAIL}" \
     --project "${PROJECT_ID}" \
     --member "${DEPLOYER_MEMBER}" \
-    --role "roles/iam.serviceAccountUser" >/dev/null; then
+    --role "roles/iam.serviceAccountUser" \
+    --condition=None >/dev/null; then
     echo "" >&2
     echo "ERROR: Unable to grant roles/iam.serviceAccountUser on ${WORKER_SA_EMAIL}." >&2
     echo "Run this with a project owner/admin account:" >&2
-    echo "  gcloud iam service-accounts add-iam-policy-binding ${WORKER_SA_EMAIL} --project ${PROJECT_ID} --member ${DEPLOYER_MEMBER} --role roles/iam.serviceAccountUser" >&2
+    echo "  gcloud iam service-accounts add-iam-policy-binding ${WORKER_SA_EMAIL} --project ${PROJECT_ID} --member ${DEPLOYER_MEMBER} --role roles/iam.serviceAccountUser --condition=None" >&2
     exit 1
   fi
 else

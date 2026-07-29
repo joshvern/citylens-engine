@@ -122,7 +122,8 @@ ensure_service_account() {
     gcloud iam service-accounts add-iam-policy-binding "${sa_email}" \
       --project "${PROJECT_ID}" \
       --member "${DEPLOYER_MEMBER}" \
-      --role "roles/iam.serviceAccountUser" >/dev/null
+      --role "roles/iam.serviceAccountUser" \
+      --condition=None >/dev/null
   fi
 }
 
@@ -146,6 +147,7 @@ echo "Ensuring worker SA has Firestore permissions (${WORKER_SA_EMAIL})"
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member "serviceAccount:${WORKER_SA_EMAIL}" \
   --role "roles/datastore.user" \
+  --condition=None \
   --quiet >/dev/null
 
 # Required for uploading artifacts into the configured GCS bucket.
@@ -153,6 +155,7 @@ echo "Ensuring worker SA can write artifacts to ${BUCKET_NAME} (${WORKER_SA_EMAI
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member "serviceAccount:${WORKER_SA_EMAIL}" \
   --role "roles/storage.objectAdmin" \
+  --condition=None \
   --quiet >/dev/null
 
 (

@@ -337,11 +337,12 @@ complete per-borough transit enrichment, anonymous transit redaction, and an
 audit statement that transit is diligence-only. The repository workflow
 `.github/workflows/production-smoke.yml` repeats it every six hours alongside
 `scripts/verify_authenticated_inventory.py`, which proves that the live API
-serves exactly 5,000 unique authenticated parcels, 1,000 per borough, with
-owner context, a full selected-parcel audit, gzip, and private/no-store cache
-controls. It also verifies the fixed Brooklyn official dossier through both
-the API and browser-facing proxy while omitting its BBL, address, and owner
-names from the report. The raw smoke key exists only as the repository Actions secret
+serves exactly 5,000 unique authenticated parcels whose borough distribution
+matches the manifest's versioned selection-policy receipt, with owner context,
+a full selected-parcel audit, gzip, and private/no-store cache controls. It
+also verifies the fixed Brooklyn official dossier through both the API and
+browser-facing proxy while omitting its BBL, address, and owner names from the
+report. The raw smoke key exists only as the repository Actions secret
 `CITYLENS_PARCEL_SMOKE_KEY`; only its SHA-256 is deployed in
 `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. The workflow stores sanitized
 machine-readable reports that omit credentials, owners, and parcel IDs. A

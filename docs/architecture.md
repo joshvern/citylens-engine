@@ -19,11 +19,12 @@ owns the browser UI.
     `/v1/parcel-intel/parcel/{bbl}` only when selected, and reserves
     `/v1/parcel-intel/sweep` for CSV/export and compatibility. Public inventory
     is capped at 25 rows per borough with premium fields stripped;
-    authenticated users can load 1,000 per borough. The compact map returns a
-    machine-verifiable access scope, inventory receipt, and immutable feed
-    generation. Authenticated reads bypass shared caches, and `Vary` preserves
-    credential-specific representations across CORS. Large JSON responses are
-    gzip-compressed.
+    authenticated users receive the complete 5,000-row citywide inventory
+    selected under the manifest's versioned borough-floor policy. The compact
+    map returns a machine-verifiable access scope, inventory receipt, and
+    immutable feed generation. Authenticated reads bypass shared caches, and
+    `Vary` preserves credential-specific representations across CORS. Large
+    JSON responses are gzip-compressed.
     When an authenticated user searches one canonical 10-digit BBL that is
     absent from the complete inventory,
     `/v1/parcel-intel/screening/{bbl}` performs a rate-limited exact lookup

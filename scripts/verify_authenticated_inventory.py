@@ -31,7 +31,7 @@ BOROUGHS = (
     "staten_island",
 )
 EXPECTED_TOTAL = 5_000
-EXPECTED_PER_BOROUGH = 1_000
+REQUESTED_TOP_PER_BOROUGH = 1_000
 SMOKE_HEADER = "X-CityLens-Parcel-Smoke-Key"
 OFFICIAL_DOSSIER_SMOKE_BBL = "3058920038"
 _DOSSIER_GENERATION_RE = re.compile(
@@ -57,6 +57,103 @@ def _is_mappable_nyc_row(value: Any) -> bool:
         and 40.45 <= float(lat) <= 41.0
         and -74.30 <= float(lng) <= -73.65
     )
+
+
+def expected_borough_counts_from_index(
+    payload: dict[str, Any],
+    *,
+    expected_total: int = EXPECTED_TOTAL,
+) -> tuple[dict[str, int], list[str]]:
+    """Read the authenticated inventory distribution from its publication receipt."""
+    failures: list[str] = []
+    quality_gate = payload.get("quality_gate")
+    _expect(
+        isinstance(quality_gate, dict),
+        "index: quality gate is missing",
+        failures,
+    )
+    quality_gate = quality_gate if isinstance(quality_gate, dict) else {}
+    selection_policy = quality_gate.get("selection_policy")
+    _expect(
+        isinstance(selection_policy, dict),
+        "index: selection policy is missing",
+        failures,
+    )
+    selection_policy = (
+        selection_policy if isinstance(selection_policy, dict) else {}
+    )
+    _expect(
+        selection_policy.get("schema")
+        == "citylens-parcel-intel/selection-policy@v1",
+        "index: selection policy schema is invalid",
+        failures,
+    )
+    _expect(
+        selection_policy.get("passed") is True
+        and selection_policy.get("failures") == [],
+        "index: selection policy did not pass",
+        failures,
+    )
+    _expect(
+        selection_policy.get("target_count") == expected_total
+        and selection_policy.get("selected_count") == expected_total,
+        (
+            "index: selection policy does not declare the expected "
+            f"{expected_total:,}-row inventory"
+        ),
+        failures,
+    )
+
+    by_borough = selection_policy.get("by_borough")
+    _expect(
+        isinstance(by_borough, dict)
+        and set(by_borough) == set(BOROUGHS),
+        "index: selection policy does not cover exactly five NYC boroughs",
+        failures,
+    )
+    by_borough = by_borough if isinstance(by_borough, dict) else {}
+    expected_counts: dict[str, int] = {}
+    for borough in BOROUGHS:
+        receipt = by_borough.get(borough)
+        receipt = receipt if isinstance(receipt, dict) else {}
+        selected_count = receipt.get("selected_count")
+        valid_count = (
+            isinstance(selected_count, int)
+            and not isinstance(selected_count, bool)
+            and selected_count > 0
+        )
+        _expect(
+            valid_count
+            and receipt.get("requested_minimum_satisfied") is True,
+            f"index: {borough} selection receipt is invalid",
+            failures,
+        )
+        if valid_count:
+            expected_counts[borough] = selected_count
+
+    _expect(
+        len(expected_counts) == len(BOROUGHS)
+        and sum(expected_counts.values()) == expected_total,
+        (
+            "index: selected borough counts do not sum to the expected "
+            f"{expected_total:,}-row inventory"
+        ),
+        failures,
+    )
+
+    boroughs = payload.get("boroughs")
+    boroughs = boroughs if isinstance(boroughs, list) else []
+    index_counts = {
+        row.get("slug"): row.get("count")
+        for row in boroughs
+        if isinstance(row, dict) and row.get("slug") in BOROUGHS
+    }
+    _expect(
+        index_counts == expected_counts,
+        "index: borough summaries do not match the selection policy receipt",
+        failures,
+    )
+    return expected_counts, failures
 
 
 def _request_json(
@@ -103,7 +200,8 @@ def validate_authenticated_map(
     headers: dict[str, str],
     *,
     expected_total: int = EXPECTED_TOTAL,
-    expected_per_borough: int = EXPECTED_PER_BOROUGH,
+    requested_top_per_borough: int = REQUESTED_TOP_PER_BOROUGH,
+    expected_borough_counts: dict[str, int] | None = None,
 ) -> list[str]:
     failures: list[str] = []
     rows = payload.get("rows")
@@ -116,7 +214,7 @@ def validate_authenticated_map(
         failures,
     )
     _expect(
-        payload.get("requested_top_per_borough") == expected_per_borough,
+        payload.get("requested_top_per_borough") == requested_top_per_borough,
         "map: request receipt does not match the full borough limit",
         failures,
     )
@@ -159,15 +257,26 @@ def validate_authenticated_map(
     borough_counts = Counter(
         row.get("borough") for row in rows if isinstance(row, dict)
     )
-    for borough in BOROUGHS:
-        _expect(
-            borough_counts[borough] == expected_per_borough,
-            (
-                f"map: {borough} has {borough_counts[borough]:,} rows, "
-                f"expected {expected_per_borough:,}"
-            ),
-            failures,
+    _expect(
+        set(borough_counts) == set(BOROUGHS),
+        "map: rows do not cover exactly five NYC boroughs",
+        failures,
+    )
+    if expected_borough_counts is None:
+        failures.append(
+            "map: published borough distribution was not available to verify"
         )
+    else:
+        for borough in BOROUGHS:
+            expected_count = expected_borough_counts.get(borough)
+            _expect(
+                borough_counts[borough] == expected_count,
+                (
+                    f"map: {borough} has {borough_counts[borough]:,} rows, "
+                    f"published selection has {expected_count!r}"
+                ),
+                failures,
+            )
     mappable_rows = [row for row in rows if _is_mappable_nyc_row(row)]
     _expect(
         len(mappable_rows) == expected_total,
@@ -451,15 +560,37 @@ def run_checks(
     smoke_key: str,
     timeout: float,
     expected_total: int = EXPECTED_TOTAL,
-    expected_per_borough: int = EXPECTED_PER_BOROUGH,
+    requested_top_per_borough: int = REQUESTED_TOP_PER_BOROUGH,
 ) -> dict[str, Any]:
     failures: list[str] = []
     timings: dict[str, float] = {}
+    index_url = f"{api_base.rstrip('/')}/v1/parcel-intel/index"
     map_url = (
         f"{api_base.rstrip('/')}/v1/parcel-intel/map?"
-        f"{urlencode({'top_per_borough': expected_per_borough})}"
+        f"{urlencode({'top_per_borough': requested_top_per_borough})}"
     )
     try:
+        index_status, _, index_payload, index_elapsed = _request_json(
+            index_url,
+            smoke_key=smoke_key,
+            timeout=timeout,
+        )
+        timings["index"] = index_elapsed
+        _expect(
+            index_status == 200,
+            f"index: expected HTTP 200, got {index_status}",
+            failures,
+        )
+        expected_borough_counts: dict[str, int] = {}
+        if index_status == 200:
+            expected_borough_counts, index_failures = (
+                expected_borough_counts_from_index(
+                    index_payload,
+                    expected_total=expected_total,
+                )
+            )
+            failures.extend(index_failures)
+
         map_status, map_headers, map_payload, map_elapsed = _request_json(
             map_url,
             smoke_key=smoke_key,
@@ -475,7 +606,8 @@ def run_checks(
                     map_payload,
                     map_headers,
                     expected_total=expected_total,
-                    expected_per_borough=expected_per_borough,
+                    requested_top_per_borough=requested_top_per_borough,
+                    expected_borough_counts=expected_borough_counts,
                 )
             )
 
@@ -556,9 +688,26 @@ def run_checks(
             )
     except (RuntimeError, TypeError) as exc:
         failures.append(str(exc))
+        index_payload = {}
+        expected_borough_counts = {}
         map_payload = {}
         dossier_payload = {}
 
+    index_quality_gate = index_payload.get("quality_gate")
+    index_quality_gate = (
+        index_quality_gate if isinstance(index_quality_gate, dict) else {}
+    )
+    index_selection_policy = index_quality_gate.get("selection_policy")
+    index_selection_policy = (
+        index_selection_policy
+        if isinstance(index_selection_policy, dict)
+        else {}
+    )
+    returned_rows = map_payload.get("rows")
+    returned_rows = returned_rows if isinstance(returned_rows, list) else []
+    returned_borough_counts = Counter(
+        row.get("borough") for row in returned_rows if isinstance(row, dict)
+    )
     return {
         "schema_version": "citylens/authenticated-production-verification@v1",
         "verified_at": datetime.now(timezone.utc).isoformat(),
@@ -572,14 +721,16 @@ def run_checks(
             "inventory_complete": map_payload.get("inventory_complete"),
             "mappable_count": sum(
                 1
-                for row in (
-                    map_payload.get("rows")
-                    if isinstance(map_payload.get("rows"), list)
-                    else []
-                )
+                for row in returned_rows
                 if _is_mappable_nyc_row(row)
             ),
             "generated_at": map_payload.get("generated_at"),
+            "selection_policy": index_selection_policy.get("policy_id"),
+            "published_borough_counts": expected_borough_counts,
+            "returned_borough_counts": {
+                borough: returned_borough_counts[borough]
+                for borough in BOROUGHS
+            },
         },
         "official_dossier": {
             "verified": (

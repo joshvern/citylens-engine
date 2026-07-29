@@ -86,10 +86,12 @@ Current pinned release tag:
   loads `/v1/parcel-intel/map`, fetches full selected-parcel detail from
   `/v1/parcel-intel/parcel/{bbl}`, and reserves `/v1/parcel-intel/sweep` for
   CSV/export and compatibility. Public inventory is capped at 25 rows per
-  borough with premium fields stripped; authenticated users can load 1,000
-  rows per borough. The compact map response includes an explicit access scope,
-  returned/available counts, an inventory-complete receipt, and the immutable
-  feed generation used to produce the rows. Tiered map, sweep, and detail
+  borough with premium fields stripped; authenticated users receive the
+  complete 5,000-row citywide inventory selected under the manifest's
+  versioned borough-floor policy. The compact map response includes an
+  explicit access scope, returned/available counts, an inventory-complete
+  receipt, and the immutable feed generation used to produce the rows. Tiered
+  map, sweep, and detail
   responses vary on authentication credentials; authenticated responses are
   private/no-store so a cached 125-row preview cannot be reused as the
   signed-in inventory. Large JSON responses are gzip-compressed.

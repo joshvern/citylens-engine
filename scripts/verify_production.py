@@ -12,6 +12,7 @@ import argparse
 import gzip
 import json
 import math
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -103,8 +104,7 @@ EXPECTED_WORKFLOW_HORIZONS = (
     ("closed", 365),
 )
 EXPECTED_PERMISSIONS_POLICY = (
-    "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
-    "payment=()"
+    "browsing-topics=(), camera=(), geolocation=(), microphone=(), payment=()"
 )
 REQUIRED_WEB_COPY = (
     "Find the sites worth pursuing this week",
@@ -153,7 +153,9 @@ def _request(
             ) as response:
                 return HttpResult(
                     status=int(response.status),
-                    headers={key.lower(): value for key, value in response.headers.items()},
+                    headers={
+                        key.lower(): value for key, value in response.headers.items()
+                    },
                     body=response.read(),
                     elapsed_seconds=time.monotonic() - started,
                 )
@@ -183,7 +185,9 @@ def _json(result: HttpResult, label: str, failures: list[str]) -> dict[str, Any]
         try:
             body = gzip.decompress(body)
         except OSError:
-            failures.append(f"{label}: response declared gzip but could not be decompressed")
+            failures.append(
+                f"{label}: response declared gzip but could not be decompressed"
+            )
             return {}
     try:
         parsed = json.loads(body)
@@ -210,8 +214,7 @@ def _wilson_95(successes: int, trials: int) -> tuple[float, float]:
     margin = (
         z
         * math.sqrt(
-            proportion * (1.0 - proportion) / trials
-            + z_squared / (4 * trials**2)
+            proportion * (1.0 - proportion) / trials + z_squared / (4 * trials**2)
         )
         / denominator
     )
@@ -233,8 +236,7 @@ def validate_historical_benchmark_receipt(
     )
     receipt = receipt if isinstance(receipt, dict) else {}
     _expect(
-        receipt.get("schema")
-        == "citylens_historical_benchmark_receipt@v1",
+        receipt.get("schema") == "citylens_historical_benchmark_receipt@v1",
         f"{label}: historical benchmark receipt schema is invalid",
         failures,
     )
@@ -307,16 +309,13 @@ def validate_historical_benchmark_receipt(
             f"{label}: historical benchmark {key} precision disagrees with counts",
             failures,
         )
-        expected_interval = (
-            _wilson_95(hits, evaluated) if metric_counts_valid else None
-        )
+        expected_interval = _wilson_95(hits, evaluated) if metric_counts_valid else None
         _expect(
             expected_interval is not None
             and isinstance(interval, list)
             and len(interval) == 2
             and all(
-                isinstance(value, (int, float))
-                and not isinstance(value, bool)
+                isinstance(value, (int, float)) and not isinstance(value, bool)
                 for value in interval
             )
             and all(
@@ -355,6 +354,220 @@ def validate_historical_benchmark_receipt(
         and receipt.get("not_current_accuracy") is True
         and receipt.get("not_parcel_confidence") is True,
         f"{label}: historical benchmark claim boundaries are invalid",
+        failures,
+    )
+    return failures
+
+
+def validate_historical_borough_benchmark_receipt(
+    receipt: Any,
+    *,
+    label: str = "index",
+) -> list[str]:
+    """Validate five exact historical within-borough top-100 cohorts."""
+
+    failures: list[str] = []
+    _expect(
+        isinstance(receipt, dict),
+        f"{label}: historical borough benchmark receipt is missing",
+        failures,
+    )
+    receipt = receipt if isinstance(receipt, dict) else {}
+    _expect(
+        receipt.get("schema") == "citylens_historical_borough_benchmark_receipt@v1"
+        and receipt.get("target") == "dob_nb_job_filing"
+        and receipt.get("feature_origin") == 2024
+        and receipt.get("outcome_window") == "2025-2025"
+        and receipt.get("ranking_scope") == "historical_within_borough_model_order",
+        f"{label}: historical borough cohort identity is invalid",
+        failures,
+    )
+    citywide_rows = receipt.get("citywide_evaluation_rows")
+    citywide_positives = receipt.get("citywide_observed_positive_rows")
+    citywide_counts_valid = (
+        isinstance(citywide_rows, int)
+        and not isinstance(citywide_rows, bool)
+        and citywide_rows >= 500
+        and isinstance(citywide_positives, int)
+        and not isinstance(citywide_positives, bool)
+        and 0 <= citywide_positives <= citywide_rows
+    )
+    _expect(
+        citywide_counts_valid,
+        f"{label}: historical borough citywide counts are invalid",
+        failures,
+    )
+    boroughs = receipt.get("boroughs")
+    boroughs = boroughs if isinstance(boroughs, dict) else {}
+    expected_boroughs = {
+        "manhattan",
+        "bronx",
+        "brooklyn",
+        "queens",
+        "staten_island",
+    }
+    _expect(
+        set(boroughs) == expected_boroughs,
+        f"{label}: historical borough membership is invalid",
+        failures,
+    )
+    observed_rows = 0
+    observed_positives = 0
+    for slug in sorted(expected_boroughs):
+        cohort = boroughs.get(slug)
+        _expect(
+            isinstance(cohort, dict),
+            f"{label}: historical {slug} cohort is missing",
+            failures,
+        )
+        cohort = cohort if isinstance(cohort, dict) else {}
+        rows = cohort.get("evaluation_rows")
+        positives = cohort.get("observed_positive_rows")
+        base_rate = cohort.get("base_rate")
+        counts_valid = (
+            isinstance(rows, int)
+            and not isinstance(rows, bool)
+            and rows >= 100
+            and isinstance(positives, int)
+            and not isinstance(positives, bool)
+            and 0 <= positives <= rows
+        )
+        _expect(
+            counts_valid,
+            f"{label}: historical {slug} counts are invalid",
+            failures,
+        )
+        if counts_valid:
+            observed_rows += rows
+            observed_positives += positives
+        _expect(
+            counts_valid
+            and isinstance(base_rate, (int, float))
+            and not isinstance(base_rate, bool)
+            and math.isclose(
+                float(base_rate),
+                positives / rows,
+                abs_tol=1e-12,
+            ),
+            f"{label}: historical {slug} base rate disagrees with counts",
+            failures,
+        )
+        top_100 = cohort.get("top_100")
+        _expect(
+            isinstance(top_100, dict),
+            f"{label}: historical {slug} top-100 is missing",
+            failures,
+        )
+        top_100 = top_100 if isinstance(top_100, dict) else {}
+        evaluated = top_100.get("evaluated_rows")
+        hits = top_100.get("observed_hits")
+        precision = top_100.get("precision")
+        interval = top_100.get("precision_95ci")
+        top_counts_valid = (
+            counts_valid
+            and top_100.get("k") == 100
+            and evaluated == min(100, rows)
+            and isinstance(hits, int)
+            and not isinstance(hits, bool)
+            and 0 <= hits <= evaluated
+            and hits <= positives
+        )
+        _expect(
+            top_counts_valid,
+            f"{label}: historical {slug} top-100 counts are invalid",
+            failures,
+        )
+        _expect(
+            top_counts_valid
+            and isinstance(precision, (int, float))
+            and not isinstance(precision, bool)
+            and math.isclose(
+                float(precision),
+                hits / evaluated,
+                abs_tol=1e-12,
+            ),
+            f"{label}: historical {slug} top-100 precision disagrees with counts",
+            failures,
+        )
+        expected_interval = _wilson_95(hits, evaluated) if top_counts_valid else None
+        _expect(
+            expected_interval is not None
+            and isinstance(interval, list)
+            and len(interval) == 2
+            and all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in interval
+            )
+            and all(
+                math.isclose(float(actual), expected, abs_tol=1e-12)
+                for actual, expected in zip(
+                    interval,
+                    expected_interval,
+                    strict=True,
+                )
+            ),
+            f"{label}: historical {slug} top-100 interval is invalid",
+            failures,
+        )
+
+    _expect(
+        citywide_counts_valid
+        and observed_rows == citywide_rows
+        and observed_positives == citywide_positives,
+        f"{label}: historical borough counts do not reconcile citywide",
+        failures,
+    )
+    interval_meta = receipt.get("interval")
+    interval_meta = interval_meta if isinstance(interval_meta, dict) else {}
+    limitations = str(interval_meta.get("limitations") or "").lower()
+    _expect(
+        interval_meta.get("method") == "wilson_score_observed_top_k"
+        and interval_meta.get("confidence_level") == 0.95
+        and interval_meta.get("scope") == "fixed_historical_borough_ranked_list",
+        f"{label}: historical borough interval method is invalid",
+        failures,
+    )
+    for phrase in ("model", "spatial", "current", "parcel"):
+        _expect(
+            phrase in limitations,
+            f"{label}: historical borough limitations omit {phrase}",
+            failures,
+        )
+    source = receipt.get("source_receipt")
+    source = source if isinstance(source, dict) else {}
+    expected_source_keys = {
+        "schema",
+        "report_file_name",
+        "report_schema",
+        "report_sha256",
+        "report_size_bytes",
+        "source_model_sha256",
+        "metadata_only_attachment",
+    }
+    _expect(
+        set(source) == expected_source_keys
+        and source.get("schema") == "citylens_borough_benchmark_attachment@v1"
+        and isinstance(source.get("report_file_name"), str)
+        and bool(source["report_file_name"].strip())
+        and isinstance(source.get("report_schema"), str)
+        and bool(source["report_schema"].strip())
+        and re.fullmatch(r"[0-9a-f]{64}", str(source.get("report_sha256"))) is not None
+        and re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(source.get("source_model_sha256")),
+        )
+        is not None
+        and isinstance(source.get("report_size_bytes"), int)
+        and source["report_size_bytes"] >= 1
+        and source.get("metadata_only_attachment") is True,
+        f"{label}: historical borough source receipt is invalid",
+        failures,
+    )
+    _expect(
+        receipt.get("evidence_status") == "development_exposed"
+        and receipt.get("not_current_accuracy") is True
+        and receipt.get("not_parcel_confidence") is True,
+        f"{label}: historical borough claim boundaries are invalid",
         failures,
     )
     return failures
@@ -539,8 +752,7 @@ def validate_prospective_validation(
     )
     measurement_status = status.get("measurement_status")
     _expect(
-        measurement_status
-        in {"awaiting_post_issue_data", "collecting", "mature"},
+        measurement_status in {"awaiting_post_issue_data", "collecting", "mature"},
         "index: prospective measurement status is invalid",
         failures,
     )
@@ -621,8 +833,7 @@ def validate_prospective_validation(
 
     metrics = status.get("metrics")
     _expect(
-        isinstance(metrics, dict)
-        and set(metrics) == {"top_100", "top_1000"},
+        isinstance(metrics, dict) and set(metrics) == {"top_100", "top_1000"},
         "index: prospective metrics are incomplete",
         failures,
     )
@@ -688,9 +899,7 @@ def validate_prospective_validation(
                     for value in final_interval
                 )
                 and isinstance(final_precision, (int, float))
-                and final_interval[0]
-                <= final_precision
-                <= final_interval[1],
+                and final_interval[0] <= final_precision <= final_interval[1],
                 f"index: prospective {name} confidence interval is invalid",
                 failures,
             )
@@ -736,9 +945,7 @@ def validate_prospective_validation(
         else None
     )
     report_sha256 = (
-        report_reference.get("sha256")
-        if isinstance(report_reference, dict)
-        else None
+        report_reference.get("sha256") if isinstance(report_reference, dict) else None
     )
     _expect(
         isinstance(report_reference, dict)
@@ -748,9 +955,7 @@ def validate_prospective_validation(
         and observation_id[:8].isdigit()
         and all(character in "0123456789abcdef" for character in observation_id[9:])
         and observed_through is not None
-        and observation_id.startswith(
-            observed_through.strftime("%Y%m%d") + "-"
-        )
+        and observation_id.startswith(observed_through.strftime("%Y%m%d") + "-")
         and isinstance(report_sha256, str)
         and len(report_sha256) == 64
         and all(character in "0123456789abcdef" for character in report_sha256),
@@ -777,9 +982,7 @@ def validate_prospective_validation(
         else "current"
     )
     expected_health_reason = (
-        "observation_lag_exceeded"
-        if expected_health_status == "stale"
-        else "current"
+        "observation_lag_exceeded" if expected_health_status == "stale" else "current"
     )
     try:
         next_monitor_due_on = datetime.fromisoformat(
@@ -798,8 +1001,7 @@ def validate_prospective_validation(
         and health.get("status") == expected_health_status
         and health.get("reason") == expected_health_reason
         and observed_through is not None
-        and next_monitor_due_on
-        == observed_through + timedelta(days=8)
+        and next_monitor_due_on == observed_through + timedelta(days=8)
         and len(source_timestamps) == 2
         and oldest_source_updated_at == min(source_timestamps),
         "index: prospective validation freshness telemetry is inconsistent",
@@ -850,8 +1052,7 @@ def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
         failures,
     )
     _expect(
-        data.get("analytics_schema_version")
-        == "citylens/parcel-workflow-analytics@v3",
+        data.get("analytics_schema_version") == "citylens/parcel-workflow-analytics@v3",
         "workflow methodology: uncertainty-aware analytics v3 is not active",
         failures,
     )
@@ -928,7 +1129,11 @@ def evaluate_source_slas(
             failures.append(
                 f"index: source SLA {key} retrieved_at is missing or invalid"
             )
-        if not isinstance(max_age, (int, float)) or isinstance(max_age, bool) or max_age <= 0:
+        if (
+            not isinstance(max_age, (int, float))
+            or isinstance(max_age, bool)
+            or max_age <= 0
+        ):
             failures.append(
                 f"index: source SLA {key} max_age_days is missing or invalid"
             )
@@ -942,9 +1147,7 @@ def evaluate_source_slas(
             else None
         )
         warning_lead_days = (
-            min(7.0, max(2.0, float(max_age) * 0.2))
-            if max_age is not None
-            else None
+            min(7.0, max(2.0, float(max_age) * 0.2)) if max_age is not None else None
         )
         remaining_days = (
             float(max_age) - age_days
@@ -955,16 +1158,9 @@ def evaluate_source_slas(
         status = "current"
         if retrieved_at is not None and retrieved_at > now:
             status = "breached"
-            failures.append(
-                f"index: source SLA {key} retrieved_at is in the future"
-            )
-        elif (
-            raw.get("stale") is True
-            or (
-                age_days is not None
-                and max_age is not None
-                and age_days > float(max_age)
-            )
+            failures.append(f"index: source SLA {key} retrieved_at is in the future")
+        elif raw.get("stale") is True or (
+            age_days is not None and max_age is not None and age_days > float(max_age)
         ):
             status = "breached"
             failures.append(
@@ -1019,7 +1215,9 @@ def validate_index(
 ) -> list[str]:
     failures: list[str] = []
     generated_at = _parse_timestamp(index.get("generated_at"))
-    _expect(generated_at is not None, "index: generated_at is missing or invalid", failures)
+    _expect(
+        generated_at is not None, "index: generated_at is missing or invalid", failures
+    )
     if generated_at is not None:
         age_days = max((now - generated_at).total_seconds(), 0.0) / 86400
         _expect(
@@ -1034,18 +1232,18 @@ def validate_index(
     boroughs = index.get("boroughs")
     _expect(isinstance(boroughs, list), "index: boroughs is not a list", failures)
     borough_rows = boroughs if isinstance(boroughs, list) else []
-    by_slug = {
-        row.get("slug"): row for row in borough_rows if isinstance(row, dict)
-    }
-    _expect(set(by_slug) == set(BOROUGHS), "index: expected exactly five NYC boroughs", failures)
+    by_slug = {row.get("slug"): row for row in borough_rows if isinstance(row, dict)}
+    _expect(
+        set(by_slug) == set(BOROUGHS),
+        "index: expected exactly five NYC boroughs",
+        failures,
+    )
 
     quality = index.get("quality_gate")
     _expect(isinstance(quality, dict), "index: quality_gate is missing", failures)
     quality = quality if isinstance(quality, dict) else {}
     selection_policy = quality.get("selection_policy")
-    selection_policy = (
-        selection_policy if isinstance(selection_policy, dict) else None
-    )
+    selection_policy = selection_policy if isinstance(selection_policy, dict) else None
     if selection_policy is None:
         # Transitional support for the already-active v5 equal-borough feed.
         for slug in BOROUGHS:
@@ -1090,24 +1288,16 @@ def validate_index(
         _expect(
             isinstance(membership_sha, str)
             and len(membership_sha) == 64
-            and all(
-                character in "0123456789abcdef"
-                for character in membership_sha
-            ),
+            and all(character in "0123456789abcdef" for character in membership_sha),
             "index: selection membership digest is invalid",
             failures,
         )
         selection_boroughs = selection_policy.get("by_borough")
         selection_boroughs = (
-            selection_boroughs
-            if isinstance(selection_boroughs, dict)
-            else {}
+            selection_boroughs if isinstance(selection_boroughs, dict) else {}
         )
         _expect(
-            sum(
-                int((by_slug.get(slug) or {}).get("count") or 0)
-                for slug in BOROUGHS
-            )
+            sum(int((by_slug.get(slug) or {}).get("count") or 0) for slug in BOROUGHS)
             == 5000,
             "index: selected borough counts do not sum to 5,000",
             failures,
@@ -1115,9 +1305,7 @@ def validate_index(
         for slug in BOROUGHS:
             index_count = (by_slug.get(slug) or {}).get("count")
             policy_borough = selection_boroughs.get(slug)
-            policy_borough = (
-                policy_borough if isinstance(policy_borough, dict) else {}
-            )
+            policy_borough = policy_borough if isinstance(policy_borough, dict) else {}
             _expect(
                 isinstance(index_count, int)
                 and index_count >= 250
@@ -1145,9 +1333,7 @@ def validate_index(
         failures,
     )
     land_use_reconciliation = (
-        land_use_reconciliation
-        if isinstance(land_use_reconciliation, dict)
-        else {}
+        land_use_reconciliation if isinstance(land_use_reconciliation, dict) else {}
     )
     _expect(
         land_use_reconciliation.get("schema")
@@ -1169,9 +1355,7 @@ def validate_index(
         "index: land-use reconciliation source digest is invalid",
         failures,
     )
-    source_blocked_count = land_use_reconciliation.get(
-        "source_blocked_bbl_count"
-    )
+    source_blocked_count = land_use_reconciliation.get("source_blocked_bbl_count")
     _expect(
         isinstance(source_blocked_count, int) and source_blocked_count > 0,
         "index: land-use reconciliation has no blocked source BBLs",
@@ -1192,9 +1376,7 @@ def validate_index(
     non_parcel_applicable_project_ids = land_use_reconciliation.get(
         "non_parcel_applicable_project_ids"
     )
-    blocking_project_count = land_use_reconciliation.get(
-        "blocking_project_count"
-    )
+    blocking_project_count = land_use_reconciliation.get("blocking_project_count")
     joined_blocking_project_count = land_use_reconciliation.get(
         "joined_blocking_project_count"
     )
@@ -1278,8 +1460,7 @@ def validate_index(
         )
         and len(set(unjoined_blocking_project_ids))
         == len(unjoined_blocking_project_ids)
-        and len(unjoined_blocking_project_ids)
-        == unjoined_blocking_project_count,
+        and len(unjoined_blocking_project_ids) == unjoined_blocking_project_count,
         "index: land-use reconciliation unresolved project IDs are invalid",
         failures,
     )
@@ -1305,10 +1486,7 @@ def validate_index(
     )
     _expect(
         land_use_reconciliation.get("project_detail_source")
-        == (
-            "https://zap-api-production.herokuapp.com/projects/"
-            "{project_id}"
-        ),
+        == ("https://zap-api-production.herokuapp.com/projects/{project_id}"),
         "index: land-use project-detail source is invalid",
         failures,
     )
@@ -1321,9 +1499,9 @@ def validate_index(
         failures,
     )
     if project_detail_retrieved_at is not None:
-        project_detail_age_days = max(
-            (now - project_detail_retrieved_at).total_seconds(), 0.0
-        ) / 86400
+        project_detail_age_days = (
+            max((now - project_detail_retrieved_at).total_seconds(), 0.0) / 86400
+        )
         _expect(
             project_detail_age_days <= 45,
             (
@@ -1332,29 +1510,23 @@ def validate_index(
             ),
             failures,
         )
-    project_detail_supplemental_relation_count = (
-        land_use_reconciliation.get(
-            "project_detail_supplemental_relation_count"
-        )
+    project_detail_supplemental_relation_count = land_use_reconciliation.get(
+        "project_detail_supplemental_relation_count"
     )
     _expect(
         isinstance(project_detail_supplemental_relation_count, int)
-        and not isinstance(
-            project_detail_supplemental_relation_count, bool
-        )
+        and not isinstance(project_detail_supplemental_relation_count, bool)
         and project_detail_supplemental_relation_count >= 0,
         "index: land-use supplemental relation count is invalid",
         failures,
     )
     _expect(
-        land_use_reconciliation.get("project_detail_fetch_failure_count")
-        == 0,
+        land_use_reconciliation.get("project_detail_fetch_failure_count") == 0,
         "index: land-use project-detail refresh has failures",
         failures,
     )
     _expect(
-        land_use_reconciliation.get("project_detail_fetch_failure_ids")
-        == [],
+        land_use_reconciliation.get("project_detail_fetch_failure_ids") == [],
         "index: land-use project-detail failure IDs are not empty",
         failures,
     )
@@ -1363,17 +1535,12 @@ def validate_index(
     )
     _expect(
         official_document_schema
-        == (
-            "citylens-parcel-intel/"
-            "zap-official-document-bbl-supplements@v1"
-        ),
+        == ("citylens-parcel-intel/zap-official-document-bbl-supplements@v1"),
         "index: official ZAP document supplement schema is invalid",
         failures,
     )
     official_document_reviewed_at = _parse_timestamp(
-        land_use_reconciliation.get(
-            "official_document_supplement_reviewed_at"
-        )
+        land_use_reconciliation.get("official_document_supplement_reviewed_at")
     )
     _expect(
         official_document_reviewed_at is not None,
@@ -1399,8 +1566,7 @@ def validate_index(
         isinstance(official_document_sha256, str)
         and len(official_document_sha256) == 64
         and all(
-            character in "0123456789abcdef"
-            for character in official_document_sha256
+            character in "0123456789abcdef" for character in official_document_sha256
         ),
         "index: official ZAP document supplement digest is invalid",
         failures,
@@ -1446,8 +1612,7 @@ def validate_index(
         )
         and len(set(official_document_project_ids))
         == len(official_document_project_ids)
-        and len(official_document_project_ids)
-        == official_document_project_count,
+        and len(official_document_project_ids) == official_document_project_count,
         "index: official ZAP document project IDs are invalid",
         failures,
     )
@@ -1461,8 +1626,7 @@ def validate_index(
     _expect(
         isinstance(official_document_relation_count, int)
         and isinstance(official_document_project_count, int)
-        and official_document_relation_count
-        >= official_document_project_count,
+        and official_document_relation_count >= official_document_project_count,
         "index: official ZAP document relations are below project count",
         failures,
     )
@@ -1518,8 +1682,7 @@ def validate_index(
             isinstance(project_id, str) and bool(project_id.strip())
             for project_id in current_tax_lot_project_ids
         )
-        and len(set(current_tax_lot_project_ids))
-        == len(current_tax_lot_project_ids)
+        and len(set(current_tax_lot_project_ids)) == len(current_tax_lot_project_ids)
         and len(current_tax_lot_project_ids) == current_tax_lot_project_count,
         "index: current-tax-lot reconciled project IDs are invalid",
         failures,
@@ -1549,9 +1712,7 @@ def validate_index(
         failures,
     )
     _expect(
-        isinstance(
-            land_use_reconciliation.get("candidate_blocked_bbl_count"), int
-        )
+        isinstance(land_use_reconciliation.get("candidate_blocked_bbl_count"), int)
         and land_use_reconciliation["candidate_blocked_bbl_count"] > 0,
         "index: land-use reconciliation exercised no blocked candidates",
         failures,
@@ -1577,12 +1738,9 @@ def validate_index(
         "index: ranking tie audit is missing",
         failures,
     )
-    ranking_tie_audit = (
-        ranking_tie_audit if isinstance(ranking_tie_audit, dict) else {}
-    )
+    ranking_tie_audit = ranking_tie_audit if isinstance(ranking_tie_audit, dict) else {}
     _expect(
-        ranking_tie_audit.get("schema")
-        == "citylens-parcel-intel/ranking-tie-audit@v1",
+        ranking_tie_audit.get("schema") == "citylens-parcel-intel/ranking-tie-audit@v1",
         "index: ranking tie audit schema is invalid",
         failures,
     )
@@ -1600,11 +1758,8 @@ def validate_index(
             )
             or (
                 selection_policy is not None
-                and ranking_tie_audit.get("deterministic_fallback")
-                == ["bbl"]
-                and ranking_tie_audit.get(
-                    "borough_deterministic_fallback"
-                )
+                and ranking_tie_audit.get("deterministic_fallback") == ["bbl"]
+                and ranking_tie_audit.get("borough_deterministic_fallback")
                 == ["model_rank", "bbl"]
             )
         ),
@@ -1619,9 +1774,7 @@ def validate_index(
     )
     ranking_tie_boroughs = ranking_tie_audit.get("boroughs")
     ranking_tie_boroughs = (
-        ranking_tie_boroughs
-        if isinstance(ranking_tie_boroughs, dict)
-        else {}
+        ranking_tie_boroughs if isinstance(ranking_tie_boroughs, dict) else {}
     )
     for slug in BOROUGHS:
         tie_stats = ranking_tie_boroughs.get(slug)
@@ -1636,9 +1789,7 @@ def validate_index(
         )
     citywide_tie_stats = ranking_tie_audit.get("citywide")
     citywide_tie_stats = (
-        citywide_tie_stats
-        if isinstance(citywide_tie_stats, dict)
-        else {}
+        citywide_tie_stats if isinstance(citywide_tie_stats, dict) else {}
     )
     _expect(
         citywide_tie_stats.get("row_count") == 5000
@@ -1651,9 +1802,13 @@ def validate_index(
     quality_boroughs = quality_boroughs if isinstance(quality_boroughs, dict) else {}
     for slug in BOROUGHS:
         row = quality_boroughs.get(slug)
-        _expect(isinstance(row, dict), f"index: {slug} quality report missing", failures)
+        _expect(
+            isinstance(row, dict), f"index: {slug} quality report missing", failures
+        )
         row = row if isinstance(row, dict) else {}
-        _expect(row.get("passed") is True, f"index: {slug} quality gate failed", failures)
+        _expect(
+            row.get("passed") is True, f"index: {slug} quality gate failed", failures
+        )
         _expect(
             row.get("row_count") == (by_slug.get(slug) or {}).get("count"),
             f"index: {slug} quality row_count does not match manifest",
@@ -1678,7 +1833,11 @@ def validate_index(
             "mih_coverage",
             "transit_coverage",
         ):
-            _expect(row.get(field) == 1.0, f"index: {slug} {field} is not complete", failures)
+            _expect(
+                row.get(field) == 1.0,
+                f"index: {slug} {field} is not complete",
+                failures,
+            )
 
     generation_diff = index.get("generation_diff")
     _expect(
@@ -1686,12 +1845,9 @@ def validate_index(
         "index: generation_diff is missing",
         failures,
     )
-    generation_diff = (
-        generation_diff if isinstance(generation_diff, dict) else {}
-    )
+    generation_diff = generation_diff if isinstance(generation_diff, dict) else {}
     _expect(
-        generation_diff.get("schema")
-        == "citylens-parcel-intel/generation-diff@v1",
+        generation_diff.get("schema") == "citylens-parcel-intel/generation-diff@v1",
         "index: generation_diff schema is invalid",
         failures,
     )
@@ -1746,9 +1902,7 @@ def validate_index(
         failures,
     )
     feature_candidate = feature_drift.get("candidate")
-    feature_candidate = (
-        feature_candidate if isinstance(feature_candidate, dict) else {}
-    )
+    feature_candidate = feature_candidate if isinstance(feature_candidate, dict) else {}
     _expect(
         feature_candidate.get("row_count") == 5000,
         "index: inference feature row count is not 5,000",
@@ -1861,13 +2015,10 @@ def validate_index(
     )
     evaluation_evidence = model.get("evaluation_evidence")
     evaluation_evidence = (
-        evaluation_evidence
-        if isinstance(evaluation_evidence, dict)
-        else {}
+        evaluation_evidence if isinstance(evaluation_evidence, dict) else {}
     )
     _expect(
-        evaluation_evidence.get("schema")
-        == "citylens_model_evaluation_evidence@v1",
+        evaluation_evidence.get("schema") == "citylens_model_evaluation_evidence@v1",
         "index: model evaluation evidence is missing or invalid",
         failures,
     )
@@ -1888,6 +2039,14 @@ def validate_index(
             label="index",
         )
     )
+    borough_receipt = model.get("historical_borough_benchmark_receipt")
+    if borough_receipt is not None:
+        failures.extend(
+            validate_historical_borough_benchmark_receipt(
+                borough_receipt,
+                label="index",
+            )
+        )
     performance_scope = model.get("performance_scope")
     _expect(
         isinstance(performance_scope, str)
@@ -1898,9 +2057,7 @@ def validate_index(
     )
     model_ranking_policy = model.get("ranking_policy")
     model_ranking_policy = (
-        model_ranking_policy
-        if isinstance(model_ranking_policy, dict)
-        else {}
+        model_ranking_policy if isinstance(model_ranking_policy, dict) else {}
     )
     _expect(
         model_ranking_policy.get("primary_field") == "score_calibrated"
@@ -1916,8 +2073,7 @@ def validate_index(
             )
             or (
                 selection_policy is not None
-                and model_ranking_policy.get("deterministic_fallback")
-                == ["bbl"]
+                and model_ranking_policy.get("deterministic_fallback") == ["bbl"]
                 and model_ranking_policy.get("borough_rank_fallback")
                 == ["model_rank", "bbl"]
             )
@@ -1939,19 +2095,24 @@ def validate_index(
 def _validate_public_row(row: dict[str, Any], label: str) -> list[str]:
     failures: list[str] = []
     _expect(
-        isinstance(row.get("bbl"), str) and len(row["bbl"]) == 10 and row["bbl"].isdigit(),
+        isinstance(row.get("bbl"), str)
+        and len(row["bbl"]) == 10
+        and row["bbl"].isdigit(),
         f"{label}: invalid BBL",
         failures,
     )
-    _expect(row.get("acquisition_eligible") is True, f"{label}: lead is not eligible", failures)
+    _expect(
+        row.get("acquisition_eligible") is True,
+        f"{label}: lead is not eligible",
+        failures,
+    )
     _expect(
         row.get("acquisition_status") == "eligible",
         f"{label}: acquisition status is not eligible",
         failures,
     )
     _expect(
-        row.get("address_source")
-        in {"nyc_pad", "nyc_pluto", "model_sweep"},
+        row.get("address_source") in {"nyc_pad", "nyc_pluto", "model_sweep"},
         f"{label}: address source provenance is missing or invalid",
         failures,
     )
@@ -1961,13 +2122,37 @@ def _validate_public_row(row: dict[str, Any], label: str) -> list[str]:
         failures,
     )
     for field in PRIVATE_NULL_FIELDS:
-        _expect(row.get(field) is None, f"{label}: private field {field} was exposed", failures)
-    _expect(row.get("top_features", []) == [], f"{label}: SHAP features were exposed", failures)
-    for field in ("change_added_count", "change_demolished_count", "change_modified_count"):
-        _expect(row.get(field, 0) == 0, f"{label}: private field {field} was exposed", failures)
-    _expect(row.get("recent_change", False) is False, f"{label}: recent_change was exposed", failures)
+        _expect(
+            row.get(field) is None,
+            f"{label}: private field {field} was exposed",
+            failures,
+        )
+    _expect(
+        row.get("top_features", []) == [],
+        f"{label}: SHAP features were exposed",
+        failures,
+    )
+    for field in (
+        "change_added_count",
+        "change_demolished_count",
+        "change_modified_count",
+    ):
+        _expect(
+            row.get(field, 0) == 0,
+            f"{label}: private field {field} was exposed",
+            failures,
+        )
+    _expect(
+        row.get("recent_change", False) is False,
+        f"{label}: recent_change was exposed",
+        failures,
+    )
     for field in ("dob_safety_active_count", "ecb_active_count", "hpd_open_count"):
-        _expect(row.get(field, 0) == 0, f"{label}: private field {field} was exposed", failures)
+        _expect(
+            row.get(field, 0) == 0,
+            f"{label}: private field {field} was exposed",
+            failures,
+        )
     return failures
 
 
@@ -2126,6 +2311,52 @@ def validate_public_decision_audit(
         "parcel detail: historical benchmark receipt does not match accepted model metadata",
         failures,
     )
+    audit_borough_receipt = validation.get("historical_borough_benchmark_receipt")
+    model_borough_receipt = model_metadata.get("historical_borough_benchmark_receipt")
+    selected_borough_cohort = validation.get("historical_borough_cohort")
+    if model_borough_receipt is None:
+        _expect(
+            audit_borough_receipt is None and selected_borough_cohort is None,
+            "parcel detail: historical borough evidence was invented",
+            failures,
+        )
+    else:
+        failures.extend(
+            validate_historical_borough_benchmark_receipt(
+                audit_borough_receipt,
+                label="parcel detail",
+            )
+        )
+        _expect(
+            audit_borough_receipt == model_borough_receipt,
+            "parcel detail: historical borough receipt does not match accepted model metadata",
+            failures,
+        )
+        borough_slug = payload.get("borough")
+        model_boroughs = model_borough_receipt.get("boroughs")
+        model_boroughs = model_boroughs if isinstance(model_boroughs, dict) else {}
+        expected_cohort = (
+            {
+                "borough": borough_slug,
+                "target": model_borough_receipt.get("target"),
+                "feature_origin": model_borough_receipt.get("feature_origin"),
+                "outcome_window": model_borough_receipt.get("outcome_window"),
+                "evaluation_scope": model_borough_receipt.get("evaluation_scope"),
+                "ranking_scope": model_borough_receipt.get("ranking_scope"),
+                "cohort": model_boroughs[borough_slug],
+                "interval": model_borough_receipt.get("interval"),
+                "evidence_status": model_borough_receipt.get("evidence_status"),
+                "not_current_accuracy": True,
+                "not_parcel_confidence": True,
+            }
+            if borough_slug in model_boroughs
+            else None
+        )
+        _expect(
+            selected_borough_cohort == expected_cohort,
+            "parcel detail: selected historical borough cohort is inconsistent",
+            failures,
+        )
 
     checks = audit.get("checks")
     _expect(
@@ -2157,14 +2388,12 @@ def validate_public_decision_audit(
     for key in required_keys:
         check = by_key.get(key, {})
         _expect(
-            isinstance(check.get("summary"), str)
-            and bool(check["summary"].strip()),
+            isinstance(check.get("summary"), str) and bool(check["summary"].strip()),
             f"parcel detail: audit check {key} has no summary",
             failures,
         )
         _expect(
-            isinstance(check.get("source"), str)
-            and bool(check["source"].strip()),
+            isinstance(check.get("source"), str) and bool(check["source"].strip()),
             f"parcel detail: audit check {key} has no source",
             failures,
         )
@@ -2283,7 +2512,9 @@ def validate_map(
     rows = payload.get("rows")
     _expect(isinstance(rows, list), "map: rows is not a list", failures)
     rows = rows if isinstance(rows, list) else []
-    _expect(len(rows) == 125, f"map: expected 125 public rows, got {len(rows)}", failures)
+    _expect(
+        len(rows) == 125, f"map: expected 125 public rows, got {len(rows)}", failures
+    )
     bbls: set[str] = set()
     citywide_ranks: set[int] = set()
     counts = {slug: 0 for slug in BOROUGHS}
@@ -2335,7 +2566,11 @@ def validate_sweep(
     expected_generated_at: str | None,
 ) -> list[str]:
     failures: list[str] = []
-    _expect(payload.get("borough") == slug, f"sweep {slug}: response borough mismatch", failures)
+    _expect(
+        payload.get("borough") == slug,
+        f"sweep {slug}: response borough mismatch",
+        failures,
+    )
     _expect(
         payload.get("generated_at") == expected_generated_at,
         f"sweep {slug}: generation does not match index",
@@ -2348,7 +2583,11 @@ def validate_sweep(
     if rows and isinstance(rows[0], dict):
         row = rows[0]
         failures.extend(_validate_public_row(row, f"sweep {slug} row"))
-        _expect(row.get("acquisition_rank") == 1, f"sweep {slug}: top rank is not 1", failures)
+        _expect(
+            row.get("acquisition_rank") == 1,
+            f"sweep {slug}: top rank is not 1",
+            failures,
+        )
         _expect(
             str(row.get("bbl") or "").startswith(BBL_PREFIX[slug]),
             f"sweep {slug}: BBL borough prefix mismatch",
@@ -2389,10 +2628,18 @@ def run_checks(
     ready = _json(ready_result, "readiness", failures)
     timings["readiness"] = round(ready_result.elapsed_seconds, 3)
     _expect(ready.get("ok") is True, "readiness: API is not ready", failures)
-    _expect(ready.get("firestore") is True, "readiness: Firestore is unavailable", failures)
+    _expect(
+        ready.get("firestore") is True, "readiness: Firestore is unavailable", failures
+    )
     parcel_ready = ready.get("parcel_intel") or {}
-    _expect(parcel_ready.get("present") is True, "readiness: parcel feed is absent", failures)
-    _expect(parcel_ready.get("stale") is False, "readiness: parcel feed is stale", failures)
+    _expect(
+        parcel_ready.get("present") is True,
+        "readiness: parcel feed is absent",
+        failures,
+    )
+    _expect(
+        parcel_ready.get("stale") is False, "readiness: parcel feed is stale", failures
+    )
 
     index_result = _request(f"{api_base}/v1/parcel-intel/index", timeout=timeout)
     index = _json(index_result, "index", failures)
@@ -2446,15 +2693,15 @@ def run_checks(
     failures.extend(
         validate_map(
             map_payload,
-            expected_generated_at=generated_at if isinstance(generated_at, str) else None,
+            expected_generated_at=generated_at
+            if isinstance(generated_at, str)
+            else None,
         )
     )
     map_rows = map_payload.get("rows")
     public_bbl = (
         map_rows[0].get("bbl")
-        if isinstance(map_rows, list)
-        and map_rows
-        and isinstance(map_rows[0], dict)
+        if isinstance(map_rows, list) and map_rows and isinstance(map_rows[0], dict)
         else None
     )
     _expect(
@@ -2512,7 +2759,11 @@ def run_checks(
     ):
         result = _request(f"{api_base}{path}", timeout=timeout)
         timings[label.replace(" ", "_")] = round(result.elapsed_seconds, 3)
-        _expect(result.status == 401, f"{label}: anonymous request returned {result.status}", failures)
+        _expect(
+            result.status == 401,
+            f"{label}: anonymous request returned {result.status}",
+            failures,
+        )
 
     product_event_result = _request(
         f"{api_base}/v1/parcel-intel/product-events",
@@ -2527,8 +2778,7 @@ def run_checks(
     timings["product_events"] = round(product_event_result.elapsed_seconds, 3)
     _expect(
         product_event_result.status == 401,
-        "product events: anonymous request returned "
-        f"{product_event_result.status}",
+        f"product events: anonymous request returned {product_event_result.status}",
         failures,
     )
 
@@ -2553,12 +2803,8 @@ def run_checks(
         f"{api_base}/v1/parcel-intel/workflow/analytics/methodology",
         timeout=timeout,
     )
-    timings["workflow_methodology"] = round(
-        methodology_result.elapsed_seconds, 3
-    )
-    methodology = _json(
-        methodology_result, "workflow methodology", failures
-    )
+    timings["workflow_methodology"] = round(methodology_result.elapsed_seconds, 3)
+    methodology = _json(methodology_result, "workflow methodology", failures)
     failures.extend(validate_workflow_methodology(methodology))
 
     web_result = _request(
@@ -2566,7 +2812,11 @@ def run_checks(
         timeout=timeout,
     )
     timings["web_parcel_intel"] = round(web_result.elapsed_seconds, 3)
-    _expect(web_result.status == 200, f"web: /parcel-intel returned {web_result.status}", failures)
+    _expect(
+        web_result.status == 200,
+        f"web: /parcel-intel returned {web_result.status}",
+        failures,
+    )
     web_security_failures = validate_security_headers(
         web_result.headers,
         label="web",
@@ -2608,7 +2858,9 @@ def main() -> int:
         help="Fail before the API's 45-day stale boundary to leave remediation time.",
     )
     parser.add_argument("--timeout", type=float, default=20.0)
-    parser.add_argument("--output", help="Optional path for the JSON verification report.")
+    parser.add_argument(
+        "--output", help="Optional path for the JSON verification report."
+    )
     args = parser.parse_args()
 
     try:

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from scripts.verify_production import (
     evaluate_source_slas,
     validate_historical_benchmark_receipt,
+    validate_historical_borough_benchmark_receipt,
     validate_index,
     validate_map,
     validate_pilot_probe_response,
@@ -65,23 +66,79 @@ def _historical_benchmark_receipt() -> dict:
     }
 
 
+def _historical_borough_benchmark_receipt() -> dict:
+    borough_rows = {
+        "manhattan": (33_718, 36, 3, [0.010254524024038925, 0.0845193642905276]),
+        "bronx": (78_837, 202, 24, [0.16691325556948772, 0.33232336349814473]),
+        "brooklyn": (245_853, 240, 10, [0.0552291370606751, 0.17436566150491345]),
+        "queens": (301_132, 329, 23, [0.15843265880303448, 0.3215438302287378]),
+        "staten_island": (
+            108_974,
+            149,
+            13,
+            [0.07757167427240512, 0.20980351440076428],
+        ),
+    }
+    boroughs = {}
+    for slug, (rows, positives, hits, interval) in borough_rows.items():
+        boroughs[slug] = {
+            "evaluation_rows": rows,
+            "observed_positive_rows": positives,
+            "base_rate": positives / rows,
+            "top_100": {
+                "k": 100,
+                "evaluated_rows": 100,
+                "observed_hits": hits,
+                "precision": hits / 100,
+                "precision_95ci": interval,
+            },
+        }
+    return {
+        "schema": "citylens_historical_borough_benchmark_receipt@v1",
+        "target": "dob_nb_job_filing",
+        "feature_origin": 2024,
+        "outcome_window": "2025-2025",
+        "evaluation_scope": "rolling_origin_latest_out_of_time",
+        "ranking_scope": "historical_within_borough_model_order",
+        "citywide_evaluation_rows": 768_514,
+        "citywide_observed_positive_rows": 956,
+        "boroughs": boroughs,
+        "interval": {
+            "method": "wilson_score_observed_top_k",
+            "confidence_level": 0.95,
+            "scope": "fixed_historical_borough_ranked_list",
+            "limitations": (
+                "Does not include model-selection uncertainty, spatial "
+                "dependence, dataset shift, current acquisition outcomes, "
+                "or a parcel-specific probability."
+            ),
+        },
+        "source_receipt": {
+            "schema": "citylens_borough_benchmark_attachment@v1",
+            "report_file_name": "rolling_origin_1y_attested.json",
+            "report_schema": "citylens_rolling_origin_backtest@v2",
+            "report_sha256": "a" * 64,
+            "report_size_bytes": 21_910,
+            "source_model_sha256": "b" * 64,
+            "metadata_only_attachment": True,
+        },
+        "evidence_status": "development_exposed",
+        "not_current_accuracy": True,
+        "not_parcel_confidence": True,
+    }
+
+
 def _security_headers(*, browser_page: bool) -> dict[str, str]:
     headers = {
         "content-security-policy": (
-            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
-            "form-action 'self'"
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'"
             if browser_page
             else "base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
         ),
         "permissions-policy": (
-            "browsing-topics=(), camera=(), geolocation=(), microphone=(), "
-            "payment=()"
+            "browsing-topics=(), camera=(), geolocation=(), microphone=(), payment=()"
         ),
-        "referrer-policy": (
-            "strict-origin-when-cross-origin"
-            if browser_page
-            else "no-referrer"
-        ),
+        "referrer-policy": ("strict-origin-when-cross-origin" if browser_page else "no-referrer"),
         "strict-transport-security": "max-age=63072000",
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
@@ -137,12 +194,8 @@ def test_web_copy_validator_checks_map_first_product_semantics() -> None:
     """
     assert validate_web_copy(html) == []
 
-    failures = validate_web_copy(
-        html.replace("Citywide opportunity explorer", "Generic dashboard")
-    )
-    assert failures == [
-        "web: missing expected copy: Citywide opportunity explorer"
-    ]
+    failures = validate_web_copy(html.replace("Citywide opportunity explorer", "Generic dashboard"))
+    assert failures == ["web: missing expected copy: Citywide opportunity explorer"]
 
 
 def test_pilot_probe_accepts_validation_or_rate_limit_but_not_success() -> None:
@@ -184,9 +237,7 @@ def _prospective_validation() -> dict:
     generation = "20260723T000000000000Z-aaaaaaaaaaaa"
     observation_id = "20260723-aaaaaaaaaaaa"
     return {
-        "schema": (
-            "citylens-parcel-intel/prospective-validation-status@v1"
-        ),
+        "schema": ("citylens-parcel-intel/prospective-validation-status@v1"),
         "cohort_id": generation,
         "source_generation": generation,
         "label_definition": "dob_nb_job_filing",
@@ -227,14 +278,11 @@ def _prospective_validation() -> dict:
         "report_reference": {
             "observation_id": observation_id,
             "object_name": (
-                "parcel-intel/v1/prospective-cohorts/"
-                f"{generation}/reports/{observation_id}.json"
+                f"parcel-intel/v1/prospective-cohorts/{generation}/reports/{observation_id}.json"
             ),
             "sha256": "a" * 64,
         },
-        "interpretation": (
-            "Immature metrics are lower bounds and do not measure seller intent."
-        ),
+        "interpretation": ("Immature metrics are lower bounds and do not measure seller intent."),
     }
 
 
@@ -245,9 +293,7 @@ def _prospective_validation_health() -> dict:
         "observation_lag_days": 1,
         "max_observation_lag_days": 8,
         "next_monitor_due_on": "2026-07-31",
-        "oldest_official_source_updated_at": (
-            "2026-07-23T20:00:00+00:00"
-        ),
+        "oldest_official_source_updated_at": ("2026-07-23T20:00:00+00:00"),
     }
 
 
@@ -276,15 +322,11 @@ def _index() -> dict:
     }
     return {
         "generated_at": "2026-07-23T00:00:00Z",
-        "feed_generation": (
-            "20260723T000000000000Z-aaaaaaaaaaaa"
-        ),
+        "feed_generation": ("20260723T000000000000Z-aaaaaaaaaaaa"),
         "age_days": 1.0,
         "stale": False,
         "prospective_validation": _prospective_validation(),
-        "prospective_validation_health": (
-            _prospective_validation_health()
-        ),
+        "prospective_validation_health": (_prospective_validation_health()),
         "data_sources": data_sources,
         "boroughs": [
             {"slug": slug, "display_name": slug.title(), "count": 1000}
@@ -296,9 +338,7 @@ def _index() -> dict:
             "citywide_acquisition_eligible_count": 5000,
             "citywide_rank_sequence_valid": True,
             "land_use_reconciliation": {
-                "schema": (
-                    "citylens-parcel-intel/land-use-reconciliation@v1"
-                ),
+                "schema": ("citylens-parcel-intel/land-use-reconciliation@v1"),
                 "source_schema": "citylens-parcel-intel/zap-activity@v1",
                 "source_generated_at": "2026-07-23T00:00:00Z",
                 "source_sha256": "a" * 64,
@@ -314,18 +354,14 @@ def _index() -> dict:
                 "minimum_project_bbl_crosswalk_coverage": 1.0,
                 "project_bbl_crosswalk_coverage": 1.0,
                 "project_detail_source": (
-                    "https://zap-api-production.herokuapp.com/projects/"
-                    "{project_id}"
+                    "https://zap-api-production.herokuapp.com/projects/{project_id}"
                 ),
-                "project_detail_retrieved_at": (
-                    "2026-07-24T08:52:20.198447+00:00"
-                ),
+                "project_detail_retrieved_at": ("2026-07-24T08:52:20.198447+00:00"),
                 "project_detail_supplemental_relation_count": 1,
                 "project_detail_fetch_failure_count": 0,
                 "project_detail_fetch_failure_ids": [],
                 "official_document_supplement_schema": (
-                    "citylens-parcel-intel/"
-                    "zap-official-document-bbl-supplements@v1"
+                    "citylens-parcel-intel/zap-official-document-bbl-supplements@v1"
                 ),
                 "official_document_supplement_reviewed_at": "2026-07-24",
                 "official_document_supplement_sha256": "c" * 64,
@@ -410,9 +446,8 @@ def _index() -> dict:
             "precision_at_100": 0.34,
             "precision_at_1000": 0.104,
             "spatial_cv_base_rate": 0.0012439591,
-            "historical_benchmark_receipt": (
-                _historical_benchmark_receipt()
-            ),
+            "historical_benchmark_receipt": (_historical_benchmark_receipt()),
+            "historical_borough_benchmark_receipt": (_historical_borough_benchmark_receipt()),
             "prospective_2026_validated": False,
             "performance_scope": (
                 "Rolling origin: PLUTO 2018/2020/2022 training; historical "
@@ -438,9 +473,7 @@ def _index() -> dict:
             "status": "compared",
             "candidate": {"row_count": 5000},
             "inference_feature_drift": {
-                "schema": (
-                    "citylens-parcel-intel/inference-feature-drift@v1"
-                ),
+                "schema": ("citylens-parcel-intel/inference-feature-drift@v1"),
                 "status": "compared",
                 "candidate": {
                     "row_count": 5000,
@@ -563,22 +596,15 @@ def test_index_validator_accepts_versioned_variable_borough_selection() -> None:
 
     assert validate_index(index, max_age_days=35, now=now) == []
 
-    index["quality_gate"]["selection_policy"]["by_borough"]["manhattan"][
-        "selected_count"
-    ] = 249
+    index["quality_gate"]["selection_policy"]["by_borough"]["manhattan"]["selected_count"] = 249
     failures = validate_index(index, max_age_days=35, now=now)
-    assert (
-        "index: manhattan selection count/floor receipt is invalid"
-        in failures
-    )
+    assert "index: manhattan selection count/floor receipt is invalid" in failures
 
 
 def test_index_validator_rejects_overstated_historical_benchmark() -> None:
     now = datetime(2026, 7, 24, tzinfo=timezone.utc)
     bad = deepcopy(_index())
-    bad["model_metadata"]["performance_scope"] = (
-        "Rolling origin: latest untouched test 2024 → 2025"
-    )
+    bad["model_metadata"]["performance_scope"] = "Rolling origin: latest untouched test 2024 → 2025"
     bad["model_metadata"]["evaluation_evidence"].update(
         {
             "status": "unexposed",
@@ -589,27 +615,13 @@ def test_index_validator_rejects_overstated_historical_benchmark() -> None:
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert (
-        "index: accepted historical benchmark exposure is misclassified"
-        in failures
-    )
-    assert (
-        "index: exposed benchmark is incorrectly eligible for model selection"
-        in failures
-    )
-    assert (
-        "index: historical benchmark scope overstates evaluation independence"
-        in failures
-    )
+    assert "index: accepted historical benchmark exposure is misclassified" in failures
+    assert "index: exposed benchmark is incorrectly eligible for model selection" in failures
+    assert "index: historical benchmark scope overstates evaluation independence" in failures
 
 
 def test_historical_benchmark_receipt_rejects_tampered_counts_and_interval() -> None:
-    assert (
-        validate_historical_benchmark_receipt(
-            _historical_benchmark_receipt()
-        )
-        == []
-    )
+    assert validate_historical_benchmark_receipt(_historical_benchmark_receipt()) == []
     bad = _historical_benchmark_receipt()
     bad["top_100"]["observed_hits"] = 35
     bad["top_1000"]["precision_95ci"][0] = 0.0
@@ -618,6 +630,22 @@ def test_historical_benchmark_receipt_rejects_tampered_counts_and_interval() -> 
 
     assert any("top_100 precision disagrees" in failure for failure in failures)
     assert any("top_1000 interval is invalid" in failure for failure in failures)
+
+
+def test_historical_borough_receipt_rejects_tampered_cohort_and_source() -> None:
+    assert (
+        validate_historical_borough_benchmark_receipt(_historical_borough_benchmark_receipt()) == []
+    )
+    bad = _historical_borough_benchmark_receipt()
+    bad["boroughs"]["queens"]["top_100"]["observed_hits"] = 24
+    bad["boroughs"]["bronx"]["top_100"]["precision_95ci"][0] = 0.0
+    bad["source_receipt"]["report_sha256"] = "not-a-digest"
+
+    failures = validate_historical_borough_benchmark_receipt(bad)
+
+    assert any("queens top-100 precision disagrees" in failure for failure in failures)
+    assert any("bronx top-100 interval is invalid" in failure for failure in failures)
+    assert any("source receipt is invalid" in failure for failure in failures)
 
 
 def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None:
@@ -667,12 +695,8 @@ def test_prospective_validation_rejects_inconsistent_maturity_telemetry() -> Non
 def test_prospective_validation_rejects_ambiguous_time_and_identity() -> None:
     generation = "20260723T000000000000Z-aaaaaaaaaaaa"
     bad = deepcopy(_prospective_validation())
-    bad["official_sources"][0]["rows_updated_at"] = (
-        "2026-07-23T21:00:00"
-    )
-    bad["report_reference"]["observation_id"] = (
-        "20260722-aaaaaaaaaaaa"
-    )
+    bad["official_sources"][0]["rows_updated_at"] = "2026-07-23T21:00:00"
+    bad["report_reference"]["observation_id"] = "20260722-aaaaaaaaaaaa"
 
     failures = validate_prospective_validation(
         bad,
@@ -681,10 +705,7 @@ def test_prospective_validation_rejects_ambiguous_time_and_identity() -> None:
         now=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
-    assert (
-        "index: prospective official DOB source timestamps are invalid"
-        in failures
-    )
+    assert "index: prospective official DOB source timestamps are invalid" in failures
     assert "index: prospective report reference is invalid" in failures
 
 
@@ -713,27 +734,15 @@ def test_prospective_validation_rejects_stale_monitor_health() -> None:
 def test_index_validator_rejects_land_use_source_reconciliation_leakage() -> None:
     now = datetime(2026, 7, 24, tzinfo=timezone.utc)
     bad = deepcopy(_index())
-    bad["quality_gate"]["land_use_reconciliation"][
-        "published_leakage_count"
-    ] = 1
+    bad["quality_gate"]["land_use_reconciliation"]["published_leakage_count"] = 1
     bad["quality_gate"]["land_use_reconciliation"]["passed"] = False
-    bad["quality_gate"]["land_use_reconciliation"]["failures"] = [
-        "published_blocked_bbl_leakage"
-    ]
-    bad["quality_gate"]["boroughs"]["brooklyn"][
-        "authoritative_zap_bbl_leakage_count"
-    ] = 1
+    bad["quality_gate"]["land_use_reconciliation"]["failures"] = ["published_blocked_bbl_leakage"]
+    bad["quality_gate"]["boroughs"]["brooklyn"]["authoritative_zap_bbl_leakage_count"] = 1
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert (
-        "index: authoritative ZAP-blocked BBL leaked into published leads"
-        in failures
-    )
-    assert (
-        "index: brooklyn authoritative_zap_bbl_leakage_count is not zero"
-        in failures
-    )
+    assert "index: authoritative ZAP-blocked BBL leaked into published leads" in failures
+    assert "index: brooklyn authoritative_zap_bbl_leakage_count is not zero" in failures
 
 
 def test_index_validator_rejects_incomplete_land_use_project_crosswalk() -> None:
@@ -746,10 +755,7 @@ def test_index_validator_rejects_incomplete_land_use_project_crosswalk() -> None
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert (
-        "index: land-use reconciliation unresolved project IDs are invalid"
-        in failures
-    )
+    assert "index: land-use reconciliation unresolved project IDs are invalid" in failures
     assert "index: land-use project-to-BBL coverage is below 100%" in failures
 
 
@@ -763,19 +769,10 @@ def test_index_validator_rejects_land_use_scope_or_detail_failures() -> None:
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert (
-        "index: land-use reconciliation non-parcel project IDs are invalid"
-        in failures
-    )
-    assert (
-        "index: land-use reconciliation project scope counts disagree"
-        in failures
-    )
+    assert "index: land-use reconciliation non-parcel project IDs are invalid" in failures
+    assert "index: land-use reconciliation project scope counts disagree" in failures
     assert "index: land-use project-detail refresh has failures" in failures
-    assert (
-        "index: land-use project-detail failure IDs are not empty"
-        in failures
-    )
+    assert "index: land-use project-detail failure IDs are not empty" in failures
 
 
 def test_index_validator_rejects_weak_current_tax_lot_reconciliation() -> None:
@@ -791,14 +788,8 @@ def test_index_validator_rejects_weak_current_tax_lot_reconciliation() -> None:
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert (
-        "index: current-tax-lot reconciled relation count is invalid"
-        in failures
-    )
-    assert (
-        "index: current-tax-lot reconciled project IDs are invalid"
-        in failures
-    )
+    assert "index: current-tax-lot reconciled relation count is invalid" in failures
+    assert "index: current-tax-lot reconciled project IDs are invalid" in failures
     assert "index: current-tax-lot unmatched input count is invalid" in failures
     assert "index: current PLUTO tax-lot universe is invalid" in failures
     assert "index: current PLUTO tax-lot digest is invalid" in failures
@@ -813,26 +804,15 @@ def test_index_validator_rejects_weak_official_document_evidence() -> None:
     reconciliation["official_document_source_count"] = 1
     reconciliation["official_document_supplemental_relation_count"] = 1
     reconciliation["official_document_supplemental_project_count"] = 2
-    reconciliation["official_document_supplemental_project_ids"] = [
-        "2021K0396"
-    ]
+    reconciliation["official_document_supplemental_project_ids"] = ["2021K0396"]
 
     failures = validate_index(bad, max_age_days=35, now=now)
 
-    assert any(
-        "official ZAP document review age" in failure
-        for failure in failures
-    )
+    assert any("official ZAP document review age" in failure for failure in failures)
     assert "index: official ZAP document supplement digest is invalid" in failures
     assert "index: official ZAP document project IDs are invalid" in failures
-    assert (
-        "index: official ZAP document sources are below project count"
-        in failures
-    )
-    assert (
-        "index: official ZAP document relations are below project count"
-        in failures
-    )
+    assert "index: official ZAP document sources are below project count" in failures
+    assert "index: official ZAP document relations are below project count" in failures
 
 
 def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:
@@ -848,18 +828,13 @@ def test_index_validator_rejects_incomplete_ranking_tiebreak_coverage() -> None:
     failures = validate_index(bad, max_age_days=35, now=now)
 
     assert "index: queens ranking tie-break coverage is incomplete" in failures
-    assert (
-        "index: citywide ranking tie-break coverage is incomplete"
-        in failures
-    )
+    assert "index: citywide ranking tie-break coverage is incomplete" in failures
     assert "index: model ranking policy is invalid" in failures
 
 
 def test_workflow_methodology_validator_requires_maturity_aware_contract() -> None:
     methodology = {
-        "schema_version": (
-            "citylens/parcel-workflow-analytics-methodology@v2"
-        ),
+        "schema_version": ("citylens/parcel-workflow-analytics-methodology@v2"),
         "analytics_schema_version": "citylens/parcel-workflow-analytics@v3",
         "model_accuracy_claim": False,
         "minimum_rate_denominator": 10,
@@ -879,9 +854,7 @@ def test_workflow_methodology_validator_requires_maturity_aware_contract() -> No
     assert validate_workflow_methodology(methodology) == []
 
     bad = deepcopy(methodology)
-    bad["analytics_schema_version"] = (
-        "citylens/parcel-workflow-analytics@v1"
-    )
+    bad["analytics_schema_version"] = "citylens/parcel-workflow-analytics@v1"
     bad["model_accuracy_claim"] = True
     bad["horizons"][0]["horizon_days"] = 5
     failures = validate_workflow_methodology(bad)
@@ -898,9 +871,7 @@ def test_source_sla_validator_recomputes_age_and_warns_before_breach() -> None:
     failures, warnings, report = evaluate_source_slas(index, now=now)
 
     assert failures == []
-    assert warnings == [
-        "index: source SLA current_violations has 2.0 days remaining"
-    ]
+    assert warnings == ["index: source SLA current_violations has 2.0 days remaining"]
     assert report["passed"] is True
     assert report["warning_count"] == 1
     assert report["sources"]["current_violations"]["status"] == "warning"
@@ -917,13 +888,9 @@ def test_source_sla_validator_rejects_missing_stale_and_future_sources() -> None
 
     assert "index: source SLA ownership is missing" in failures
     assert any(
-        failure.startswith("index: source SLA project_activity is stale")
-        for failure in failures
+        failure.startswith("index: source SLA project_activity is stale") for failure in failures
     )
-    assert (
-        "index: source SLA property_facts retrieved_at is in the future"
-        in failures
-    )
+    assert "index: source SLA property_facts retrieved_at is in the future" in failures
     assert report["passed"] is False
     assert report["breach_count"] == 3
 
@@ -958,10 +925,7 @@ def test_index_validator_requires_reviewed_generation_diff_override() -> None:
     )
 
     failures = validate_index(bad, max_age_days=35, now=now)
-    assert (
-        "index: failed drift thresholds lack a reviewed override reason"
-        in failures
-    )
+    assert "index: failed drift thresholds lack a reviewed override reason" in failures
 
     bad["generation_diff"]["gate"].update(
         {
@@ -997,22 +961,19 @@ def test_index_validator_accepts_nested_feature_drift_only_under_matching_overri
     assert validate_index(reviewed, max_age_days=35, now=now) == []
 
     unaccounted = deepcopy(reviewed)
-    unaccounted["generation_diff"]["inference_feature_drift"]["gate"][
-        "failures"
-    ] = ["feature_psi_exceeded"]
+    unaccounted["generation_diff"]["inference_feature_drift"]["gate"]["failures"] = [
+        "feature_psi_exceeded"
+    ]
 
-    assert (
-        "index: inference feature drift gate did not pass"
-        in validate_index(unaccounted, max_age_days=35, now=now)
+    assert "index: inference feature drift gate did not pass" in validate_index(
+        unaccounted, max_age_days=35, now=now
     )
 
 
 def test_index_validator_requires_full_feature_drift_and_score_replay() -> None:
     now = datetime(2026, 7, 24, tzinfo=timezone.utc)
     bad = deepcopy(_index())
-    bad["generation_diff"]["inference_feature_drift"]["candidate"][
-        "column_count"
-    ] = 141
+    bad["generation_diff"]["inference_feature_drift"]["candidate"]["column_count"] = 141
     bad["inference_replay"].update(
         {
             "passed": False,
@@ -1025,14 +986,8 @@ def test_index_validator_requires_full_feature_drift_and_score_replay() -> None:
     failures = validate_index(bad, max_age_days=35, now=now)
 
     assert "index: inference feature column count is not 142" in failures
-    assert (
-        "index: inference score replay did not match all 5,000 rows"
-        in failures
-    )
-    assert (
-        "index: inference score replay has non-zero maximum error"
-        in failures
-    )
+    assert "index: inference score replay did not match all 5,000 rows" in failures
+    assert "index: inference score replay has non-zero maximum error" in failures
 
 
 def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:
@@ -1065,18 +1020,13 @@ def test_map_validator_enforces_caps_ranks_and_public_redaction() -> None:
         "available_count": 5000,
         "inventory_complete": False,
     }
-    assert (
-        validate_map(payload, expected_generated_at="2026-07-23T00:00:00Z")
-        == []
-    )
+    assert validate_map(payload, expected_generated_at="2026-07-23T00:00:00Z") == []
 
     bad = deepcopy(payload)
     bad["rows"][0]["owner_name"] = "PRIVATE OWNER LLC"
     bad["rows"][1]["recent_change"] = True
     bad["rows"][2]["citywide_rank"] = bad["rows"][3]["citywide_rank"]
-    failures = validate_map(
-        bad, expected_generated_at="2026-07-23T00:00:00Z"
-    )
+    failures = validate_map(bad, expected_generated_at="2026-07-23T00:00:00Z")
     assert any("owner_name was exposed" in failure for failure in failures)
     assert any("recent_change was exposed" in failure for failure in failures)
     assert any("duplicate citywide rank" in failure for failure in failures)
@@ -1098,8 +1048,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
             "status": "limited_preview",
             "label": "Sign in to complete the decision screen",
             "recommended_action": (
-                "Review ownership provenance and current diligence overlays "
-                "before acting."
+                "Review ownership provenance and current diligence overlays before acting."
             ),
             "blockers": [],
             "review_items": [
@@ -1110,8 +1059,7 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
                 "Current PLUTO property facts matched this tax lot.",
             ],
             "disclaimer": (
-                "Decision readiness is not a purchase recommendation or "
-                "seller-intent score."
+                "Decision readiness is not a purchase recommendation or seller-intent score."
             ),
         },
         "validation": {
@@ -1120,13 +1068,25 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
             "precision_at_100": 0.34,
             "precision_at_1000": 0.104,
             "base_rate": 0.0012439591,
-            "historical_benchmark_receipt": (
-                _historical_benchmark_receipt()
-            ),
+            "historical_benchmark_receipt": (_historical_benchmark_receipt()),
+            "historical_borough_benchmark_receipt": (_historical_borough_benchmark_receipt()),
+            "historical_borough_cohort": {
+                "borough": "brooklyn",
+                "target": "dob_nb_job_filing",
+                "feature_origin": 2024,
+                "outcome_window": "2025-2025",
+                "evaluation_scope": "rolling_origin_latest_out_of_time",
+                "ranking_scope": "historical_within_borough_model_order",
+                "cohort": _historical_borough_benchmark_receipt()["boroughs"]["brooklyn"],
+                "interval": _historical_borough_benchmark_receipt()["interval"],
+                "evidence_status": "development_exposed",
+                "not_current_accuracy": True,
+                "not_parcel_confidence": True,
+            },
             "prospective_validated": False,
             "disclaimer": (
                 "Historical performance is not seller intent or transaction "
-                "probability."
+                "probability. Borough evidence is not parcel confidence."
             ),
         },
         "checks": [
@@ -1229,12 +1189,8 @@ def test_public_decision_audit_validator_enforces_roles_metrics_and_privacy() ->
     bad = deepcopy(payload)
     bad["decision_audit"]["evidence_generated_at"] = None
     bad["decision_audit"]["validation"]["precision_at_100"] = 0.99
-    bad["decision_audit"]["readiness"]["review_items"] = [
-        "Review the private tax-lien evidence."
-    ]
-    bad_checks = {
-        check["key"]: check for check in bad["decision_audit"]["checks"]
-    }
+    bad["decision_audit"]["readiness"]["review_items"] = ["Review the private tax-lien evidence."]
+    bad_checks = {check["key"]: check for check in bad["decision_audit"]["checks"]}
     bad_checks["ownership"]["summary"] = "PRIVATE OWNER LLC"
     bad_checks["current_diligence"]["affects_model_rank"] = True
     failures = validate_public_decision_audit(

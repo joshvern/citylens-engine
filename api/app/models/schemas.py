@@ -98,9 +98,7 @@ class PilotRequestCreate(BaseModel):
     company: str = Field(..., min_length=2, max_length=120)
     role: str = Field(default="", max_length=100)
     team_size: Literal["1", "2-5", "6-20", "21+"]
-    target_boroughs: list[PilotBorough] = Field(
-        ..., min_length=1, max_length=5
-    )
+    target_boroughs: list[PilotBorough] = Field(..., min_length=1, max_length=5)
     workflow_summary: str = Field(..., min_length=20, max_length=1_200)
     consent: Literal[True]
     website: str = Field(default="", max_length=200, exclude=True)
@@ -207,11 +205,25 @@ class ParcelDecisionAuditValidation(BaseModel):
     precision_at_100: Optional[float] = Field(default=None, ge=0, le=1)
     precision_at_1000: Optional[float] = Field(default=None, ge=0, le=1)
     base_rate: Optional[float] = Field(default=None, ge=0, le=1)
-    historical_benchmark_receipt: Optional[
-        "ParcelHistoricalBenchmarkReceipt"
-    ] = None
+    historical_benchmark_receipt: Optional["ParcelHistoricalBenchmarkReceipt"] = None
+    historical_borough_benchmark_receipt: Optional["ParcelHistoricalBoroughBenchmarkReceipt"] = None
+    historical_borough_cohort: Optional["ParcelHistoricalBoroughCohortEvidence"] = None
     prospective_validated: bool = False
     disclaimer: str
+
+
+def _historical_wilson_95(successes: int, trials: int) -> tuple[float, float]:
+    z = 1.959963984540054
+    proportion = successes / trials
+    z_squared = z * z
+    denominator = 1.0 + z_squared / trials
+    center = (proportion + z_squared / (2 * trials)) / denominator
+    margin = (
+        z
+        * math.sqrt(proportion * (1.0 - proportion) / trials + z_squared / (4 * trials**2))
+        / denominator
+    )
+    return max(0.0, center - margin), min(1.0, center + margin)
 
 
 class ParcelHistoricalTopKReceipt(BaseModel):
@@ -247,6 +259,18 @@ class ParcelHistoricalTopKReceipt(BaseModel):
                 "historical_top_k_interval",
                 "precision interval must contain the point estimate",
             )
+        expected_low, expected_high = _historical_wilson_95(
+            self.observed_hits,
+            self.evaluated_rows,
+        )
+        if not (
+            math.isclose(low, expected_low, abs_tol=1e-12)
+            and math.isclose(high, expected_high, abs_tol=1e-12)
+        ):
+            raise PydanticCustomError(
+                "historical_top_k_interval",
+                "precision interval does not match exact Wilson bounds",
+            )
         return self
 
 
@@ -262,9 +286,9 @@ class ParcelHistoricalIntervalReceipt(BaseModel):
 class ParcelHistoricalBenchmarkReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_: Literal[
-        "citylens_historical_benchmark_receipt@v1"
-    ] = Field(alias="schema", serialization_alias="schema")
+    schema_: Literal["citylens_historical_benchmark_receipt@v1"] = Field(
+        alias="schema", serialization_alias="schema"
+    )
     target: str = Field(min_length=1, max_length=128)
     feature_origin: int = Field(ge=2000, le=2100)
     outcome_window: str = Field(pattern=r"^\d{4}-\d{4}$")
@@ -293,9 +317,7 @@ class ParcelHistoricalBenchmarkReceipt(BaseModel):
                 "historical_positive_rows",
                 "observed positive rows exceed evaluation rows",
             )
-        expected_base_rate = (
-            self.observed_positive_rows / self.evaluation_rows
-        )
+        expected_base_rate = self.observed_positive_rows / self.evaluation_rows
         if not math.isclose(self.base_rate, expected_base_rate, abs_tol=1e-12):
             raise PydanticCustomError(
                 "historical_base_rate",
@@ -306,11 +328,9 @@ class ParcelHistoricalBenchmarkReceipt(BaseModel):
                 "historical_top_k_identity",
                 "top-k receipt keys do not match their k values",
             )
-        if (
-            self.top_100.evaluated_rows != min(100, self.evaluation_rows)
-            or self.top_1000.evaluated_rows
-            != min(1000, self.evaluation_rows)
-        ):
+        if self.top_100.evaluated_rows != min(
+            100, self.evaluation_rows
+        ) or self.top_1000.evaluated_rows != min(1000, self.evaluation_rows):
             raise PydanticCustomError(
                 "historical_top_k_denominator",
                 "top-k denominator does not match evaluation rows",
@@ -324,6 +344,150 @@ class ParcelHistoricalBenchmarkReceipt(BaseModel):
                 "top-k hits exceed total observed positive rows",
             )
         return self
+
+
+class ParcelHistoricalBoroughCohort(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_rows: int = Field(ge=100)
+    observed_positive_rows: int = Field(ge=0)
+    base_rate: float = Field(ge=0, le=1)
+    top_100: ParcelHistoricalTopKReceipt
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "ParcelHistoricalBoroughCohort":
+        if self.observed_positive_rows > self.evaluation_rows:
+            raise PydanticCustomError(
+                "historical_borough_positive_rows",
+                "borough positive rows exceed evaluation rows",
+            )
+        if not math.isclose(
+            self.base_rate,
+            self.observed_positive_rows / self.evaluation_rows,
+            abs_tol=1e-12,
+        ):
+            raise PydanticCustomError(
+                "historical_borough_base_rate",
+                "borough base rate does not match exact observed counts",
+            )
+        if (
+            self.top_100.k != 100
+            or self.top_100.evaluated_rows != min(100, self.evaluation_rows)
+            or self.top_100.observed_hits > self.observed_positive_rows
+        ):
+            raise PydanticCustomError(
+                "historical_borough_top_100",
+                "borough top-100 counts do not reconcile",
+            )
+        return self
+
+
+class ParcelHistoricalBoroughIntervalReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["wilson_score_observed_top_k"]
+    confidence_level: Literal[0.95]
+    scope: Literal["fixed_historical_borough_ranked_list"]
+    limitations: str = Field(min_length=1, max_length=700)
+
+
+class ParcelHistoricalBoroughSourceReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: Literal["citylens_borough_benchmark_attachment@v1"] = Field(
+        alias="schema", serialization_alias="schema"
+    )
+    report_file_name: str = Field(min_length=1, max_length=255)
+    report_schema: str = Field(min_length=1, max_length=128)
+    report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    report_size_bytes: int = Field(ge=1)
+    source_model_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    metadata_only_attachment: Literal[True]
+
+
+_PARCEL_HISTORICAL_BOROUGHS = frozenset(
+    {"manhattan", "bronx", "brooklyn", "queens", "staten_island"}
+)
+
+
+class ParcelHistoricalBoroughBenchmarkReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: Literal["citylens_historical_borough_benchmark_receipt@v1"] = Field(
+        alias="schema", serialization_alias="schema"
+    )
+    target: str = Field(min_length=1, max_length=128)
+    feature_origin: int = Field(ge=2000, le=2100)
+    outcome_window: str = Field(pattern=r"^\d{4}-\d{4}$")
+    evaluation_scope: str = Field(min_length=1, max_length=128)
+    ranking_scope: Literal["historical_within_borough_model_order"]
+    citywide_evaluation_rows: int = Field(ge=500)
+    citywide_observed_positive_rows: int = Field(ge=0)
+    boroughs: dict[str, ParcelHistoricalBoroughCohort]
+    interval: ParcelHistoricalBoroughIntervalReceipt
+    source_receipt: Optional[ParcelHistoricalBoroughSourceReceipt] = None
+    evidence_status: Literal[
+        "unexposed",
+        "development_exposed",
+        "retired",
+        "unclassified",
+    ]
+    not_current_accuracy: Literal[True]
+    not_parcel_confidence: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_borough_totals(
+        self,
+    ) -> "ParcelHistoricalBoroughBenchmarkReceipt":
+        if set(self.boroughs) != _PARCEL_HISTORICAL_BOROUGHS:
+            raise PydanticCustomError(
+                "historical_borough_membership",
+                "borough receipt must contain the five canonical boroughs",
+            )
+        if (
+            sum(row.evaluation_rows for row in self.boroughs.values())
+            != self.citywide_evaluation_rows
+        ):
+            raise PydanticCustomError(
+                "historical_borough_evaluation_rows",
+                "borough evaluation rows do not reconcile to citywide rows",
+            )
+        if (
+            sum(row.observed_positive_rows for row in self.boroughs.values())
+            != self.citywide_observed_positive_rows
+        ):
+            raise PydanticCustomError(
+                "historical_borough_positive_rows",
+                "borough positive rows do not reconcile to citywide positives",
+            )
+        return self
+
+
+class ParcelHistoricalBoroughCohortEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    borough: Literal[
+        "manhattan",
+        "bronx",
+        "brooklyn",
+        "queens",
+        "staten_island",
+    ]
+    target: str = Field(min_length=1, max_length=128)
+    feature_origin: int = Field(ge=2000, le=2100)
+    outcome_window: str = Field(pattern=r"^\d{4}-\d{4}$")
+    evaluation_scope: str = Field(min_length=1, max_length=128)
+    ranking_scope: Literal["historical_within_borough_model_order"]
+    cohort: ParcelHistoricalBoroughCohort
+    interval: ParcelHistoricalBoroughIntervalReceipt
+    evidence_status: Literal[
+        "unexposed",
+        "development_exposed",
+        "retired",
+        "unclassified",
+    ]
+    not_current_accuracy: Literal[True]
+    not_parcel_confidence: Literal[True]
 
 
 class ParcelDecisionAuditCheck(BaseModel):
@@ -391,9 +555,7 @@ class ParcelDecisionAudit(BaseModel):
 class ParcelIntelRow(BaseModel):
     bbl: str
     address: Optional[str] = None
-    address_source: Optional[
-        Literal["nyc_pad", "nyc_pluto", "model_sweep"]
-    ] = None
+    address_source: Optional[Literal["nyc_pad", "nyc_pluto", "model_sweep"]] = None
     borough: Optional[str] = None
     score_calibrated: Optional[float] = None
     score_calibrated_p10: Optional[float] = None
@@ -407,13 +569,15 @@ class ParcelIntelRow(BaseModel):
     # the legacy opportunity-category fallback until every borough object has
     # been replaced by the v5 publisher.
     acquisition_eligible: Optional[bool] = None
-    acquisition_status: Optional[Literal[
-        "eligible",
-        "active_project",
-        "completed_project",
-        "constrained",
-        "incomplete_data",
-    ]] = None
+    acquisition_status: Optional[
+        Literal[
+            "eligible",
+            "active_project",
+            "completed_project",
+            "constrained",
+            "incomplete_data",
+        ]
+    ] = None
     acquisition_exclusion_reasons: list[str] = Field(default_factory=list)
     lot_area_sqft: Optional[float] = None
     allowed_far: Optional[float] = None
@@ -477,18 +641,12 @@ class ParcelIntelRow(BaseModel):
     # authenticated diligence only; not a walking route or rank input.
     nearest_transit_complex_id: Optional[str] = None
     nearest_transit_station_name: Optional[str] = None
-    nearest_transit_station_distance_m: Optional[int] = Field(
-        default=None, ge=0
-    )
+    nearest_transit_station_distance_m: Optional[int] = Field(default=None, ge=0)
     nearest_transit_routes: Optional[list[str]] = None
-    nearest_transit_ada_status: Optional[
-        Literal["full", "partial", "none"]
-    ] = None
+    nearest_transit_ada_status: Optional[Literal["full", "partial", "none"]] = None
     transit_station_count_400m: Optional[int] = Field(default=None, ge=0)
     transit_station_count_800m: Optional[int] = Field(default=None, ge=0)
-    transit_access_tier: Optional[
-        Literal["very_close", "walkable", "limited", "distant"]
-    ] = None
+    transit_access_tier: Optional[Literal["very_close", "walkable", "limited", "distant"]] = None
     transit_data_as_of: Optional[str] = None
     is_landmark: bool = False
     is_historic_district: bool = False
@@ -505,12 +663,15 @@ class ParcelIntelRow(BaseModel):
     latest_nb_status: Optional[str] = None
     latest_project_filing_year: Optional[int] = None
     latest_project_status: Optional[str] = None
-    latest_project_type: Literal[
-        "new_building",
-        "alt_co_new_building",
-        "demolition",
-        "land_use_entitlement",
-    ] | None = None
+    latest_project_type: (
+        Literal[
+            "new_building",
+            "alt_co_new_building",
+            "demolition",
+            "land_use_entitlement",
+        ]
+        | None
+    ) = None
     latest_project_job_number: Optional[str] = None
     latest_project_url: Optional[str] = None
     opportunity_category: Literal[
@@ -551,23 +712,24 @@ class ParcelIntelRow(BaseModel):
     owner_name: Optional[str] = None
     owner_name_source: Literal["acris", "pluto"] | None = None
     owner_type: Optional[str] = None
-    owner_entity_type: Literal[
-        "unknown",
-        "individual",
-        "llc",
-        "corp",
-        "partnership",
-        "trust",
-        "estate",
-        "government",
-        "religious",
-        "nonprofit",
-        "hdfc",
-    ] | None = None
+    owner_entity_type: (
+        Literal[
+            "unknown",
+            "individual",
+            "llc",
+            "corp",
+            "partnership",
+            "trust",
+            "estate",
+            "government",
+            "religious",
+            "nonprofit",
+            "hdfc",
+        ]
+        | None
+    ) = None
     owner_portfolio_id: Optional[str] = None
-    owner_portfolio_match_method: Literal[
-        "exact_normalized_pluto_owner_name"
-    ] | None = None
+    owner_portfolio_match_method: Literal["exact_normalized_pluto_owner_name"] | None = None
     owner_portfolio_lot_count: Optional[int] = None
     owner_portfolio_borough_count: Optional[int] = None
     owner_portfolio_total_lot_area_sqft: Optional[float] = None
@@ -588,9 +750,7 @@ class ParcelIntelMapRow(BaseModel):
 
     bbl: str
     address: Optional[str] = None
-    address_source: Optional[
-        Literal["nyc_pad", "nyc_pluto", "model_sweep"]
-    ] = None
+    address_source: Optional[Literal["nyc_pad", "nyc_pluto", "model_sweep"]] = None
     borough: str
     score_calibrated: Optional[float] = None
     priority_rank: Optional[int] = None
@@ -623,17 +783,11 @@ class ParcelIntelMapRow(BaseModel):
     environmental_review_required: Optional[bool] = None
     mandatory_inclusionary_housing: Optional[bool] = None
     nearest_transit_station_name: Optional[str] = None
-    nearest_transit_station_distance_m: Optional[int] = Field(
-        default=None, ge=0
-    )
+    nearest_transit_station_distance_m: Optional[int] = Field(default=None, ge=0)
     nearest_transit_routes: Optional[list[str]] = None
-    nearest_transit_ada_status: Optional[
-        Literal["full", "partial", "none"]
-    ] = None
+    nearest_transit_ada_status: Optional[Literal["full", "partial", "none"]] = None
     transit_station_count_800m: Optional[int] = Field(default=None, ge=0)
-    transit_access_tier: Optional[
-        Literal["very_close", "walkable", "limited", "distant"]
-    ] = None
+    transit_access_tier: Optional[Literal["very_close", "walkable", "limited", "distant"]] = None
     owner_name: Optional[str] = None
     owner_entity_type: Optional[str] = None
     owner_portfolio_id: Optional[str] = None
@@ -711,15 +865,11 @@ class ParcelProspectiveValidationStatus(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_version: Literal[
-        "citylens-parcel-intel/prospective-validation-status@v1"
-    ] = Field(alias="schema")
-    cohort_id: str = Field(
-        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    schema_version: Literal["citylens-parcel-intel/prospective-validation-status@v1"] = Field(
+        alias="schema"
     )
-    source_generation: str = Field(
-        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
-    )
+    cohort_id: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
+    source_generation: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
     label_definition: Literal["dob_nb_job_filing"]
     measurement_status: Literal[
         "awaiting_post_issue_data",
@@ -748,10 +898,7 @@ class ParcelProspectiveValidationStatus(BaseModel):
         if (
             self.issued_at.utcoffset() is None
             or self.matures_at.utcoffset() is None
-            or any(
-                source.rows_updated_at.utcoffset() is None
-                for source in self.official_sources
-            )
+            or any(source.rows_updated_at.utcoffset() is None for source in self.official_sources)
         ):
             raise PydanticCustomError(
                 "prospective_timezone",
@@ -762,9 +909,7 @@ class ParcelProspectiveValidationStatus(BaseModel):
                 "prospective_generation_mismatch",
                 "cohort_id and source_generation must match",
             )
-        if self.observation_starts_on != self.issued_at.date() + timedelta(
-            days=1
-        ):
+        if self.observation_starts_on != self.issued_at.date() + timedelta(days=1):
             raise PydanticCustomError(
                 "prospective_observation_start",
                 "observation must start after cohort issuance",
@@ -782,22 +927,14 @@ class ParcelProspectiveValidationStatus(BaseModel):
                 "prospective_status_date",
                 "awaiting status requires a pre-observation source date",
             )
-        if (
-            self.measurement_status == "collecting"
-            and not (
-                self.observation_starts_on
-                <= self.observed_through
-                < self.matures_at.date()
-            )
+        if self.measurement_status == "collecting" and not (
+            self.observation_starts_on <= self.observed_through < self.matures_at.date()
         ):
             raise PydanticCustomError(
                 "prospective_status_date",
                 "collecting status date is outside the observation window",
             )
-        if (
-            self.measurement_status == "mature"
-            and self.observed_through < self.matures_at.date()
-        ):
+        if self.measurement_status == "mature" and self.observed_through < self.matures_at.date():
             raise PydanticCustomError(
                 "prospective_status_date",
                 "mature status requires the complete observation horizon",
@@ -840,31 +977,22 @@ class ParcelProspectiveValidationStatus(BaseModel):
                     "prospective_missing_observation",
                     "started cohorts require observed lower-bound metrics",
                 )
-            elif (
-                metric.observed_nb_filing_hits > expected
-                or not math.isclose(
-                    metric.observed_precision_lower_bound,
-                    metric.observed_nb_filing_hits / expected,
-                    abs_tol=1e-12,
-                )
+            elif metric.observed_nb_filing_hits > expected or not math.isclose(
+                metric.observed_precision_lower_bound,
+                metric.observed_nb_filing_hits / expected,
+                abs_tol=1e-12,
             ):
                 raise PydanticCustomError(
                     "prospective_metric_consistency",
                     "observed hits and precision lower bound disagree",
                 )
             if self.measurement_status != "mature":
-                if (
-                    metric.final_precision is not None
-                    or metric.final_precision_95ci is not None
-                ):
+                if metric.final_precision is not None or metric.final_precision_95ci is not None:
                     raise PydanticCustomError(
                         "prospective_premature_final",
                         "immature final metrics must remain null",
                     )
-            elif (
-                metric.final_precision is None
-                or metric.final_precision_95ci is None
-            ):
+            elif metric.final_precision is None or metric.final_precision_95ci is None:
                 raise PydanticCustomError(
                     "prospective_missing_final",
                     "mature cohorts require final precision and interval",
@@ -895,17 +1023,11 @@ class ParcelProspectiveValidationStatus(BaseModel):
                 "prospective_official_sources",
                 "both official DOB datasets are required",
             )
-        expected_suffix = (
-            f"/{self.cohort_id}/reports/"
-            f"{self.report_reference.observation_id}.json"
-        )
-        if (
-            not self.report_reference.object_name.endswith(
-                expected_suffix
-            )
-            or not self.report_reference.observation_id.startswith(
-                self.observed_through.strftime("%Y%m%d") + "-"
-            )
+        expected_suffix = f"/{self.cohort_id}/reports/{self.report_reference.observation_id}.json"
+        if not self.report_reference.object_name.endswith(
+            expected_suffix
+        ) or not self.report_reference.observation_id.startswith(
+            self.observed_through.strftime("%Y%m%d") + "-"
         ):
             raise PydanticCustomError(
                 "prospective_report_reference",
@@ -956,16 +1078,9 @@ class ParcelProspectiveValidationHealth(BaseModel):
                 "available health requires lag, due date, and source timestamp",
             )
         expected_status = (
-            "stale"
-            if self.observation_lag_days
-            > self.max_observation_lag_days
-            else "current"
+            "stale" if self.observation_lag_days > self.max_observation_lag_days else "current"
         )
-        expected_reason = (
-            "observation_lag_exceeded"
-            if expected_status == "stale"
-            else "current"
-        )
+        expected_reason = "observation_lag_exceeded" if expected_status == "stale" else "current"
         if self.status != expected_status or self.reason != expected_reason:
             raise PydanticCustomError(
                 "prospective_health_consistency",
@@ -983,9 +1098,7 @@ class ParcelIntelIndex(BaseModel):
     quality_gate: dict[str, Any] = Field(default_factory=dict)
     generation_diff: dict[str, Any] = Field(default_factory=dict)
     inference_replay: dict[str, Any] = Field(default_factory=dict)
-    prospective_validation: Optional[
-        ParcelProspectiveValidationStatus
-    ] = None
+    prospective_validation: Optional[ParcelProspectiveValidationStatus] = None
     prospective_validation_health: ParcelProspectiveValidationHealth = Field(
         default_factory=lambda: ParcelProspectiveValidationHealth(
             status="unavailable",
@@ -1003,17 +1116,21 @@ class ParcelIntelIndex(BaseModel):
         cls,
         value: dict[str, Any],
     ) -> dict[str, Any]:
+        normalized = dict(value)
         receipt = value.get("historical_benchmark_receipt")
-        if receipt is None:
-            return value
-        parsed = ParcelHistoricalBenchmarkReceipt.model_validate(receipt)
-        return {
-            **value,
-            "historical_benchmark_receipt": parsed.model_dump(
+        if receipt is not None:
+            parsed = ParcelHistoricalBenchmarkReceipt.model_validate(receipt)
+            normalized["historical_benchmark_receipt"] = parsed.model_dump(
                 mode="json",
                 by_alias=True,
-            ),
-        }
+            )
+        borough_receipt = value.get("historical_borough_benchmark_receipt")
+        if borough_receipt is not None:
+            parsed_borough = ParcelHistoricalBoroughBenchmarkReceipt.model_validate(borough_receipt)
+            normalized["historical_borough_benchmark_receipt"] = parsed_borough.model_dump(
+                mode="json", by_alias=True
+            )
+        return normalized
 
 
 class ParcelIntelMapResponse(BaseModel):
@@ -1041,9 +1158,7 @@ class ParcelIntelSweepResponse(BaseModel):
     inference_replay: dict[str, Any] = Field(default_factory=dict)
 
 
-ParcelWorkflowStage = Literal[
-    "new", "reviewing", "contacted", "underwriting", "pursue", "pass"
-]
+ParcelWorkflowStage = Literal["new", "reviewing", "contacted", "underwriting", "pursue", "pass"]
 
 ParcelWorkflowOutcome = Literal[
     "unknown",
@@ -1294,18 +1409,14 @@ class ParcelWorkflowEvidenceIssue(BaseModel):
 
 class ParcelWorkflowEvidenceIssueAdminRecord(ParcelWorkflowEvidenceIssue):
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     submitted_by_user_id: str = Field(min_length=1, max_length=128)
     resolved_by_user_id: Optional[str] = Field(default=None, max_length=128)
     expires_at: datetime
 
 
 class ParcelWorkflowEvidenceIssueAdminList(BaseModel):
-    items: list[ParcelWorkflowEvidenceIssueAdminRecord] = Field(
-        default_factory=list
-    )
+    items: list[ParcelWorkflowEvidenceIssueAdminRecord] = Field(default_factory=list)
 
 
 class ParcelWorkflowEvidenceIssueAdminUpdate(BaseModel):
@@ -1319,9 +1430,7 @@ class ParcelWorkflowEvidenceIssueAdminUpdate(BaseModel):
     def normalize_resolution_note(cls, value: str) -> str:
         normalized = " ".join(value.split())
         if len(normalized) < 10:
-            raise ValueError(
-                "resolution_note must contain at least 10 non-whitespace characters"
-            )
+            raise ValueError("resolution_note must contain at least 10 non-whitespace characters")
         return normalized
 
 
@@ -1333,9 +1442,7 @@ class ParcelWorkflowSnapshot(BaseModel):
     property_facts_as_of: Optional[str] = Field(default=None, max_length=32)
     citywide_rank: Optional[int] = Field(default=None, ge=1, le=1_000_000)
     acquisition_rank: Optional[int] = Field(default=None, ge=1, le=1_000_000)
-    priority_tier: Optional[
-        Literal["highest", "high", "medium", "watch"]
-    ] = None
+    priority_tier: Optional[Literal["highest", "high", "medium", "watch"]] = None
     opportunity_category: Optional[
         Literal[
             "vacant_site",
@@ -1371,31 +1478,21 @@ class ParcelWorkflowSnapshot(BaseModel):
     last_sale_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_nb_filing_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_nb_status: Optional[str] = Field(default=None, max_length=256)
-    redev_status: Optional[
-        Literal["still_vacant", "active", "already_built"]
-    ] = None
+    redev_status: Optional[Literal["still_vacant", "active", "already_built"]] = None
     observed_imagery_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     tax_lien_sale_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     critical_violation_count: Optional[int] = Field(default=None, ge=0)
     floodplain_1pct: Optional[bool] = None
     environmental_review_required: Optional[bool] = None
-    environmental_designation_number: Optional[str] = Field(
-        default=None, max_length=32
-    )
+    environmental_designation_number: Optional[str] = Field(default=None, max_length=32)
     environmental_designation_kind: Optional[
         Literal["e_designation", "restrictive_declaration", "other"]
     ] = None
     mandatory_inclusionary_housing: Optional[bool] = None
     nearest_transit_complex_id: Optional[str] = Field(default=None, max_length=32)
-    nearest_transit_station_name: Optional[str] = Field(
-        default=None, max_length=160
-    )
-    nearest_transit_station_distance_m: Optional[int] = Field(
-        default=None, ge=0
-    )
-    transit_access_tier: Optional[
-        Literal["very_close", "walkable", "limited", "distant"]
-    ] = None
+    nearest_transit_station_name: Optional[str] = Field(default=None, max_length=160)
+    nearest_transit_station_distance_m: Optional[int] = Field(default=None, ge=0)
+    transit_access_tier: Optional[Literal["very_close", "walkable", "limited", "distant"]] = None
     transit_data_as_of: Optional[str] = Field(default=None, max_length=32)
     recent_change: Optional[bool] = None
 
@@ -1476,12 +1573,8 @@ class ParcelWorkflowHorizonDefinition(BaseModel):
 
 
 class ParcelWorkflowAnalyticsMethodology(BaseModel):
-    schema_version: Literal[
-        "citylens/parcel-workflow-analytics-methodology@v2"
-    ]
-    analytics_schema_version: Literal[
-        "citylens/parcel-workflow-analytics@v3"
-    ]
+    schema_version: Literal["citylens/parcel-workflow-analytics-methodology@v2"]
+    analytics_schema_version: Literal["citylens/parcel-workflow-analytics@v3"]
     horizons: list[ParcelWorkflowHorizonDefinition]
     minimum_cohort_size: int = Field(ge=1)
     minimum_rate_denominator: int = Field(ge=1)
@@ -1524,17 +1617,11 @@ class ParcelWorkflowCohort(BaseModel):
     qualified_rate_denominator: int = 0
     close_rate_denominator: int = 0
     contacted_rate: Optional[float] = None
-    contacted_confidence_interval: Optional[
-        ParcelWorkflowConfidenceInterval
-    ] = None
+    contacted_confidence_interval: Optional[ParcelWorkflowConfidenceInterval] = None
     qualified_rate: Optional[float] = None
-    qualified_confidence_interval: Optional[
-        ParcelWorkflowConfidenceInterval
-    ] = None
+    qualified_confidence_interval: Optional[ParcelWorkflowConfidenceInterval] = None
     close_rate: Optional[float] = None
-    close_confidence_interval: Optional[
-        ParcelWorkflowConfidenceInterval
-    ] = None
+    close_confidence_interval: Optional[ParcelWorkflowConfidenceInterval] = None
 
 
 class ParcelWorkflowAnalytics(BaseModel):
@@ -1556,9 +1643,7 @@ class ParcelWorkflowAnalytics(BaseModel):
     outcome_counts: dict[str, int]
     decision_reason_counts: dict[str, int]
     funnel: ParcelWorkflowFunnel
-    maturity_windows: list[ParcelWorkflowMaturityWindow] = Field(
-        default_factory=list
-    )
+    maturity_windows: list[ParcelWorkflowMaturityWindow] = Field(default_factory=list)
     cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -1585,9 +1670,7 @@ class ParcelWorkflowOutcomeExportRow(BaseModel):
     """Value-minimized, maturity-safe prospective label row."""
 
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     saved_at: datetime
     archived_at: Optional[datetime] = None
     followup_days: int = Field(ge=0)
@@ -1600,9 +1683,7 @@ class ParcelWorkflowOutcomeExportRow(BaseModel):
     property_facts_as_of: Optional[str] = None
     citywide_rank: Optional[int] = Field(default=None, ge=1)
     acquisition_rank: Optional[int] = Field(default=None, ge=1)
-    priority_tier: Optional[
-        Literal["highest", "high", "medium", "watch"]
-    ] = None
+    priority_tier: Optional[Literal["highest", "high", "medium", "watch"]] = None
     opportunity_category: Optional[
         Literal[
             "vacant_site",
@@ -1618,9 +1699,7 @@ class ParcelWorkflowOutcomeExportRow(BaseModel):
 
 class ParcelWorkflowOutcomeExport(BaseModel):
     schema_version: Literal["citylens/parcel-workflow-outcome-export@v1"]
-    methodology_schema_version: Literal[
-        "citylens/parcel-workflow-analytics-methodology@v2"
-    ]
+    methodology_schema_version: Literal["citylens/parcel-workflow-analytics-methodology@v2"]
     generated_at: datetime
     input_record_count: int = Field(ge=0)
     exported_record_count: int = Field(ge=0)
@@ -1662,9 +1741,7 @@ class ParcelWorkflowActionItem(BaseModel):
     reminder_snoozed_until: Optional[datetime] = None
     is_snoozed: bool
     citywide_rank: Optional[int] = Field(default=None, ge=1)
-    priority_tier: Optional[
-        Literal["highest", "high", "medium", "watch"]
-    ] = None
+    priority_tier: Optional[Literal["highest", "high", "medium", "watch"]] = None
     opportunity_category: Optional[
         Literal[
             "vacant_site",
@@ -1728,15 +1805,11 @@ class ParcelWorkflowEvidenceChange(BaseModel):
     reviewed_status: ParcelWorkflowEvidenceCheckStatus
     reviewed_source: str = Field(min_length=1, max_length=256)
     reviewed_source_as_of: Optional[str] = Field(default=None, max_length=96)
-    reviewed_feed_generated_at: Optional[str] = Field(
-        default=None, max_length=40
-    )
+    reviewed_feed_generated_at: Optional[str] = Field(default=None, max_length=40)
     current_status: Optional[ParcelWorkflowEvidenceCheckStatus] = None
     current_source: Optional[str] = Field(default=None, max_length=256)
     current_source_as_of: Optional[str] = Field(default=None, max_length=96)
-    current_feed_generated_at: Optional[str] = Field(
-        default=None, max_length=40
-    )
+    current_feed_generated_at: Optional[str] = Field(default=None, max_length=40)
     change_reasons: list[
         Literal[
             "status",
@@ -1788,9 +1861,7 @@ class ParcelWorkflowAlert(BaseModel):
     ] = None
     reason_codes: list[str] = Field(default_factory=list)
     recommended_action: Optional[str] = None
-    source_evidence: list[ParcelWorkflowAlertSource] = Field(
-        default_factory=list
-    )
+    source_evidence: list[ParcelWorkflowAlertSource] = Field(default_factory=list)
     evidence_changes: list[ParcelWorkflowEvidenceChange] = Field(
         default_factory=list,
         max_length=6,
@@ -1832,9 +1903,7 @@ class ParcelScreeningLedgerRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     model_rank: int = Field(ge=1)
     acquisition_rank: Optional[int] = Field(default=None, ge=1)
     acquisition_eligible: bool
@@ -1847,9 +1916,7 @@ class ParcelScreeningLedgerRow(BaseModel):
     ]
     acquisition_exclusion_reasons: list[str] = Field(default_factory=list)
     published: bool
-    latest_project_filing_year: Optional[int] = Field(
-        default=None, ge=1900, le=2100
-    )
+    latest_project_filing_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_project_status: Optional[str] = None
     latest_project_type: Optional[
         Literal[
@@ -1895,14 +1962,9 @@ class ParcelScreeningLedgerRow(BaseModel):
             if (
                 parsed.scheme != "https"
                 or hostname is None
-                or not (
-                    hostname == "nyc.gov"
-                    or hostname.endswith(".nyc.gov")
-                )
+                or not (hostname == "nyc.gov" or hostname.endswith(".nyc.gov"))
             ):
-                raise ValueError(
-                    "latest_project_url must be an official NYC HTTPS URL"
-                )
+                raise ValueError("latest_project_url must be an official NYC HTTPS URL")
         return self
 
 
@@ -1911,13 +1973,11 @@ class ParcelScreeningStatusResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[
+    schema_version: Literal["citylens/parcel-screening-status@v1"] = (
         "citylens/parcel-screening-status@v1"
-    ] = "citylens/parcel-screening-status@v1"
+    )
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     result: Literal[
         "published_lead",
         "qualified_below_cutoff",
@@ -1937,9 +1997,7 @@ class ParcelScreeningStatusResponse(BaseModel):
         ]
     ] = None
     exclusion_reasons: list[str] = Field(default_factory=list)
-    latest_project_filing_year: Optional[int] = Field(
-        default=None, ge=1900, le=2100
-    )
+    latest_project_filing_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     latest_project_status: Optional[str] = None
     latest_project_type: Optional[
         Literal[
@@ -1965,9 +2023,9 @@ class ParcelAddressResolveRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[
+    schema_version: Literal["citylens/parcel-address-resolve-request@v1"] = (
         "citylens/parcel-address-resolve-request@v1"
-    ] = "citylens/parcel-address-resolve-request@v1"
+    )
     address: str = Field(min_length=5, max_length=200)
 
     @field_validator("address")
@@ -1983,9 +2041,7 @@ class ParcelAddressCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
 
 
 class ParcelAddressResolveResponse(BaseModel):
@@ -1993,13 +2049,11 @@ class ParcelAddressResolveResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[
+    schema_version: Literal["citylens/parcel-address-resolve-response@v1"] = (
         "citylens/parcel-address-resolve-response@v1"
-    ] = "citylens/parcel-address-resolve-response@v1"
+    )
     match_status: Literal["unique", "ambiguous", "not_found"]
-    match_method: Literal[
-        "exact_normalized_official_address"
-    ] = "exact_normalized_official_address"
+    match_method: Literal["exact_normalized_official_address"] = "exact_normalized_official_address"
     candidate_count: int = Field(ge=0)
     truncated: bool
     candidates: list[ParcelAddressCandidate] = Field(
@@ -2011,12 +2065,10 @@ class ParcelAddressResolveResponse(BaseModel):
     source_name: str = Field(min_length=1, max_length=160)
     source_dataset_id: Literal["bc8t-ecyu"]
     source_retrieved_at: datetime
-    resolver_generation: str = Field(
-        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
-    )
-    address_normalization_schema: Literal[
+    resolver_generation: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
+    address_normalization_schema: Literal["citylens/address-normalization@v1"] = (
         "citylens/address-normalization@v1"
-    ] = "citylens/address-normalization@v1"
+    )
     interpretation: str = Field(min_length=1, max_length=1000)
 
     @model_validator(mode="after")
@@ -2034,9 +2086,7 @@ class ParcelAddressResolveResponse(BaseModel):
             or returned > self.candidate_count
             or self.truncated != (returned < self.candidate_count)
         ):
-            raise ValueError(
-                "ambiguous address results require a consistent candidate count"
-            )
+            raise ValueError("ambiguous address results require a consistent candidate count")
         return self
 
 
@@ -2053,13 +2103,11 @@ class ParcelOfficialDossierResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[
+    schema_version: Literal["citylens/parcel-official-dossier@v1"] = (
         "citylens/parcel-official-dossier@v1"
-    ] = "citylens/parcel-official-dossier@v1"
+    )
     bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
-    borough: Literal[
-        "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
+    borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
     address: Optional[str] = Field(default=None, max_length=200)
     pluto_owner_name: Optional[str] = Field(default=None, max_length=200)
     acris_owner_name: Optional[str] = Field(default=None, max_length=200)
@@ -2107,9 +2155,7 @@ class ParcelOfficialDossierResponse(BaseModel):
         str,
     ]
     ownership_features_updated_at: datetime
-    dossier_generation: str = Field(
-        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
-    )
+    dossier_generation: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
     official_links: ParcelOfficialLinks
     interpretation: str = Field(min_length=1, max_length=1200)
 
@@ -2201,43 +2247,23 @@ class ParcelSavedSearchFilters(BaseModel):
         }
         if self.opportunity != "all":
             expected_site_type = (
-                self.opportunity
-                if self.opportunity in legacy_site_types
-                else "all"
+                self.opportunity if self.opportunity in legacy_site_types else "all"
             )
-            expected_signals = (
-                [self.opportunity]
-                if self.opportunity in legacy_signals
-                else []
-            )
-            if (
-                explicit_site_type
-                and self.site_type != expected_site_type
-            ) or (
-                explicit_signals
-                and self.signals != expected_signals
+            expected_signals = [self.opportunity] if self.opportunity in legacy_signals else []
+            if (explicit_site_type and self.site_type != expected_site_type) or (
+                explicit_signals and self.signals != expected_signals
             ):
                 raise PydanticCustomError(
                     "conflicting_saved_view_filters",
-                    (
-                        "legacy opportunity cannot conflict with site_type or "
-                        "signals"
-                    ),
+                    ("legacy opportunity cannot conflict with site_type or signals"),
                 )
         if self.site_type is None:
-            self.site_type = (
-                self.opportunity
-                if self.opportunity in legacy_site_types
-                else "all"
-            )
+            self.site_type = self.opportunity if self.opportunity in legacy_site_types else "all"
         if not explicit_signals and self.opportunity in legacy_signals:
             self.signals = [self.opportunity]  # type: ignore[list-item]
         self.signals = list(dict.fromkeys(self.signals))
 
-        if (
-            "portfolio" not in self.signals
-            and self.owner_portfolio_id is not None
-        ):
+        if "portfolio" not in self.signals and self.owner_portfolio_id is not None:
             raise PydanticCustomError(
                 "invalid_saved_view_owner_focus",
                 "owner_portfolio_id requires signals to include 'portfolio'",
@@ -2258,9 +2284,7 @@ class ParcelSavedSearchSnapshot(BaseModel):
     """
 
     schema_version: Literal["citylens/parcel-saved-view-snapshot@v1"]
-    feed_generation: str = Field(
-        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
-    )
+    feed_generation: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
     feed_generated_at: datetime
     match_count: int = Field(ge=0, le=5000)
     matched_bbls: list[str] = Field(default_factory=list, max_length=5000)
@@ -2292,12 +2316,8 @@ class ParcelSavedSearchSnapshot(BaseModel):
 
 class ParcelSavedSearchUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    borough: Literal[
-        "all", "manhattan", "brooklyn", "queens", "bronx", "staten_island"
-    ]
-    filters: ParcelSavedSearchFilters = Field(
-        default_factory=ParcelSavedSearchFilters
-    )
+    borough: Literal["all", "manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+    filters: ParcelSavedSearchFilters = Field(default_factory=ParcelSavedSearchFilters)
     # Saved views are persistence only. CityLens does not yet deliver scheduled
     # saved-search alerts, so accepting daily/weekly would be a false promise.
     alert_frequency: Literal["off"] = "off"

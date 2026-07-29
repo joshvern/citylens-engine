@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .artifact_contract import artifact_media_type
 from .core_adapter import CitylensRequest, run_citylens
 from .firestore_store import FirestoreStore
 from .gcs_artifacts import GcsArtifacts
@@ -18,19 +19,6 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _infer_type(filename: str) -> str:
-    lower = filename.lower()
-    if lower.endswith(".png"):
-        return "image/png"
-    if lower.endswith(".geojson"):
-        return "application/geo+json"
-    if lower.endswith(".ply"):
-        return "model/ply"
-    if lower.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
 
 
 def run(
@@ -96,7 +84,7 @@ def run(
 
         doc = {
             "name": name,
-            "type": _infer_type(name),
+            "type": artifact_media_type(name),
             "gcs_uri": gcs_uri,
             "gcs_object": object_name,
             "sha256": sha256,

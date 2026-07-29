@@ -1074,10 +1074,22 @@ To generate demo runs:
 Notes:
 
 - Precompute requires an admin API key (it uses `POST /v1/runs` and waits for completion). Set `CITYLENS_ADMIN_API_KEY` in your `.env` (or pass `--admin-api-key`); its SHA-256 must be listed in the deployed service's `CITYLENS_ADMIN_API_KEY_HASHES`.
-- `scripts/precompute_demo_runs.py` now rejects incomplete runs. It writes `deploy/demo_runs.json` only after verifying `preview.png`, `change.geojson`, `mesh.ply`, and `run_summary.json`.
+- `scripts/precompute_demo_runs.py` rejects incomplete runs. It writes `deploy/demo_runs.json` only after verifying `preview.png`, `change.geojson`, `mesh.ply`, and `run_summary.json`, including each artifact's expected media type, positive byte count, and 64-character SHA-256 receipt.
 - Commit the updated `deploy/demo_runs.json` after precompute if you want the allowlist versioned in git.
 - Redeploy the API after committing the new allowlist so `/v1/demo/featured` reflects it.
 
 If demo runs load but artifacts do not render in the browser, verify that the run is
 allowlisted and that `GET /v1/demo/runs/{run_id}` returns same-origin artifact paths
-like `/v1/demo/artifacts/<run_id>/<artifact_name>`.
+like `/v1/demo/artifacts/<run_id>/<artifact_name>`. The artifact proxy fails
+closed with 503 when Firestore integrity metadata is absent or when downloaded
+GCS bytes do not match the recorded byte count and SHA-256. A successful
+response exposes its receipt:
+
+```bash
+curl -sS -D - -o /dev/null \
+  "https://api.citylens.dev/v1/demo/artifacts/<run_id>/change.geojson"
+# Content-Type: application/geo+json
+# Content-Digest: sha-256=:...:
+# ETag: "<64-character-sha256>"
+# X-Content-SHA256: <64-character-sha256>
+```

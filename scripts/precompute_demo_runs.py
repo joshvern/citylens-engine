@@ -13,6 +13,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 REQUIRED_ARTIFACTS = ("preview.png", "change.geojson", "mesh.ply", "run_summary.json")
+EXPECTED_ARTIFACT_TYPES = {
+    "preview.png": "image/png",
+    "change.geojson": "application/geo+json",
+    "mesh.ply": "model/ply",
+    "run_summary.json": "application/json",
+}
 
 
 @dataclass(frozen=True)
@@ -161,6 +167,37 @@ def _validate_summary_json(summary: Any, *, run_id: str) -> None:
         )
 
 
+def _validate_artifact_metadata(
+    artifact: dict[str, Any],
+    *,
+    artifact_name: str,
+    run_id: str,
+) -> None:
+    sha256 = str(artifact.get("sha256") or "").lower()
+    size_bytes = artifact.get("size_bytes")
+    media_type = str(artifact.get("type") or "")
+    if len(sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in sha256
+    ):
+        raise RuntimeError(
+            f"Run {run_id} has no valid SHA-256 receipt for {artifact_name}"
+        )
+    if (
+        not isinstance(size_bytes, int)
+        or isinstance(size_bytes, bool)
+        or size_bytes <= 0
+    ):
+        raise RuntimeError(
+            f"Run {run_id} has no positive byte-count receipt for {artifact_name}"
+        )
+    expected_type = EXPECTED_ARTIFACT_TYPES[artifact_name]
+    if media_type != expected_type:
+        raise RuntimeError(
+            f"Run {run_id} reports {media_type or 'no media type'} for "
+            f"{artifact_name}; expected {expected_type}"
+        )
+
+
 def _validate_completed_run(run: Any, *, run_id: str) -> None:
     if not isinstance(run, dict):
         raise TypeError(
@@ -176,7 +213,13 @@ def _validate_completed_run(run: Any, *, run_id: str) -> None:
         )
 
     for artifact_name in REQUIRED_ARTIFACTS:
-        fetch_url = _artifact_fetch_url(artifacts[artifact_name])
+        artifact = artifacts[artifact_name]
+        _validate_artifact_metadata(
+            artifact,
+            artifact_name=artifact_name,
+            run_id=run_id,
+        )
+        fetch_url = _artifact_fetch_url(artifact)
         if not fetch_url:
             raise RuntimeError(f"Run {run_id} is missing a fetchable URL for {artifact_name}")
         if artifact_name != "run_summary.json":

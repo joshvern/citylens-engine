@@ -5,6 +5,7 @@ from pathlib import Path
 
 from google.cloud import storage
 
+from .artifact_contract import artifact_media_type
 from .retry import retry_transient
 
 
@@ -25,7 +26,10 @@ class GcsArtifacts:
         def _op() -> tuple[str, int, str]:
             bucket = self.client.bucket(self.bucket_name)
             blob = bucket.blob(object_name)
-            blob.upload_from_filename(str(local_path))
+            blob.upload_from_filename(
+                str(local_path),
+                content_type=artifact_media_type(local_path.name),
+            )
 
             size = int(local_path.stat().st_size)
             sha256 = sha256_file(local_path)

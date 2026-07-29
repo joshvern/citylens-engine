@@ -400,7 +400,11 @@ The supported publish flow is:
 
 When the API returns a demo run, its artifact URLs are rewritten to same-origin API
 paths like `/v1/demo/artifacts/<run_id>/<artifact_name>`. The browser never needs
-direct GCS URLs for demo mode.
+direct GCS URLs for demo mode. Each run artifact retains the worker-recorded
+media type, SHA-256, byte count, and creation time. The proxy verifies the
+payload against that receipt before serving it, returns the contract media
+type, and exposes `Content-Digest`, `ETag`, and `X-Content-SHA256` to browser
+clients.
 
 ## Production verification
 

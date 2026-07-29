@@ -4,22 +4,64 @@ from datetime import datetime
 from typing import Any
 
 from ..models.schemas import ArtifactResponse, RunResponse
+from .artifact_contract import artifact_media_type
 from .gcs_artifacts import GcsArtifacts
 from .run_errors import normalize_run_record
 from .settings import Settings
 
 
-def _infer_type(name: str) -> str:
-    lower = name.lower()
-    if lower.endswith(".png"):
-        return "image/png"
-    if lower.endswith(".geojson"):
-        return "application/geo+json"
-    if lower.endswith(".ply"):
-        return "model/ply"
-    if lower.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
+def _object_from_gcs_uri(gcs_uri: str, *, bucket: str) -> str:
+    prefix = f"gs://{bucket}/"
+    return gcs_uri[len(prefix) :] if gcs_uri.startswith(prefix) else ""
+
+
+def _artifact_response(
+    *,
+    name: str,
+    gcs_uri: str,
+    detail: dict[str, Any],
+    settings: Settings,
+    gcs: GcsArtifacts,
+) -> ArtifactResponse:
+    object_from_uri = _object_from_gcs_uri(gcs_uri, bucket=settings.bucket)
+    detail_object = str(detail.get("gcs_object") or "")
+    detail_uri = str(detail.get("gcs_uri") or "")
+    detail_matches = bool(detail) and (
+        detail_uri == gcs_uri
+        or (object_from_uri and detail_object == object_from_uri)
+    )
+
+    gcs_object = (
+        detail_object if detail_matches and detail_object else object_from_uri
+    )
+    created_at = detail.get("created_at") if detail_matches else None
+    if not isinstance(created_at, datetime):
+        created_at = datetime.utcnow()
+
+    signed_url = None
+    if settings.sign_urls and gcs_object:
+        try:
+            signed_url = gcs.signed_url(
+                object_name=gcs_object,
+                ttl_seconds=settings.sign_url_ttl_seconds,
+            )
+        except Exception:
+            signed_url = None
+
+    return ArtifactResponse(
+        name=name,
+        type=(
+            str(detail.get("type") or artifact_media_type(name))
+            if detail_matches
+            else artifact_media_type(name)
+        ),
+        gcs_uri=gcs_uri,
+        gcs_object=gcs_object,
+        sha256=str(detail.get("sha256") or "") if detail_matches else "",
+        size_bytes=int(detail.get("size_bytes") or 0) if detail_matches else 0,
+        created_at=created_at,
+        signed_url=signed_url,
+    )
 
 
 def build_run_response(
@@ -37,35 +79,28 @@ def build_run_response(
     run_base = normalize_run_record(run)
     run_base.pop("artifacts", None)
 
-    # Prefer the compact "artifacts" map from the run doc (written by worker) if present.
-    # This contains {name: gcs_uri} for all successfully uploaded artifacts and is more reliable
-    # than the artifacts subcollection.
+    detailed_by_name = {
+        str(artifact.get("name") or ""): artifact
+        for artifact in artifacts or []
+        if str(artifact.get("name") or "")
+    }
+
+    # The compact map remains authoritative for artifact membership, while
+    # the subcollection owns integrity metadata. Returning early from the map
+    # used to discard the SHA-256, byte count, media type, and creation time
+    # that the worker had already persisted.
     run_artifacts = run.get("artifacts")
     if isinstance(run_artifacts, dict) and run_artifacts:
         for name, gcs_uri in run_artifacts.items():
             if not name or not gcs_uri:
                 continue
-            gcs_uri_str = str(gcs_uri)
-            obj = gcs_uri_str.replace("gs://", "").replace(f"{settings.bucket}/", "", 1)
-            signed_url = None
-            if settings.sign_urls:
-                if "gs://" in gcs_uri_str and obj:
-                    try:
-                        signed_url = gcs.signed_url(
-                            object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds
-                        )
-                    except Exception:
-                        signed_url = None
             out_artifacts.append(
-                ArtifactResponse(
+                _artifact_response(
                     name=str(name),
-                    type=_infer_type(str(name)),
-                    gcs_uri=gcs_uri_str,
-                    gcs_object=obj if "gs://" in gcs_uri_str else "",
-                    sha256="",
-                    size_bytes=0,
-                    created_at=datetime.utcnow(),
-                    signed_url=signed_url,
+                    gcs_uri=str(gcs_uri),
+                    detail=detailed_by_name.get(str(name), {}),
+                    settings=settings,
+                    gcs=gcs,
                 )
             )
         return RunResponse(**run_base, artifacts=out_artifacts)
@@ -75,36 +110,13 @@ def build_run_response(
         artifacts = []
 
     for a in artifacts:
-        name = str(a.get("name") or "")
-        gcs_uri = str(a.get("gcs_uri") or "")
-        gcs_object = str(a.get("gcs_object") or "")
-        sha256 = str(a.get("sha256") or "")
-        size_bytes = int(a.get("size_bytes") or 0)
-        created_at = a.get("created_at")
-        if not isinstance(created_at, datetime):
-            created_at = datetime.utcnow()
-
-        signed_url = None
-        if settings.sign_urls:
-            obj = str(a.get("gcs_object") or "")
-            if obj:
-                try:
-                    signed_url = gcs.signed_url(
-                        object_name=obj, ttl_seconds=settings.sign_url_ttl_seconds
-                    )
-                except Exception:
-                    signed_url = None
-
         out_artifacts.append(
-            ArtifactResponse(
-                name=name,
-                type=_infer_type(name),
-                gcs_uri=gcs_uri,
-                gcs_object=gcs_object,
-                sha256=sha256,
-                size_bytes=size_bytes,
-                created_at=created_at,
-                signed_url=signed_url,
+            _artifact_response(
+                name=str(a.get("name") or ""),
+                gcs_uri=str(a.get("gcs_uri") or ""),
+                detail=a,
+                settings=settings,
+                gcs=gcs,
             )
         )
 

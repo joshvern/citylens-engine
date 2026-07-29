@@ -5,6 +5,7 @@ from copy import deepcopy
 
 from scripts import verify_authenticated_inventory as verifier
 from scripts.verify_authenticated_inventory import (
+    expected_borough_counts_from_index,
     validate_authenticated_detail,
     validate_authenticated_map,
     validate_official_dossier,
@@ -40,6 +41,35 @@ def _map_payload() -> dict:
     }
 
 
+def _index_payload(
+    counts: dict[str, int] | None = None,
+) -> dict:
+    counts = counts or {borough: 1 for borough in BOROUGHS}
+    return {
+        "boroughs": [
+            {"slug": borough, "count": count}
+            for borough, count in counts.items()
+        ],
+        "quality_gate": {
+            "selection_policy": {
+                "schema": "citylens-parcel-intel/selection-policy@v1",
+                "policy_id": "borough_floor_250",
+                "target_count": sum(counts.values()),
+                "selected_count": sum(counts.values()),
+                "passed": True,
+                "failures": [],
+                "by_borough": {
+                    borough: {
+                        "selected_count": count,
+                        "requested_minimum_satisfied": True,
+                    }
+                    for borough, count in counts.items()
+                },
+            }
+        },
+    }
+
+
 def _map_headers() -> dict[str, str]:
     return {
         "cache-control": "private, no-store",
@@ -57,10 +87,69 @@ def test_authenticated_map_validator_accepts_complete_private_inventory() -> Non
             _map_payload(),
             _map_headers(),
             expected_total=5,
-            expected_per_borough=1,
+            requested_top_per_borough=1,
+            expected_borough_counts={borough: 1 for borough in BOROUGHS},
         )
         == []
     )
+
+
+def test_authenticated_map_validator_accepts_policy_selected_uneven_inventory() -> None:
+    counts = {
+        "manhattan": 250,
+        "brooklyn": 1339,
+        "queens": 1520,
+        "bronx": 672,
+        "staten_island": 1219,
+    }
+    payload = _map_payload()
+    payload["requested_top_per_borough"] = 1000
+    payload["returned_count"] = 5000
+    payload["available_count"] = 5000
+    payload["rows"] = [
+        {
+            "bbl": f"{index:010d}",
+            "borough": borough,
+            "owner_name": f"Owner {index}",
+            "lat": 40.7,
+            "lng": -74.0,
+        }
+        for index, borough in enumerate(
+            (
+                borough
+                for borough, count in counts.items()
+                for _ in range(count)
+            ),
+            start=1,
+        )
+    ]
+    headers = _map_headers()
+    headers["x-citylens-inventory-count"] = "5000"
+    headers["x-citylens-inventory-available"] = "5000"
+
+    assert (
+        validate_authenticated_map(
+            payload,
+            headers,
+            expected_total=5000,
+            requested_top_per_borough=1000,
+            expected_borough_counts=counts,
+        )
+        == []
+    )
+
+
+def test_selection_policy_counts_reject_mismatched_borough_summary() -> None:
+    payload = _index_payload()
+    payload["boroughs"][0]["count"] = 2
+
+    counts, failures = expected_borough_counts_from_index(
+        payload,
+        expected_total=5,
+    )
+
+    assert counts == {borough: 1 for borough in BOROUGHS}
+    assert any("borough summaries" in failure for failure in failures)
 
 
 def test_authenticated_map_validator_rejects_downgraded_or_ambiguous_data() -> None:
@@ -77,7 +166,8 @@ def test_authenticated_map_validator_rejects_downgraded_or_ambiguous_data() -> N
         payload,
         headers,
         expected_total=5,
-        expected_per_borough=1,
+        requested_top_per_borough=1,
+        expected_borough_counts={borough: 1 for borough in BOROUGHS},
     )
 
     assert any("access scope" in failure for failure in failures)
@@ -216,6 +306,8 @@ def test_report_omits_smoke_key_owner_and_selected_parcel(
     def fake_request(url: str, *, smoke_key: str, timeout: float):
         assert smoke_key == "do-not-report-this"
         assert timeout == 1.0
+        if url.endswith("/v1/parcel-intel/index"):
+            return 200, {}, _index_payload(), 0.05
         if url.endswith("top_per_borough=1"):
             return 200, map_headers, map_payload, 0.2
         if "/official-parcel/" in url:
@@ -229,12 +321,18 @@ def test_report_omits_smoke_key_owner_and_selected_parcel(
         smoke_key="do-not-report-this",
         timeout=1.0,
         expected_total=5,
-        expected_per_borough=1,
+        requested_top_per_borough=1,
     )
     rendered = json.dumps(report)
 
     assert report["passed"] is True
     assert report["inventory"]["returned_count"] == 5
+    assert report["inventory"]["published_borough_counts"] == {
+        borough: 1 for borough in BOROUGHS
+    }
+    assert report["inventory"]["returned_borough_counts"] == {
+        borough: 1 for borough in BOROUGHS
+    }
     assert "do-not-report-this" not in rendered
     assert "Owner 1" not in rendered
     assert "1000000001" not in rendered

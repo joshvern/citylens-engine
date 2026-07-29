@@ -65,6 +65,17 @@ jobs:
             --max-age-days "${MAX_AGE_DAYS}" \
             --output production-verification.json
 
+      - name: Verify curated demo artifacts
+        if: always()
+        env:
+          API_BASE: ${{ inputs.api_base || 'https://api.citylens.dev' }}
+          WEB_BASE: ${{ inputs.web_base || 'https://www.citylens.dev' }}
+        run: |
+          python scripts/verify_demo_artifacts.py \
+            --api-base "${API_BASE}" \
+            --web-origin "${WEB_BASE}" \
+            --output demo-artifact-verification.json
+
       - name: Verify authenticated Parcel Intelligence inventory
         if: always()
         env:
@@ -102,6 +113,7 @@ jobs:
                   return None
 
           report = read_report("production-verification.json")
+          demos = read_report("demo-artifact-verification.json")
           authenticated = read_report(
               "authenticated-production-verification.json"
           )
@@ -111,6 +123,8 @@ jobs:
           passed = bool(
               report
               and report.get("passed")
+              and demos
+              and demos.get("passed")
               and authenticated
               and authenticated.get("passed")
               and browser_authenticated
@@ -122,6 +136,18 @@ jobs:
           print(
               f"- Public contracts: "
               f"`{'passed' if report and report.get('passed') else 'failed'}`"
+          )
+          print(
+              f"- Curated demo artifacts: "
+              f"`{'passed' if demos and demos.get('passed') else 'failed'}` · "
+              f"`{(demos or {}).get('demo_count', 'unknown')}` demos · "
+              f"`{(demos or {}).get('verified_artifact_count', 'unknown')}` / "
+              f"`{(demos or {}).get('required_artifact_count', 'unknown')}` artifacts"
+          )
+          print(
+              f"- Demo quality evidence: "
+              f"`{(demos or {}).get('quality_target_status', 'unknown')}` "
+              "(advisory; not current accuracy)"
           )
           print(
               f"- Authenticated inventory: "
@@ -164,6 +190,12 @@ jobs:
               print("### Source freshness warnings")
               for warning in warnings:
                   print(f"- {warning}")
+          demo_warnings = (demos or {}).get("warnings") or []
+          if demo_warnings:
+              print()
+              print("### Advisory demo quality warnings")
+              for warning in demo_warnings:
+                  print(f"- {warning}")
           failures = []
           if report is None:
               failures.append("public verifier did not write a valid report")
@@ -171,6 +203,15 @@ jobs:
               failures.extend(
                   f"public: {failure}"
                   for failure in report.get("failures") or []
+              )
+          if demos is None:
+              failures.append(
+                  "demo artifact verifier did not write a valid report"
+              )
+          else:
+              failures.extend(
+                  f"demos: {failure}"
+                  for failure in demos.get("failures") or []
               )
           if authenticated is None:
               failures.append(
@@ -204,6 +245,7 @@ jobs:
           name: production-verification
           path: |
             production-verification.json
+            demo-artifact-verification.json
             authenticated-production-verification.json
             browser-authenticated-production-verification.json
           if-no-files-found: warn
@@ -244,6 +286,7 @@ jobs:
               }
             };
             const report = readReport("production-verification.json");
+            const demos = readReport("demo-artifact-verification.json");
             const authenticated = readReport(
               "authenticated-production-verification.json",
             );
@@ -253,6 +296,9 @@ jobs:
             const rawFailures = [
               ...(Array.isArray(report.failures)
                 ? report.failures.map((value) => `public: ${value}`)
+                : []),
+              ...(Array.isArray(demos.failures)
+                ? demos.failures.map((value) => `demos: ${value}`)
                 : []),
               ...(Array.isArray(authenticated.failures)
                 ? authenticated.failures.map(
@@ -267,6 +313,11 @@ jobs:
             ];
             if (!report.schema_version) {
               rawFailures.push("public verifier did not write a valid report");
+            }
+            if (!demos.schema_version) {
+              rawFailures.push(
+                "demo artifact verifier did not write a valid report",
+              );
             }
             if (!authenticated.schema_version) {
               rawFailures.push(
@@ -287,13 +338,17 @@ jobs:
             const body = [
               marker,
               runToken,
-              "The six-hourly public/authenticated verification workflow failed.",
+              "The six-hourly production verification workflow failed.",
               "",
               `- Latest failing run: [${context.runId}](${runUrl})`,
               `- Attempt: \`${runAttempt}\``,
               `- Commit: \`${context.sha}\``,
               `- Verified at: \`${report.verified_at || "unavailable"}\``,
               `- Feed generation: \`${report.feed_generated_at || "unavailable"}\``,
+              `- Curated demos: \`${demos.demo_count || "unavailable"}\` demos, ` +
+                `\`${demos.verified_artifact_count || "unavailable"}\` artifacts`,
+              `- Demo quality evidence: \`${demos.quality_target_status || "unavailable"}\` ` +
+                "(advisory; not current accuracy)",
               `- Authenticated inventory: \`${authenticated.inventory?.returned_count || "unavailable"}\` rows`,
               "",
               "### Verifier failures",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -202,13 +204,16 @@ def test_demo_artifact_route_proxies_real_artifacts(monkeypatch, tmp_path: Path)
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
     }
+    preview_payload = b"payload:runs/demo-proxy/preview.png"
+    preview_sha256 = hashlib.sha256(preview_payload).hexdigest()
     artifacts = [
         {
             "name": "preview.png",
+            "type": "image/png",
             "gcs_uri": "gs://test-bucket/runs/demo-proxy/preview.png",
             "gcs_object": "runs/demo-proxy/preview.png",
-            "sha256": "x",
-            "size_bytes": 10,
+            "sha256": preview_sha256,
+            "size_bytes": len(preview_payload),
             "created_at": datetime.utcnow(),
         }
     ]
@@ -230,14 +235,99 @@ def test_demo_artifact_route_proxies_real_artifacts(monkeypatch, tmp_path: Path)
         artifact for artifact in payload["artifacts"] if artifact["name"] == "preview.png"
     )
     assert preview_artifact["signed_url"] == "/v1/demo/artifacts/demo-proxy/preview.png"
+    assert preview_artifact["type"] == "image/png"
+    assert preview_artifact["sha256"] == preview_sha256
+    assert preview_artifact["size_bytes"] == len(preview_payload)
 
-    artifact_resp = client.get("/v1/demo/artifacts/demo-proxy/preview.png")
+    artifact_resp = client.get(
+        "/v1/demo/artifacts/demo-proxy/preview.png",
+        headers={"origin": "https://www.citylens.dev"},
+    )
     assert artifact_resp.status_code == 200
-    assert artifact_resp.text == "payload:runs/demo-proxy/preview.png"
-    assert artifact_resp.headers["content-type"].startswith("text/plain")
+    assert artifact_resp.content == preview_payload
+    assert artifact_resp.headers["content-type"].startswith("image/png")
+    assert artifact_resp.headers["x-content-sha256"] == preview_sha256
+    assert artifact_resp.headers["etag"] == f'"{preview_sha256}"'
+    assert artifact_resp.headers["content-digest"] == (
+        "sha-256=:"
+        f"{base64.b64encode(bytes.fromhex(preview_sha256)).decode('ascii')}"
+        ":"
+    )
+    assert artifact_resp.headers["access-control-allow-origin"] == (
+        "https://www.citylens.dev"
+    )
+    assert artifact_resp.headers["access-control-expose-headers"] == (
+        "Content-Digest, Content-Disposition, ETag, X-Content-SHA256"
+    )
 
     missing = client.get("/v1/demo/artifacts/demo-proxy/missing.bin")
     assert missing.status_code == 404
+
+
+def test_demo_artifact_route_fails_closed_on_integrity_mismatch(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _set_required_env(monkeypatch)
+    demo_file = tmp_path / "demo_runs.json"
+    demo_file.write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "category": "Featured",
+                        "run_id": "demo-corrupt",
+                        "label": "Corrupt demo",
+                        "address": "100 E 21st St Brooklyn, NY 11226",
+                        "imagery_year": 2024,
+                        "baseline_year": 2017,
+                        "segmentation_backend": "sam2",
+                        "outputs": ["previews"],
+                    }
+                ]
+            }
+        )
+    )
+    run_doc = {
+        "run_id": "demo-corrupt",
+        "user_id": "demo",
+        "status": "succeeded",
+        "stage": "complete",
+        "progress": 100,
+        "request": {"address": "100 E 21st St Brooklyn, NY 11226"},
+        "artifacts": {
+            "preview.png": "gs://test-bucket/runs/demo-corrupt/preview.png",
+        },
+        "error": None,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    artifacts = [
+        {
+            "name": "preview.png",
+            "type": "image/png",
+            "gcs_uri": "gs://test-bucket/runs/demo-corrupt/preview.png",
+            "gcs_object": "runs/demo-corrupt/preview.png",
+            "sha256": "0" * 64,
+            "size_bytes": 1,
+            "created_at": datetime.utcnow(),
+        }
+    ]
+    app.dependency_overrides[demo_routes.get_demo_registry] = lambda: DemoRegistry(
+        json_path=str(demo_file)
+    )
+    app.dependency_overrides[demo_routes.get_store] = lambda: FakeStore(
+        run=run_doc,
+        artifacts=artifacts,
+    )
+    app.dependency_overrides[demo_routes.get_gcs] = lambda: FakeGcs()
+
+    response = TestClient(app).get(
+        "/v1/demo/artifacts/demo-corrupt/preview.png"
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Artifact integrity verification failed"
 
 
 def test_demo_routes_allow_vercel_preview_cors(monkeypatch) -> None:

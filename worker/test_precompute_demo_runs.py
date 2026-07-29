@@ -7,19 +7,43 @@ import pytest
 from scripts import precompute_demo_runs as precompute
 
 
+def _artifact(name: str, url: str) -> dict:
+    return {
+        "name": name,
+        "type": precompute.EXPECTED_ARTIFACT_TYPES[name],
+        "sha256": "a" * 64,
+        "size_bytes": 128,
+        "signed_url": url,
+    }
+
+
 def test_validate_completed_run_rejects_missing_required_artifacts() -> None:
     with pytest.raises(RuntimeError, match="missing required artifacts"):
         precompute._validate_completed_run(
             {
                 "run_id": "run-123",
                 "artifacts": {
-                    "preview.png": {
-                        "name": "preview.png",
-                        "signed_url": "https://example.test/preview.png",
-                    }
+                    "preview.png": _artifact(
+                        "preview.png",
+                        "https://example.test/preview.png",
+                    )
                 },
             },
             run_id="run-123",
+        )
+
+
+def test_validate_completed_run_rejects_missing_integrity_receipt() -> None:
+    artifacts = [
+        _artifact(name, f"https://example.test/{name}")
+        for name in precompute.REQUIRED_ARTIFACTS
+    ]
+    artifacts[0]["sha256"] = ""
+
+    with pytest.raises(RuntimeError, match="no valid SHA-256 receipt"):
+        precompute._validate_completed_run(
+            {"run_id": "run-without-integrity", "artifacts": artifacts},
+            run_id="run-without-integrity",
         )
 
 
@@ -56,13 +80,22 @@ def test_main_writes_only_valid_precomputed_demo_runs(monkeypatch, tmp_path: Pat
                 "stage": "complete",
                 "progress": 100,
                 "artifacts": [
-                    {"name": "preview.png", "signed_url": "https://example.test/preview.png"},
-                    {"name": "change.geojson", "signed_url": "https://example.test/change.geojson"},
-                    {"name": "mesh.ply", "signed_url": "https://example.test/mesh.ply"},
-                    {
-                        "name": "run_summary.json",
-                        "signed_url": "https://example.test/run_summary.json",
-                    },
+                    _artifact(
+                        "preview.png",
+                        "https://example.test/preview.png",
+                    ),
+                    _artifact(
+                        "change.geojson",
+                        "https://example.test/change.geojson",
+                    ),
+                    _artifact(
+                        "mesh.ply",
+                        "https://example.test/mesh.ply",
+                    ),
+                    _artifact(
+                        "run_summary.json",
+                        "https://example.test/run_summary.json",
+                    ),
                 ],
             }
         raise AssertionError(f"Unexpected API call: {method} {url}")

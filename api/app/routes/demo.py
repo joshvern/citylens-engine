@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from ..models.schemas import DemoRunFeatured, RunResponse
+from ..services.artifact_contract import artifact_media_type
 from ..services.demo_registry import DemoRegistry
 from ..services.firestore_store import FirestoreStore
 from ..services.gcs_artifacts import GcsArtifacts
@@ -103,28 +106,40 @@ def _resolve_demo_artifact_object(
     artifacts: list[dict[str, Any]],
     bucket: str,
     artifact_name: str,
-) -> str | None:
+) -> tuple[str, dict[str, Any]] | None:
+    detail = next(
+        (
+            artifact
+            for artifact in artifacts
+            if str(artifact.get("name") or "") == artifact_name
+        ),
+        {},
+    )
+
     run_artifacts = run.get("artifacts")
     if isinstance(run_artifacts, dict):
         raw_gcs_uri = run_artifacts.get(artifact_name)
         if raw_gcs_uri:
             object_name = _gcs_object_from_uri(str(raw_gcs_uri), bucket=bucket)
             if object_name:
-                return object_name
+                detail_object = str(detail.get("gcs_object") or "")
+                detail_uri = str(detail.get("gcs_uri") or "")
+                detail_matches = (
+                    detail_uri == str(raw_gcs_uri)
+                    or detail_object == object_name
+                )
+                return object_name, detail if detail_matches else {}
 
-    for artifact in artifacts:
-        if str(artifact.get("name") or "") != artifact_name:
-            continue
-
-        gcs_object = str(artifact.get("gcs_object") or "").strip()
+    if detail:
+        gcs_object = str(detail.get("gcs_object") or "").strip()
         if gcs_object:
-            return gcs_object
+            return gcs_object, detail
 
-        raw_gcs_uri = artifact.get("gcs_uri")
+        raw_gcs_uri = detail.get("gcs_uri")
         if raw_gcs_uri:
             object_name = _gcs_object_from_uri(str(raw_gcs_uri), bucket=bucket)
             if object_name:
-                return object_name
+                return object_name, detail
 
     return None
 
@@ -210,25 +225,63 @@ def demo_artifact(
         raise HTTPException(status_code=404, detail="Run not found")
 
     artifacts = store.list_artifacts(run_id)
-    object_name = _resolve_demo_artifact_object(
+    resolved = _resolve_demo_artifact_object(
         run=run,
         artifacts=artifacts,
         bucket=settings.bucket,
         artifact_name=artifact_name,
     )
-    if not object_name:
+    if not resolved:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    object_name, metadata = resolved
+
+    expected_sha256 = str(metadata.get("sha256") or "").lower()
+    expected_size = metadata.get("size_bytes")
+    if (
+        len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+        or not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or expected_size <= 0
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Artifact integrity metadata unavailable",
+        )
 
     try:
-        payload, media_type = gcs.download_bytes(object_name=object_name)
+        payload, stored_media_type = gcs.download_bytes(object_name=object_name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Artifact not found") from exc
 
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if len(payload) != expected_size or actual_sha256 != expected_sha256:
+        raise HTTPException(
+            status_code=503,
+            detail="Artifact integrity verification failed",
+        )
+
+    media_type = artifact_media_type(artifact_name)
+    if (
+        media_type == "application/octet-stream"
+        and isinstance(stored_media_type, str)
+        and stored_media_type
+    ):
+        media_type = stored_media_type
+
+    digest_base64 = base64.b64encode(bytes.fromhex(actual_sha256)).decode("ascii")
+    safe_filename = artifact_name.replace('"', "").replace("\r", "").replace("\n", "")
     return Response(
         content=payload,
         media_type=media_type,
         headers={
-            "Content-Disposition": f'inline; filename="{artifact_name}"',
+            "Access-Control-Expose-Headers": (
+                "Content-Digest, Content-Disposition, ETag, X-Content-SHA256"
+            ),
+            "Content-Disposition": f'inline; filename="{safe_filename}"',
+            "Content-Digest": f"sha-256=:{digest_base64}:",
+            "ETag": f'"{actual_sha256}"',
+            "X-Content-SHA256": actual_sha256,
             "Cache-Control": _DEMO_ARTIFACT_CACHE,
         },
     )

@@ -82,3 +82,17 @@ def test_versioned_deploy_scripts_keep_worker_runtime_contract() -> None:
 
     assert 'WORKER_CPU="${WORKER_CPU:-4}"' in deploy_all
     assert 'WORKER_MEMORY="${WORKER_MEMORY:-8Gi}"' in deploy_all
+
+
+def test_versioned_deploy_scripts_are_explicit_about_unconditional_iam() -> None:
+    for relative_path in (
+        "deploy/deploy_api.sh",
+        "deploy/deploy_worker.sh",
+        "deploy/deploy_all.sh",
+    ):
+        script = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        binding_commands = script.count("add-iam-policy-binding")
+        # A project policy that contains conditional bindings makes gcloud
+        # reject ambiguous non-interactive mutations.
+        assert binding_commands > 0
+        assert script.count("--condition=None") == binding_commands

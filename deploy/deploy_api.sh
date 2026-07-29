@@ -64,11 +64,12 @@ if [[ -n "${DEPLOYER_MEMBER}" ]]; then
   if ! gcloud iam service-accounts add-iam-policy-binding "${API_SA_EMAIL}" \
     --project "${PROJECT_ID}" \
     --member "${DEPLOYER_MEMBER}" \
-    --role "roles/iam.serviceAccountUser" >/dev/null; then
+    --role "roles/iam.serviceAccountUser" \
+    --condition=None >/dev/null; then
     echo "" >&2
     echo "ERROR: Unable to grant roles/iam.serviceAccountUser on ${API_SA_EMAIL}." >&2
     echo "Run this with a project owner/admin account:" >&2
-    echo "  gcloud iam service-accounts add-iam-policy-binding ${API_SA_EMAIL} --project ${PROJECT_ID} --member ${DEPLOYER_MEMBER} --role roles/iam.serviceAccountUser" >&2
+    echo "  gcloud iam service-accounts add-iam-policy-binding ${API_SA_EMAIL} --project ${PROJECT_ID} --member ${DEPLOYER_MEMBER} --role roles/iam.serviceAccountUser --condition=None" >&2
     exit 1
   fi
 else

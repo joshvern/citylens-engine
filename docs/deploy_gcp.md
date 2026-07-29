@@ -327,7 +327,11 @@ the 5,000-row score replay to pass; any failed thresholds must have an explicit
 reviewed override reason recorded by the publisher. It opens one public parcel
 detail and requires the v1 decision audit, exact accepted-model validation
 metrics, unambiguous rank/eligibility/diligence roles, and redacted
-ownership/diligence evidence. It also requires the publisher's hashed
+ownership/diligence evidence. When the accepted feed includes historical
+borough evidence, verification also requires exactly five reconciled
+borough cohorts, exact observed top-100 Wilson intervals, a valid source
+report receipt, and a selected cohort that matches the parcel borough.
+It also requires the publisher's hashed
 authoritative ZAP BBL reconciliation to show a non-empty source universe,
 100% current private project-to-BBL coverage, valid hashed current-PLUTO and
 reviewed official-filed-document evidence, blocked candidates actually

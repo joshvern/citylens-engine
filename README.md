@@ -95,6 +95,14 @@ Current pinned release tag:
   responses vary on authentication credentials; authenticated responses are
   private/no-store so a cached 125-row preview cannot be reused as the
   signed-in inventory. Large JSON responses are gzip-compressed.
+- Selected-parcel decision audits may include
+  `citylens_historical_borough_benchmark_receipt@v1` plus the clicked
+  parcel's reconciled borough cohort. The API requires the five borough
+  populations and exact top-100 counts to reconcile to the accepted
+  citywide historical cohort, recomputes the observed Wilson intervals, and
+  validates the digest-bound source report. These are fixed 2024→2025
+  borough-cohort observations—not parcel probabilities, current accuracy,
+  seller intent, or acquisition outcomes.
 - After that complete authenticated inventory is verified, signed-in users may
   submit an unmatched NYC street address to
   `POST /v1/parcel-intel/resolve-address`. The API normalizes and SHA-256

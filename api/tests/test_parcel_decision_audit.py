@@ -27,6 +27,68 @@ def _row(**overrides) -> ParcelIntelRow:
     return ParcelIntelRow.model_validate(payload)
 
 
+def _borough_receipt() -> dict:
+    borough_rows = {
+        "manhattan": (33_718, 36, 3, [0.010254524024038925, 0.0845193642905276]),
+        "bronx": (78_837, 202, 24, [0.16691325556948772, 0.33232336349814473]),
+        "brooklyn": (245_853, 240, 10, [0.0552291370606751, 0.17436566150491345]),
+        "queens": (301_132, 329, 23, [0.15843265880303448, 0.3215438302287378]),
+        "staten_island": (
+            108_974,
+            149,
+            13,
+            [0.07757167427240512, 0.20980351440076428],
+        ),
+    }
+    boroughs = {}
+    for slug, (rows, positives, hits, interval) in borough_rows.items():
+        boroughs[slug] = {
+            "evaluation_rows": rows,
+            "observed_positive_rows": positives,
+            "base_rate": positives / rows,
+            "top_100": {
+                "k": 100,
+                "evaluated_rows": 100,
+                "observed_hits": hits,
+                "precision": hits / 100,
+                "precision_95ci": interval,
+            },
+        }
+    return {
+        "schema": "citylens_historical_borough_benchmark_receipt@v1",
+        "target": "dob_nb_job_filing",
+        "feature_origin": 2024,
+        "outcome_window": "2025-2025",
+        "evaluation_scope": "rolling_origin_latest_out_of_time",
+        "ranking_scope": "historical_within_borough_model_order",
+        "citywide_evaluation_rows": 768_514,
+        "citywide_observed_positive_rows": 956,
+        "boroughs": boroughs,
+        "interval": {
+            "method": "wilson_score_observed_top_k",
+            "confidence_level": 0.95,
+            "scope": "fixed_historical_borough_ranked_list",
+            "limitations": (
+                "Does not include model-selection uncertainty, spatial "
+                "dependence, dataset shift, current acquisition outcomes, "
+                "or a parcel-specific probability."
+            ),
+        },
+        "source_receipt": {
+            "schema": "citylens_borough_benchmark_attachment@v1",
+            "report_file_name": "rolling_origin_1y_attested.json",
+            "report_schema": "citylens_rolling_origin_backtest@v2",
+            "report_sha256": "a" * 64,
+            "report_size_bytes": 21_910,
+            "source_model_sha256": "b" * 64,
+            "metadata_only_attachment": True,
+        },
+        "evidence_status": "development_exposed",
+        "not_current_accuracy": True,
+        "not_parcel_confidence": True,
+    }
+
+
 def _manifest() -> dict:
     return {
         "generated_at": "2026-07-24T02:43:29Z",
@@ -82,11 +144,12 @@ def _manifest() -> dict:
                 "not_current_accuracy": True,
                 "not_parcel_confidence": True,
             },
+            "historical_borough_benchmark_receipt": _borough_receipt(),
             "prospective_2026_validated": False,
             "evaluation_evidence": {
                 "status": "development_exposed",
             },
-        }
+        },
     }
 
 
@@ -124,10 +187,25 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert receipt.top_1000.observed_hits == 104
     assert receipt.not_current_accuracy is True
     assert receipt.not_parcel_confidence is True
+    borough_receipt = audit.validation.historical_borough_benchmark_receipt
+    assert borough_receipt is not None
+    assert set(borough_receipt.boroughs) == {
+        "manhattan",
+        "bronx",
+        "brooklyn",
+        "queens",
+        "staten_island",
+    }
+    cohort = audit.validation.historical_borough_cohort
+    assert cohort is not None
+    assert cohort.borough == "brooklyn"
+    assert cohort.cohort.evaluation_rows == 245_853
+    assert cohort.cohort.top_100.observed_hits == 10
+    assert cohort.cohort.top_100.precision == 0.1
+    assert cohort.not_current_accuracy is True
+    assert cohort.not_parcel_confidence is True
     assert audit.validation.prospective_validated is False
-    assert "not an independent current-accuracy estimate" in (
-        audit.validation.disclaimer
-    )
+    assert "not an independent current-accuracy estimate" in (audit.validation.disclaimer)
     checks = {check.key: check for check in audit.checks}
     assert checks["historical_model"].affects_model_rank is True
     assert (
@@ -148,12 +226,8 @@ def test_decision_audit_separates_model_gate_and_diligence_evidence() -> None:
     assert "420 m straight-line" in checks["transit_access"].summary
     assert checks["transit_access"].affects_model_rank is False
     assert audit.readiness.status == "review_required"
-    assert any(
-        "floodplain exposure" in item for item in audit.readiness.review_items
-    )
-    assert any(
-        "MIH applicability" in item for item in audit.readiness.review_items
-    )
+    assert any("floodplain exposure" in item for item in audit.readiness.review_items)
+    assert any("MIH applicability" in item for item in audit.readiness.review_items)
     assert "purchase recommendation" in audit.readiness.disclaimer
 
 
@@ -167,9 +241,7 @@ def test_index_rejects_internally_inconsistent_historical_receipt() -> None:
 
 def test_decision_audit_rejects_malformed_historical_receipt() -> None:
     manifest = _manifest()
-    manifest["model_metadata"]["historical_benchmark_receipt"][
-        "not_parcel_confidence"
-    ] = False
+    manifest["model_metadata"]["historical_benchmark_receipt"]["not_parcel_confidence"] = False
 
     with pytest.raises(ValidationError):
         build_parcel_decision_audit(
@@ -177,6 +249,27 @@ def test_decision_audit_rejects_malformed_historical_receipt() -> None:
             manifest,
             premium_access=True,
         )
+
+
+def test_index_rejects_internally_inconsistent_borough_receipt() -> None:
+    metadata = _manifest()["model_metadata"]
+    metadata["historical_borough_benchmark_receipt"]["boroughs"]["queens"]["top_100"][
+        "observed_hits"
+    ] = 24
+
+    with pytest.raises(ValidationError, match="precision does not match"):
+        ParcelIntelIndex.model_validate({"model_metadata": metadata})
+
+
+def test_decision_audit_omits_selected_cohort_for_unknown_borough() -> None:
+    audit = build_parcel_decision_audit(
+        _row(borough=None),
+        _manifest(),
+        premium_access=True,
+    )
+
+    assert audit.validation.historical_borough_benchmark_receipt is not None
+    assert audit.validation.historical_borough_cohort is None
 
 
 def test_decision_audit_formats_multi_year_model_window_for_people() -> None:
@@ -189,9 +282,7 @@ def test_decision_audit_formats_multi_year_model_window_for_people() -> None:
         premium_access=True,
     )
 
-    historical = next(
-        check for check in audit.checks if check.key == "historical_model"
-    )
+    historical = next(check for check in audit.checks if check.key == "historical_model")
     assert historical.as_of == "2018–2025"
 
 
@@ -222,9 +313,7 @@ def test_public_decision_audit_does_not_summarize_private_signals() -> None:
         "Protected ownership and diligence evidence is withheld in this preview."
     ]
     assert "tax-lien" not in " ".join(audit.readiness.review_items)
-    assert "mandatory inclusionary housing" not in " ".join(
-        audit.readiness.review_items
-    ).lower()
+    assert "mandatory inclusionary housing" not in " ".join(audit.readiness.review_items).lower()
 
 
 def test_current_project_exclusion_dominates_overall_audit_status() -> None:
@@ -247,9 +336,7 @@ def test_current_project_exclusion_dominates_overall_audit_status() -> None:
     assert "approved land use project" in checks["acquisition_eligibility"].summary
     assert audit.readiness.status == "blocked"
     assert audit.readiness.blockers == ["approved land use project"]
-    assert "Keep this parcel out of acquisition outreach" in (
-        audit.readiness.recommended_action
-    )
+    assert "Keep this parcel out of acquisition outreach" in (audit.readiness.recommended_action)
 
 
 def test_clean_private_audit_proposes_initial_review_without_predictive_claim() -> None:

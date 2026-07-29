@@ -7,6 +7,7 @@ from typing import Any
 from ..models.schemas import (
     ParcelDecisionAudit,
     ParcelHistoricalBenchmarkReceipt,
+    ParcelHistoricalBoroughBenchmarkReceipt,
     ParcelIntelRow,
 )
 
@@ -81,21 +82,40 @@ def build_parcel_decision_audit(
         or "Forward-only historical evaluation scope unavailable"
     )
     evaluation_evidence = model.get("evaluation_evidence")
-    evaluation_evidence = (
-        evaluation_evidence
-        if isinstance(evaluation_evidence, dict)
-        else {}
-    )
+    evaluation_evidence = evaluation_evidence if isinstance(evaluation_evidence, dict) else {}
     evaluation_status = _as_text(evaluation_evidence.get("status"))
     prospective_validated = model.get("prospective_2026_validated") is True
     historical_benchmark_raw = model.get("historical_benchmark_receipt")
     historical_benchmark = (
-        ParcelHistoricalBenchmarkReceipt.model_validate(
-            historical_benchmark_raw
-        )
+        ParcelHistoricalBenchmarkReceipt.model_validate(historical_benchmark_raw)
         if historical_benchmark_raw is not None
         else None
     )
+    historical_borough_raw = model.get("historical_borough_benchmark_receipt")
+    historical_borough_benchmark = (
+        ParcelHistoricalBoroughBenchmarkReceipt.model_validate(historical_borough_raw)
+        if historical_borough_raw is not None
+        else None
+    )
+    borough_slug = _as_text(row.borough)
+    historical_borough_cohort = None
+    if (
+        historical_borough_benchmark is not None
+        and borough_slug in historical_borough_benchmark.boroughs
+    ):
+        historical_borough_cohort = {
+            "borough": borough_slug,
+            "target": historical_borough_benchmark.target,
+            "feature_origin": historical_borough_benchmark.feature_origin,
+            "outcome_window": historical_borough_benchmark.outcome_window,
+            "evaluation_scope": (historical_borough_benchmark.evaluation_scope),
+            "ranking_scope": historical_borough_benchmark.ranking_scope,
+            "cohort": historical_borough_benchmark.boroughs[borough_slug],
+            "interval": historical_borough_benchmark.interval,
+            "evidence_status": (historical_borough_benchmark.evidence_status),
+            "not_current_accuracy": True,
+            "not_parcel_confidence": True,
+        }
     validation = {
         "target": target,
         "evaluation_scope": evaluation_scope,
@@ -103,6 +123,8 @@ def build_parcel_decision_audit(
         "precision_at_1000": _as_float(model.get("precision_at_1000")),
         "base_rate": _as_float(model.get("spatial_cv_base_rate")),
         "historical_benchmark_receipt": historical_benchmark,
+        "historical_borough_benchmark_receipt": (historical_borough_benchmark),
+        "historical_borough_cohort": historical_borough_cohort,
         "prospective_validated": prospective_validated,
         "disclaimer": (
             (
@@ -114,7 +136,8 @@ def build_parcel_decision_audit(
             )
             + "Historical next-year DOB new-building filing performance is "
             "not seller intent, transaction probability, or acquisition "
-            "conversion."
+            "conversion. Borough top-100 evidence describes one fixed "
+            "historical cohort, not the current parcel or acquisition list."
         ),
     }
 
@@ -146,8 +169,7 @@ def build_parcel_decision_audit(
     elif row.address_source == "nyc_pluto":
         address_status = "verified"
         address_summary = (
-            "The displayed tax-lot address comes from the current PLUTO record "
-            "for this BBL."
+            "The displayed tax-lot address comes from the current PLUTO record for this BBL."
         )
         address_source = "NYC PLUTO"
     else:
@@ -166,11 +188,7 @@ def build_parcel_decision_audit(
             "status": address_status,
             "summary": address_summary,
             "source": address_source,
-            "as_of": (
-                row.property_facts_as_of
-                if row.address_source == "nyc_pluto"
-                else None
-            ),
+            "as_of": (row.property_facts_as_of if row.address_source == "nyc_pluto" else None),
             "affects_model_rank": False,
             "affects_acquisition_eligibility": False,
         }
@@ -201,9 +219,7 @@ def build_parcel_decision_audit(
         )
     else:
         eligibility_status = "excluded"
-        eligibility_summary = (
-            "The parcel does not pass the current acquisition eligibility policy."
-        )
+        eligibility_summary = "The parcel does not pass the current acquisition eligibility policy."
     if exclusion_reasons:
         eligibility_summary = (
             f"{eligibility_summary} Recorded reason"
@@ -239,10 +255,7 @@ def build_parcel_decision_audit(
             "label": "DOB and ZAP project clearance",
             "status": "excluded" if project_excluded else "verified",
             "summary": (
-                (
-                    "Current DOB or ZAP evidence matched an active/completed "
-                    "project exclusion."
-                )
+                ("Current DOB or ZAP evidence matched an active/completed project exclusion.")
                 if project_excluded
                 else (
                     "No current DOB or private ZAP project exclusion matched "
@@ -251,9 +264,7 @@ def build_parcel_decision_audit(
                 )
             ),
             "source": "NYC DOB and NYC Planning ZAP",
-            "as_of": _joined_dates(
-                row.project_activity_as_of, row.land_use_activity_as_of
-            ),
+            "as_of": _joined_dates(row.project_activity_as_of, row.land_use_activity_as_of),
             "affects_model_rank": False,
             "affects_acquisition_eligibility": True,
         }
@@ -283,8 +294,7 @@ def build_parcel_decision_audit(
     if not premium_access:
         ownership_status = "unavailable"
         ownership_summary = (
-            "Sign in to review current owner provenance and exact-name "
-            "portfolio context."
+            "Sign in to review current owner provenance and exact-name portfolio context."
         )
     elif _as_text(row.owner_name):
         ownership_status = "verified"
@@ -294,9 +304,7 @@ def build_parcel_decision_audit(
         )
     else:
         ownership_status = "unavailable"
-        ownership_summary = (
-            "No usable private-owner name is available for this parcel."
-        )
+        ownership_summary = "No usable private-owner name is available for this parcel."
     checks.append(
         {
             "key": "ownership",
@@ -305,9 +313,7 @@ def build_parcel_decision_audit(
             "status": ownership_status,
             "summary": ownership_summary,
             "source": (
-                "NYC PLUTO"
-                if row.owner_name_source == "pluto"
-                else "NYC ACRIS / NYC PLUTO"
+                "NYC PLUTO" if row.owner_name_source == "pluto" else "NYC ACRIS / NYC PLUTO"
             ),
             "as_of": row.ownership_as_of if premium_access else None,
             "affects_model_rank": False,
@@ -326,21 +332,15 @@ def build_parcel_decision_audit(
         if row.environmental_review_required is True:
             diligence_signals.append("environmental review instrument")
         if row.mandatory_inclusionary_housing is True:
-            diligence_signals.append(
-                "mandatory inclusionary housing mapped-area overlap"
-            )
+            diligence_signals.append("mandatory inclusionary housing mapped-area overlap")
         if row.recent_change:
             diligence_signals.append("recent aerial change")
     if not premium_access:
         diligence_status = "unavailable"
-        diligence_summary = (
-            "Sign in to review current post-score diligence overlays."
-        )
+        diligence_summary = "Sign in to review current post-score diligence overlays."
     elif diligence_signals:
         diligence_status = "review"
-        diligence_summary = (
-            "Review before underwriting: " + "; ".join(diligence_signals) + "."
-        )
+        diligence_summary = "Review before underwriting: " + "; ".join(diligence_signals) + "."
     else:
         diligence_status = "informational"
         diligence_summary = (
@@ -376,9 +376,7 @@ def build_parcel_decision_audit(
     transit_distance = row.nearest_transit_station_distance_m
     if not premium_access:
         transit_status = "unavailable"
-        transit_summary = (
-            "Sign in to review current subway/SIR accessibility context."
-        )
+        transit_summary = "Sign in to review current subway/SIR accessibility context."
     elif isinstance(transit_distance, int):
         routes = ", ".join(row.nearest_transit_routes or []) or "no routes"
         transit_status = "verified"
@@ -390,9 +388,7 @@ def build_parcel_decision_audit(
         )
     else:
         transit_status = "unavailable"
-        transit_summary = (
-            "No validated current station-complex proximity was joined."
-        )
+        transit_summary = "No validated current station-complex proximity was joined."
     checks.append(
         {
             "key": "transit_access",
@@ -430,9 +426,7 @@ def build_parcel_decision_audit(
             "The parcel does not pass the current acquisition eligibility policy."
         ]
     else:
-        cleared_items.append(
-            "Current project and acquisition eligibility gates passed."
-        )
+        cleared_items.append("Current project and acquisition eligibility gates passed.")
     if row.property_facts_current:
         cleared_items.append("Current PLUTO property facts matched this tax lot.")
     elif premium_access:
@@ -440,25 +434,18 @@ def build_parcel_decision_audit(
             "Resolve the missing current PLUTO tax-lot match before using capacity facts."
         )
     if premium_access and _as_text(row.owner_name):
-        cleared_items.append(
-            "Current legal-owner provenance is available for review."
-        )
+        cleared_items.append("Current legal-owner provenance is available for review.")
     elif premium_access:
-        review_items.append(
-            "Establish current legal-owner provenance before outreach."
-        )
+        review_items.append("Establish current legal-owner provenance before outreach.")
     if premium_access and (row.max_floor_area_sqft or 0) > 0:
         cleared_items.append(
             "Published zoning-capacity fields are available for an initial screen."
         )
     elif premium_access:
-        review_items.append(
-            "Verify zoning capacity before relying on an underwriting screen."
-        )
+        review_items.append("Verify zoning capacity before relying on an underwriting screen.")
     if premium_access and isinstance(transit_distance, int):
         cleared_items.append(
-            "Current MTA station-complex proximity is available as a "
-            "straight-line location screen."
+            "Current MTA station-complex proximity is available as a straight-line location screen."
         )
 
     if premium_access:
@@ -466,9 +453,7 @@ def build_parcel_decision_audit(
             "historical final tax-lien sale": (
                 "Review the cited historical final tax-lien sale record."
             ),
-            "immediate-hazard violation": (
-                "Resolve current immediate-hazard violation evidence."
-            ),
+            "immediate-hazard violation": ("Resolve current immediate-hazard violation evidence."),
             "1% floodplain overlap": (
                 "Review floodplain exposure and site-specific mitigation requirements."
             ),
@@ -484,9 +469,7 @@ def build_parcel_decision_audit(
                 "Reconcile recent aerial change with official filings and site conditions."
             ),
         }
-        review_items.extend(
-            diligence_review_labels[signal] for signal in diligence_signals
-        )
+        review_items.extend(diligence_review_labels[signal] for signal in diligence_signals)
 
     if row.acquisition_eligible is not True:
         readiness_status = "blocked"
@@ -499,17 +482,12 @@ def build_parcel_decision_audit(
         readiness_status = "incomplete"
         readiness_label = "Resolve evidence gaps before acting"
         recommended_action = (
-            "Resolve missing or stale source evidence before owner outreach or "
-            "underwriting."
+            "Resolve missing or stale source evidence before owner outreach or underwriting."
         )
         if premium_access:
-            review_items.extend(
-                f"Resolve data warning: {warning}." for warning in warnings
-            )
+            review_items.extend(f"Resolve data warning: {warning}." for warning in warnings)
         elif warnings:
-            review_items.append(
-                "Sign in to review the current source-quality warnings."
-            )
+            review_items.append("Sign in to review the current source-quality warnings.")
     elif not premium_access:
         readiness_status = "limited_preview"
         readiness_label = "Sign in to complete the decision screen"
@@ -551,9 +529,7 @@ def build_parcel_decision_audit(
     return ParcelDecisionAudit.model_validate(
         {
             "schema_version": AUDIT_SCHEMA,
-            "evidence_generated_at": _as_version_text(
-                (manifest or {}).get("generated_at")
-            ),
+            "evidence_generated_at": _as_version_text((manifest or {}).get("generated_at")),
             "overall_status": overall_status,
             "overall_label": overall_label,
             "validation": validation,

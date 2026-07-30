@@ -650,6 +650,39 @@ class FirestoreStore:
 
         return retry_transient(_op)
 
+    def list_parcel_lead_reviews(
+        self,
+        *,
+        app_user_id: str,
+        feed_generation: str,
+    ) -> list[dict[str, Any]]:
+        """Return only this user's reviews for one immutable generation."""
+
+        def _op() -> list[dict[str, Any]]:
+            docs = (
+                self._parcel_lead_reviews_col(app_user_id)
+                .where(
+                    filter=FieldFilter(
+                        "feed_generation",
+                        "==",
+                        feed_generation,
+                    )
+                )
+                .limit(5_000)
+                .stream()
+            )
+            rows = [snap.to_dict() or {} for snap in docs]
+            return sorted(
+                rows,
+                key=lambda row: (
+                    row.get("citywide_rank") is None,
+                    int(row.get("citywide_rank") or 0),
+                    str(row.get("bbl") or ""),
+                ),
+            )
+
+        return retry_transient(_op)
+
     def upsert_parcel_lead_review(
         self,
         *,

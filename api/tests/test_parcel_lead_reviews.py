@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models.schemas import ParcelIntelRow
+from app.models.schemas import (
+    ParcelIntelBorough,
+    ParcelIntelIndex,
+    ParcelIntelRow,
+)
 from app.routes import parcel_reviews
 from app.services.firestore_store import parcel_lead_review_id
 
@@ -68,8 +72,43 @@ class FakeLeadReviewStore:
         self.reviews[key] = review
         return review, "updated" if existing else "created"
 
+    def list_parcel_lead_reviews(
+        self,
+        *,
+        app_user_id: str,
+        feed_generation: str,
+    ) -> list[dict]:
+        del app_user_id
+        return sorted(
+            (
+                review
+                for (generation, _bbl), review in self.reviews.items()
+                if generation == feed_generation
+            ),
+            key=lambda review: review["citywide_rank"],
+        )
+
 
 class FakeRegistry:
+    def index(self, _gcs) -> ParcelIntelIndex:
+        return ParcelIntelIndex(
+            boroughs=[
+                ParcelIntelBorough(
+                    slug=borough,
+                    display_name=borough.replace("_", " ").title(),
+                    count=1_000,
+                )
+                for borough in (
+                    "manhattan",
+                    "bronx",
+                    "brooklyn",
+                    "queens",
+                    "staten_island",
+                )
+            ],
+            feed_generation=GENERATION,
+        )
+
     def parcel(self, _gcs, bbl: str):
         if bbl != BBL:
             from fastapi import HTTPException
@@ -137,6 +176,48 @@ def test_lead_review_state_is_private_and_generation_bound(
         "schema_version": "citylens/parcel-lead-review-state@v1",
         "current_feed_generation": GENERATION,
         "review": None,
+    }
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "authorization" in response.headers["vary"].lower()
+
+
+def test_lead_review_index_returns_only_current_generation_coverage(
+    auth_override,
+) -> None:
+    auth_override()
+    store = FakeLeadReviewStore()
+    _install_dependencies(store)
+    client = TestClient(app)
+
+    created = client.put(
+        f"/v1/parcel-intel/lead-reviews/{BBL}",
+        json=_payload(),
+    )
+    assert created.status_code == 200, created.text
+    store.reviews[
+        ("20260729T092749819158Z-daf06394d35b", BBL)
+    ] = created.json() | {
+        "feed_generation": (
+            "20260729T092749819158Z-daf06394d35b"
+        )
+    }
+
+    response = client.get("/v1/parcel-intel/lead-reviews")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "schema_version": "citylens/parcel-lead-review-index@v1",
+        "current_feed_generation": GENERATION,
+        "available_count": 5_000,
+        "reviewed_count": 1,
+        "unreviewed_count": 4_999,
+        "verdict_counts": {
+            "pursue": 0,
+            "watch": 0,
+            "pass": 1,
+            "unclear": 0,
+        },
+        "items": [created.json()],
     }
     assert response.headers["cache-control"] == "private, no-store"
     assert "authorization" in response.headers["vary"].lower()

@@ -1336,6 +1336,7 @@ ParcelProductEventSource = Literal[
     "watchlist",
     "comparison",
     "saved_views",
+    "lead_reviews",
     "decision_posture",
     "audit_tab",
     "underwrite_tab",
@@ -1481,6 +1482,63 @@ class ParcelLeadReviewState(BaseModel):
     review: Optional[ParcelLeadReview] = None
 
 
+class ParcelLeadReviewVerdictCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pursue: int = Field(default=0, ge=0)
+    watch: int = Field(default=0, ge=0)
+    pass_: int = Field(default=0, ge=0, alias="pass")
+    unclear: int = Field(default=0, ge=0)
+
+
+class ParcelLeadReviewIndex(BaseModel):
+    """Private current-generation coverage for one practitioner's workspace."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: Literal["citylens/parcel-lead-review-index@v1"]
+    current_feed_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    available_count: int = Field(ge=0, le=100_000)
+    reviewed_count: int = Field(ge=0, le=5_000)
+    unreviewed_count: int = Field(ge=0, le=100_000)
+    verdict_counts: ParcelLeadReviewVerdictCounts
+    items: list[ParcelLeadReview] = Field(
+        default_factory=list,
+        max_length=5_000,
+    )
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "ParcelLeadReviewIndex":
+        verdict_total = (
+            self.verdict_counts.pursue
+            + self.verdict_counts.watch
+            + self.verdict_counts.pass_
+            + self.verdict_counts.unclear
+        )
+        if (
+            self.reviewed_count > self.available_count
+            or self.unreviewed_count
+            != self.available_count - self.reviewed_count
+            or len(self.items) != self.reviewed_count
+            or verdict_total != self.reviewed_count
+        ):
+            raise PydanticCustomError(
+                "parcel_lead_review_index_counts",
+                "lead-review coverage counts do not reconcile",
+            )
+        if any(
+            item.feed_generation != self.current_feed_generation
+            for item in self.items
+        ):
+            raise PydanticCustomError(
+                "parcel_lead_review_index_generation",
+                "lead-review items must match the current feed generation",
+            )
+        return self
+
+
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "market_explorer_opened": {"full_inventory"},
     "parcel_opened": {
@@ -1491,6 +1549,7 @@ _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
         "watchlist",
         "comparison",
         "decision_peers",
+        "lead_reviews",
     },
     "official_dossier_opened": {"official_dossier"},
     "screening_lookup_completed": {"screening_lookup"},

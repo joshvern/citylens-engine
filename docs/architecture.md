@@ -27,6 +27,11 @@ owns the browser UI.
     Authenticated reads bypass shared caches, and
     `Vary` preserves credential-specific representations across CORS. Large
     JSON responses are gzip-compressed.
+    Private lead reviews are generation-bound and operator-scoped. The
+    collection endpoint returns a current-generation coverage receipt plus
+    the authenticated user's reviewed items, enabling a systematic
+    next-unreviewed queue without exposing other users, changing ranks, or
+    presenting review coverage as accuracy.
     When an authenticated user searches one canonical 10-digit BBL that is
     absent from the complete inventory,
     `/v1/parcel-intel/screening/{bbl}` performs a rate-limited exact lookup

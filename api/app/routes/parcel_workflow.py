@@ -312,7 +312,10 @@ def upsert_workflow(
             row=row, manifest=manifest
         )
     return store.upsert_parcel_workflow(
-        app_user_id=auth.app_user_id, bbl=bbl, payload=payload
+        app_user_id=auth.app_user_id,
+        bbl=bbl,
+        payload=payload,
+        entry_source=body.entry_source,
     )
 
 

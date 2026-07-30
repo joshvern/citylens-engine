@@ -92,6 +92,7 @@ def build_product_adoption_report(
     comparison_workflow_users: set[str] = set()
     underwriting_open_users: set[str] = set()
     underwriting_adjustment_users: set[str] = set()
+    underwriting_workflow_users: set[str] = set()
     evidence_review_users: set[str] = set()
     evidence_issue_users: set[str] = set()
     official_dossier_users: set[str] = set()
@@ -160,6 +161,8 @@ def build_product_adoption_report(
                 underwriting_open_users.add(user_id)
             if row_events.get("underwriting_assumptions_changed", 0) > 0:
                 underwriting_adjustment_users.add(user_id)
+            if row_sources.get("workflow_created:underwriting", 0) > 0:
+                underwriting_workflow_users.add(user_id)
             if row_events.get("workflow_evidence_reviewed", 0) > 0:
                 evidence_review_users.add(user_id)
             if row_events.get("workflow_evidence_issue_submitted", 0) > 0:
@@ -270,6 +273,9 @@ def build_product_adoption_report(
     underwriting_adjustments = events.get(
         "underwriting_assumptions_changed", 0
     )
+    underwriting_workflow_creates = sources.get(
+        "workflow_created:underwriting", 0
+    )
     evidence_reviews = events.get("workflow_evidence_reviewed", 0)
     evidence_issue_submissions = events.get(
         "workflow_evidence_issue_submitted", 0
@@ -321,6 +327,14 @@ def build_product_adoption_report(
         and underwriting_adjustments >= minimum_underwriting_adjustments
         and len(underwriting_adjustment_users)
         >= minimum_underwriting_adjustment_users
+    )
+    minimum_underwriting_workflow_creates = 5
+    minimum_underwriting_workflow_users = 3
+    underwriting_handoff_ready = (
+        underwriting_workflow_creates
+        >= minimum_underwriting_workflow_creates
+        and len(underwriting_workflow_users)
+        >= minimum_underwriting_workflow_users
     )
     minimum_evidence_reviews = 10
     minimum_evidence_review_users = 3
@@ -451,6 +465,14 @@ def build_product_adoption_report(
             f"{len(underwriting_adjustment_users)}/"
             f"{minimum_underwriting_adjustment_users} users."
         )
+    if not underwriting_handoff_ready:
+        warnings.append(
+            "Underwriting-to-workflow evidence is still collecting: "
+            f"{underwriting_workflow_creates}/"
+            f"{minimum_underwriting_workflow_creates} canonical creates across "
+            f"{len(underwriting_workflow_users)}/"
+            f"{minimum_underwriting_workflow_users} users."
+        )
     if not evidence_review_engagement_ready:
         warnings.append(
             "Source-bound evidence-review engagement is still collecting: "
@@ -470,7 +492,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v16",
+        "schema_version": "citylens/product-adoption-report@v17",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -759,6 +781,8 @@ def build_product_adoption_report(
             "open_users": len(underwriting_open_users),
             "first_adjustments": underwriting_adjustments,
             "adjustment_users": len(underwriting_adjustment_users),
+            "workflow_creates": underwriting_workflow_creates,
+            "workflow_users": len(underwriting_workflow_users),
             "entry_points": {
                 "underwrite_tab": sources.get(
                     "underwriting_opened:underwrite_tab", 0
@@ -769,6 +793,11 @@ def build_product_adoption_report(
             },
             "directional_adjustment_to_open_ratio": (
                 round(underwriting_adjustments / underwriting_opens, 6)
+                if underwriting_opens > 0
+                else None
+            ),
+            "directional_open_to_workflow_rate": (
+                round(underwriting_workflow_creates / underwriting_opens, 6)
                 if underwriting_opens > 0
                 else None
             ),
@@ -806,6 +835,32 @@ def build_product_adoption_report(
                     "not unique parcels, assumption values, saved scenarios, "
                     "valuations, transactions, lead quality, or model "
                     "accuracy."
+                ),
+            },
+            "handoff_gate": {
+                "status": (
+                    "ready" if underwriting_handoff_ready else "collecting"
+                ),
+                "minimum_workflow_creates": (
+                    minimum_underwriting_workflow_creates
+                ),
+                "minimum_users": minimum_underwriting_workflow_users,
+                "workflow_creates_remaining": max(
+                    0,
+                    minimum_underwriting_workflow_creates
+                    - underwriting_workflow_creates,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_underwriting_workflow_users
+                    - len(underwriting_workflow_users),
+                ),
+                "claim": (
+                    "Canonical underwriting-to-workflow handoffs only; the "
+                    "numerator is transactionally derived and contains no "
+                    "parcel IDs, actions, due dates, assumptions, values, or "
+                    "notes. The directional rate is not valuation accuracy, "
+                    "lead quality, seller intent, or a transaction outcome."
                 ),
             },
         },

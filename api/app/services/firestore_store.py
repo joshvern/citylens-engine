@@ -640,13 +640,14 @@ class FirestoreStore:
         app_user_id: str,
         bbl: str,
         payload: dict[str, Any],
+        entry_source: str = "parcel",
     ) -> dict[str, Any]:
         item, _ = self._write_parcel_workflow(
             app_user_id=app_user_id,
             bbl=bbl,
             payload=payload,
             preserve_active=False,
-            entry_source="parcel",
+            entry_source=entry_source,
         )
         return item
 

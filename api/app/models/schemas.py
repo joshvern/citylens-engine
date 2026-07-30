@@ -2378,6 +2378,95 @@ class ParcelOfficialDossierResponse(BaseModel):
     interpretation: str = Field(min_length=1, max_length=1200)
 
 
+class ParcelComparableSale(BaseModel):
+    """One explainably selected official tax-lot sale."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    address: str = Field(min_length=1, max_length=200)
+    sale_date: date
+    sale_price: float = Field(gt=0)
+    distance_miles: float = Field(ge=0, le=2)
+    lot_area_sqft: float = Field(gt=0)
+    gross_area_sqft: Optional[float] = Field(default=None, gt=0)
+    residential_units: Optional[int] = Field(default=None, ge=0)
+    commercial_units: Optional[int] = Field(default=None, ge=0)
+    total_units: Optional[int] = Field(default=None, ge=0)
+    year_built: Optional[int] = Field(default=None, ge=1600, le=2200)
+    building_class: Optional[str] = Field(default=None, max_length=12)
+    building_class_category: Optional[str] = Field(
+        default=None,
+        max_length=200,
+    )
+    price_per_land_sqft: float = Field(gt=0)
+    price_per_gross_sqft: Optional[float] = Field(default=None, gt=0)
+    match_reasons: list[str] = Field(min_length=1, max_length=3)
+
+
+class ParcelSalesComparableSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    comparable_count: int = Field(ge=1, le=5)
+    median_sale_price: float = Field(gt=0)
+    median_price_per_land_sqft: Optional[float] = Field(default=None, gt=0)
+    median_price_per_gross_sqft: Optional[float] = Field(default=None, gt=0)
+    minimum_sale_price: float = Field(gt=0)
+    maximum_sale_price: float = Field(gt=0)
+
+
+class ParcelSalesComparablesResponse(BaseModel):
+    """Authenticated official-source comparable-transaction screen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["citylens/parcel-sales-comparables@v1"] = (
+        "citylens/parcel-sales-comparables@v1"
+    )
+    status: Literal[
+        "available",
+        "insufficient_source_facts",
+        "insufficient_sales",
+    ]
+    subject_bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    search_zip_code: Optional[str] = Field(default=None, max_length=10)
+    query_window_start: date
+    source_candidate_count: int = Field(ge=0, le=2000)
+    eligible_candidate_count: int = Field(ge=0)
+    source_limit_reached: bool
+    comparables: list[ParcelComparableSale] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+    summary: Optional[ParcelSalesComparableSummary] = None
+    source_name: str = Field(min_length=1, max_length=200)
+    source_dataset_id: Literal["w2pb-icbu"]
+    source_url: str = Field(pattern=r"^https://")
+    source_data_updated_at: Optional[datetime] = None
+    source_retrieved_at: datetime
+    selection_method: str = Field(min_length=1, max_length=1000)
+    interpretation: str = Field(min_length=1, max_length=1400)
+
+    @model_validator(mode="after")
+    def validate_availability_contract(
+        self,
+    ) -> "ParcelSalesComparablesResponse":
+        if self.status == "available":
+            if not self.comparables or self.summary is None:
+                raise ValueError(
+                    "available comparable screens require results and a summary"
+                )
+            if self.summary.comparable_count != len(self.comparables):
+                raise ValueError(
+                    "summary comparable count must match returned results"
+                )
+        elif self.comparables or self.summary is not None:
+            raise ValueError(
+                "unavailable comparable screens cannot contain results"
+            )
+        return self
+
+
 class ParcelSavedSearchFilters(BaseModel):
     """The complete, restorable state of the citywide parcel explorer.
 

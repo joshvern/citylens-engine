@@ -554,6 +554,120 @@ def validate_official_dossier(
     return failures
 
 
+def validate_sales_comparables(
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    expected_bbl: str,
+) -> list[str]:
+    """Validate comparable-sale evidence without retaining transaction facts."""
+
+    failures: list[str] = []
+    _expect(
+        payload.get("schema_version")
+        == "citylens/parcel-sales-comparables@v1",
+        "sales comparables: schema is invalid",
+        failures,
+    )
+    _expect(
+        payload.get("subject_bbl") == expected_bbl,
+        "sales comparables: response BBL does not match the request",
+        failures,
+    )
+    _expect(
+        payload.get("status") == "available",
+        "sales comparables: reference set is unavailable",
+        failures,
+    )
+    comparables_value = payload.get("comparables")
+    comparables = (
+        comparables_value if isinstance(comparables_value, list) else []
+    )
+    _expect(
+        1 <= len(comparables) <= 5,
+        "sales comparables: expected one to five selected transactions",
+        failures,
+    )
+    returned_bbls: set[str] = set()
+    for index, item in enumerate(comparables):
+        valid_item = isinstance(item, dict)
+        _expect(
+            valid_item,
+            f"sales comparables: item {index} is not an object",
+            failures,
+        )
+        if not valid_item:
+            continue
+        item_bbl = item.get("bbl")
+        _expect(
+            isinstance(item_bbl, str)
+            and item_bbl != expected_bbl
+            and item_bbl not in returned_bbls,
+            f"sales comparables: item {index} has an invalid BBL",
+            failures,
+        )
+        if isinstance(item_bbl, str):
+            returned_bbls.add(item_bbl)
+        _expect(
+            isinstance(item.get("sale_price"), (int, float))
+            and not isinstance(item.get("sale_price"), bool)
+            and float(item["sale_price"]) >= 100_000,
+            f"sales comparables: item {index} has nominal consideration",
+            failures,
+        )
+        _expect(
+            isinstance(item.get("distance_miles"), (int, float))
+            and not isinstance(item.get("distance_miles"), bool)
+            and 0 <= float(item["distance_miles"]) <= 2,
+            f"sales comparables: item {index} has invalid distance",
+            failures,
+        )
+        reasons = item.get("match_reasons")
+        _expect(
+            isinstance(reasons, list)
+            and 2 <= len(reasons) <= 3
+            and all(
+                isinstance(reason, str) and bool(reason.strip())
+                for reason in reasons
+            ),
+            f"sales comparables: item {index} lacks selection reasons",
+            failures,
+        )
+    summary = payload.get("summary")
+    _expect(
+        isinstance(summary, dict)
+        and summary.get("comparable_count") == len(comparables),
+        "sales comparables: summary does not reconcile to results",
+        failures,
+    )
+    _expect(
+        payload.get("source_dataset_id") == "w2pb-icbu",
+        "sales comparables: official dataset identity is invalid",
+        failures,
+    )
+    _expect(
+        isinstance(payload.get("source_url"), str)
+        and str(payload["source_url"]).startswith("https://"),
+        "sales comparables: official source URL is invalid",
+        failures,
+    )
+    interpretation = payload.get("interpretation")
+    _expect(
+        isinstance(interpretation, str)
+        and "not an appraisal" in interpretation.lower()
+        and "verify" in interpretation.lower(),
+        "sales comparables: evidence limitations are incomplete",
+        failures,
+    )
+    cache_control = headers.get("cache-control", "").lower()
+    _expect(
+        "private" in cache_control and "no-store" in cache_control,
+        "sales comparables: response is not private, no-store",
+        failures,
+    )
+    return failures
+
+
 def run_checks(
     *,
     api_base: str,
@@ -686,12 +800,41 @@ def run_checks(
                     expected_bbl=OFFICIAL_DOSSIER_SMOKE_BBL,
                 )
             )
+        comparables_url = f"{dossier_url}/sales-comparables"
+        (
+            comparables_status,
+            comparables_headers,
+            comparables_payload,
+            comparables_elapsed,
+        ) = _request_json(
+            comparables_url,
+            smoke_key=smoke_key,
+            timeout=timeout,
+        )
+        timings["sales_comparables"] = comparables_elapsed
+        _expect(
+            comparables_status == 200,
+            (
+                "sales comparables: expected HTTP 200, "
+                f"got {comparables_status}"
+            ),
+            failures,
+        )
+        if comparables_status == 200:
+            failures.extend(
+                validate_sales_comparables(
+                    comparables_payload,
+                    comparables_headers,
+                    expected_bbl=OFFICIAL_DOSSIER_SMOKE_BBL,
+                )
+            )
     except (RuntimeError, TypeError) as exc:
         failures.append(str(exc))
         index_payload = {}
         expected_borough_counts = {}
         map_payload = {}
         dossier_payload = {}
+        comparables_payload = {}
 
     index_quality_gate = index_payload.get("quality_gate")
     index_quality_gate = (
@@ -743,6 +886,24 @@ def run_checks(
             ),
             "ownership_features_updated_at": dossier_payload.get(
                 "ownership_features_updated_at"
+            ),
+        },
+        "sales_comparables": {
+            "verified": (
+                comparables_payload.get("schema_version")
+                == "citylens/parcel-sales-comparables@v1"
+                and comparables_payload.get("status") == "available"
+            ),
+            "comparable_count": len(
+                comparables_payload.get("comparables", [])
+            )
+            if isinstance(comparables_payload.get("comparables"), list)
+            else 0,
+            "source_dataset_id": comparables_payload.get(
+                "source_dataset_id"
+            ),
+            "source_data_updated_at": comparables_payload.get(
+                "source_data_updated_at"
             ),
         },
         "timings_seconds": timings,

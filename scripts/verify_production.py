@@ -1080,8 +1080,11 @@ def validate_workflow_methodology(data: dict[str, Any]) -> list[str]:
     )
     _expect(
         data.get("confidence_level") == 0.95
-        and "Wilson" in str(data.get("uncertainty_semantics") or ""),
-        "workflow methodology: 95% Wilson interval contract is not active",
+        and "Wilson" in str(data.get("uncertainty_semantics") or "")
+        and "omitted from the API" in str(
+            data.get("uncertainty_semantics") or ""
+        ),
+        "workflow methodology: API-level maturity-safe interval contract is not active",
         failures,
     )
     return failures

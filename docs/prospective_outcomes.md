@@ -49,10 +49,13 @@ Rank-band cohort rates use the same fixed horizons and expose their own
 denominators. Raw lifetime milestone counts remain available only as
 operational funnel context.
 
-Every prospective rate includes a two-sided 95% Wilson score interval. The
-product keeps the point estimate hidden until the corresponding fixed-horizon
-denominator reaches 10, then displays the interval beside it. This avoids
-presenting a small cohort as a precise conversion estimate.
+Every eligible prospective rate includes a two-sided 95% Wilson score
+interval. Until the corresponding fixed-horizon denominator reaches 10, both
+the API and product return the point estimate and interval as `null` while
+preserving the numerator, denominator, and `sufficient_denominator=false`.
+Once the threshold is met, the product displays the rate and interval
+together. This prevents a direct API consumer from accidentally presenting a
+small cohort as a precise conversion estimate.
 
 An account with no saved workflow records has no prospective outcome evidence.
 The product shows an activation state instead of rendering empty percentage

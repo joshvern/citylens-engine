@@ -95,6 +95,9 @@ def build_product_adoption_report(
     evidence_review_users: set[str] = set()
     evidence_issue_users: set[str] = set()
     official_dossier_users: set[str] = set()
+    market_explorer_users: set[str] = set()
+    parcel_open_users: set[str] = set()
+    workflow_create_users: set[str] = set()
 
     for row in rows:
         day = _parse_day(row.get("day"))
@@ -115,6 +118,12 @@ def build_product_adoption_report(
         active_user_days += 1
         if isinstance(user_id, str) and user_id:
             active_users.add(user_id)
+            if row_events.get("market_explorer_opened", 0) > 0:
+                market_explorer_users.add(user_id)
+            if row_events.get("parcel_opened", 0) > 0:
+                parcel_open_users.add(user_id)
+            if row_events.get("workflow_created", 0) > 0:
+                workflow_create_users.add(user_id)
             if any(
                 row_events.get(event, 0) > 0
                 for event in (
@@ -235,6 +244,7 @@ def build_product_adoption_report(
         and len(workflow_users) >= minimum_workflow_users
     )
     parcel_opens = events.get("parcel_opened", 0)
+    market_explorer_opens = events.get("market_explorer_opened", 0)
     official_dossier_opens = events.get("official_dossier_opened", 0)
     workflow_creates = events.get("workflow_created", 0)
     saved_view_applies = events.get("saved_view_applied", 0)
@@ -263,6 +273,12 @@ def build_product_adoption_report(
     evidence_reviews = events.get("workflow_evidence_reviewed", 0)
     evidence_issue_submissions = events.get(
         "workflow_evidence_issue_submitted", 0
+    )
+    minimum_market_explorer_opens = 10
+    minimum_market_explorer_users = 3
+    acquisition_funnel_ready = (
+        market_explorer_opens >= minimum_market_explorer_opens
+        and len(market_explorer_users) >= minimum_market_explorer_users
     )
     minimum_official_dossier_opens = 10
     minimum_official_dossier_users = 3
@@ -365,6 +381,13 @@ def build_product_adoption_report(
         )
     if not events:
         warnings.append("No qualifying product-adoption events were observed.")
+    if not acquisition_funnel_ready:
+        warnings.append(
+            "Market-to-diligence funnel evidence is still collecting: "
+            f"{market_explorer_opens}/{minimum_market_explorer_opens} verified "
+            "full-inventory opens across "
+            f"{len(market_explorer_users)}/{minimum_market_explorer_users} users."
+        )
     if not activation_ready:
         warnings.append(
             "Activation evidence is still collecting: "
@@ -447,7 +470,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v15",
+        "schema_version": "citylens/product-adoption-report@v16",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -479,6 +502,86 @@ def build_product_adoption_report(
             if parcel_opens > 0
             else None
         ),
+        "acquisition_funnel": {
+            "market_explorer": {
+                "opened": market_explorer_opens,
+                "users": len(market_explorer_users),
+                "source": "market_explorer_opened:full_inventory",
+            },
+            "parcel_review": {
+                "opened": parcel_opens,
+                "users": len(parcel_open_users),
+                "market_users_reached": len(
+                    market_explorer_users & parcel_open_users
+                ),
+            },
+            "comparison": {
+                "opened": comparison_opens,
+                "users": len(comparison_users),
+                "market_users_reached": len(
+                    market_explorer_users & comparison_users
+                ),
+            },
+            "workflow_create": {
+                "created": workflow_creates,
+                "users": len(workflow_create_users),
+                "market_users_reached": len(
+                    market_explorer_users & workflow_create_users
+                ),
+            },
+            "same_window_user_rates": {
+                "explorer_to_parcel_review": (
+                    round(
+                        len(market_explorer_users & parcel_open_users)
+                        / len(market_explorer_users),
+                        6,
+                    )
+                    if acquisition_funnel_ready
+                    else None
+                ),
+                "explorer_to_comparison": (
+                    round(
+                        len(market_explorer_users & comparison_users)
+                        / len(market_explorer_users),
+                        6,
+                    )
+                    if acquisition_funnel_ready
+                    else None
+                ),
+                "explorer_to_workflow_create": (
+                    round(
+                        len(market_explorer_users & workflow_create_users)
+                        / len(market_explorer_users),
+                        6,
+                    )
+                    if acquisition_funnel_ready
+                    else None
+                ),
+            },
+            "evidence_gate": {
+                "status": "ready" if acquisition_funnel_ready else "collecting",
+                "minimum_opens": minimum_market_explorer_opens,
+                "minimum_users": minimum_market_explorer_users,
+                "opens_remaining": max(
+                    0,
+                    minimum_market_explorer_opens - market_explorer_opens,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_market_explorer_users
+                    - len(market_explorer_users),
+                ),
+                "claim": (
+                    "Directional same-window product adoption only. A market "
+                    "open is counted after the authenticated full inventory is "
+                    "verified. The aggregate contains no parcel, filter, "
+                    "geography, inventory, session, account, or source-fact "
+                    "values. Rates are withheld below the evidence gate and "
+                    "do not establish sequence, lead quality, seller intent, "
+                    "transaction outcomes, or model accuracy."
+                ),
+            },
+        },
         "official_dossier_engagement": {
             "opened": official_dossier_opens,
             "users": len(official_dossier_users),

@@ -871,6 +871,24 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
     app.dependency_overrides[parcel_workflow.get_store] = lambda: store
     client = TestClient(app)
 
+    market_opened = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "market_explorer_opened",
+            "source": "full_inventory",
+        },
+    )
+    assert market_opened.status_code == 204
+    assert market_opened.headers["cache-control"] == "private, no-store"
+    assert store.product_events == [
+        {
+            "app_user_id": "user-adoption",
+            "event": "market_explorer_opened",
+            "source": "full_inventory",
+        }
+    ]
+
     response = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -881,13 +899,11 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
     )
     assert response.status_code == 204
     assert response.headers["cache-control"] == "private, no-store"
-    assert store.product_events == [
-        {
-            "app_user_id": "user-adoption",
-            "event": "parcel_opened",
-            "source": "ranking",
-        }
-    ]
+    assert store.product_events[-1] == {
+        "app_user_id": "user-adoption",
+        "event": "parcel_opened",
+        "source": "ranking",
+    }
     dossier_opened = client.post(
         "/v1/parcel-intel/product-events",
         json={
@@ -1109,6 +1125,15 @@ def test_product_event_contract_is_value_minimized(auth_override) -> None:
         },
     )
     assert mismatched.status_code == 422
+    mismatched_market = client.post(
+        "/v1/parcel-intel/product-events",
+        json={
+            "schema_version": "citylens/parcel-product-event@v1",
+            "event": "market_explorer_opened",
+            "source": "map",
+        },
+    )
+    assert mismatched_market.status_code == 422
     mismatched_dossier = client.post(
         "/v1/parcel-intel/product-events",
         json={

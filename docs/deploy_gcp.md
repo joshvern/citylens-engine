@@ -891,12 +891,16 @@ Generate the aggregate operator report with:
   --days 30
 ```
 
-The v13 report includes aggregate canonical workflow and saved-view inventory,
-an activation-evidence gate, source-bound review engagement, and a
+The v16 report includes aggregate canonical workflow and saved-view inventory,
+an activation-evidence gate, a maturity-gated market-to-diligence funnel,
+source-bound review engagement, and a
 saved-view-reuse evidence gate, plus a saved-thesis-monitor gate and
 directional saved-screen comparison opens. No saved-view identity, filter,
 threshold, search, membership, generation, count, overlap/union measure, or
-compared value is collected. Activation
+compared value is collected. The market funnel begins only after the browser
+verifies the complete authenticated inventory; it contains no inventory size,
+filter, geography, parcel, session, account, or source-fact value. Its rates
+remain hidden below 10 verified opens across three users. Activation
 remains `collecting` until at least 30 workflow records exist across at least
 three users. Saved-view reuse remains `collecting` until at least 10
 best-effort apply events exist across at least three users. The source-bound
@@ -931,7 +935,7 @@ real workflow failures.
 
 Production monitors that authenticate as normal users must be classified on
 their Firestore user document with
-`adoption_measurement_class=synthetic_monitor`. The v15 reporter resolves that
+`adoption_measurement_class=synthetic_monitor`. The v16 reporter resolves that
 server-governed class, excludes the actor before product-event, workflow, and
 saved-view aggregation, and emits only aggregate exclusion counts. Do not add a
 client-provided "synthetic" event flag: allowing callers to classify their own

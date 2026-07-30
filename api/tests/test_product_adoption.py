@@ -292,7 +292,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v15"
+    assert report["schema_version"] == "citylens/product-adoption-report@v16"
     assert report["measurement_governance"] == {
         "synthetic_actor_class": "synthetic_monitor",
         "synthetic_actors_excluded": 0,
@@ -466,6 +466,17 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["active_users"] == 0
     assert report["total_events"] == 0
     assert report["parcel_open_to_workflow_create_rate"] is None
+    assert report["acquisition_funnel"]["market_explorer"]["opened"] == 0
+    assert report["acquisition_funnel"]["market_explorer"]["users"] == 0
+    assert report["acquisition_funnel"]["same_window_user_rates"] == {
+        "explorer_to_parcel_review": None,
+        "explorer_to_comparison": None,
+        "explorer_to_workflow_create": None,
+    }
+    assert (
+        report["acquisition_funnel"]["evidence_gate"]["status"]
+        == "collecting"
+    )
     assert report["decision_audit_engagement"]["opened"] == 0
     assert report["decision_audit_engagement"]["parcel_open_to_audit_rate"] is None
     assert (
@@ -507,6 +518,83 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     assert report["saved_view_reuse"]["evidence_gate"]["status"] == "collecting"
     assert report["activation_evidence_gate"]["status"] == "collecting"
     assert any("No qualifying" in warning for warning in report["warnings"])
+
+
+def test_acquisition_funnel_requires_mature_verified_market_activation() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": "user-a",
+                "day": "2026-07-24",
+                "events": {
+                    "market_explorer_opened": 4,
+                    "parcel_opened": 1,
+                    "comparison_opened": 1,
+                    "workflow_created": 1,
+                },
+                "sources": {
+                    "market_explorer_opened:full_inventory": 4,
+                    "parcel_opened:map": 1,
+                    "comparison_opened:comparison": 1,
+                    "workflow_created:comparison": 1,
+                },
+            },
+            {
+                "_user_id": "user-b",
+                "day": "2026-07-24",
+                "events": {
+                    "market_explorer_opened": 3,
+                    "parcel_opened": 1,
+                    "comparison_opened": 1,
+                },
+                "sources": {
+                    "market_explorer_opened:full_inventory": 3,
+                    "parcel_opened:ranking": 1,
+                    "comparison_opened:comparison": 1,
+                },
+            },
+            {
+                "_user_id": "user-c",
+                "day": "2026-07-24",
+                "events": {"market_explorer_opened": 3},
+                "sources": {
+                    "market_explorer_opened:full_inventory": 3,
+                },
+            },
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    funnel = report["acquisition_funnel"]
+    assert funnel["market_explorer"] == {
+        "opened": 10,
+        "users": 3,
+        "source": "market_explorer_opened:full_inventory",
+    }
+    assert funnel["parcel_review"] == {
+        "opened": 2,
+        "users": 2,
+        "market_users_reached": 2,
+    }
+    assert funnel["comparison"] == {
+        "opened": 2,
+        "users": 2,
+        "market_users_reached": 2,
+    }
+    assert funnel["workflow_create"] == {
+        "created": 1,
+        "users": 1,
+        "market_users_reached": 1,
+    }
+    assert funnel["same_window_user_rates"] == {
+        "explorer_to_parcel_review": 0.666667,
+        "explorer_to_comparison": 0.666667,
+        "explorer_to_workflow_create": 0.333333,
+    }
+    assert funnel["evidence_gate"]["status"] == "ready"
+    assert funnel["evidence_gate"]["opens_remaining"] == 0
+    assert funnel["evidence_gate"]["users_remaining"] == 0
+    assert "parcel" not in json.dumps(funnel["market_explorer"])
 
 
 def test_activation_gate_requires_records_across_multiple_users() -> None:
@@ -953,10 +1041,12 @@ def test_synthetic_monitor_is_excluded_before_aggregation() -> None:
                 "_user_id": "synthetic-user",
                 "day": "2026-07-27",
                 "events": {
+                    "market_explorer_opened": 99,
                     "parcel_opened": 99,
                     "thesis_composer_applied": 99,
                 },
                 "sources": {
+                    "market_explorer_opened:full_inventory": 99,
                     "parcel_opened:map": 99,
                     "thesis_composer_applied:thesis_composer": 99,
                 },
@@ -985,6 +1075,8 @@ def test_synthetic_monitor_is_excluded_before_aggregation() -> None:
     assert report["events"] == {"parcel_opened": 2}
     assert report["workflow_inventory"]["records"] == 1
     assert report["saved_view_inventory"]["records"] == 1
+    assert report["acquisition_funnel"]["market_explorer"]["opened"] == 0
+    assert report["acquisition_funnel"]["market_explorer"]["users"] == 0
     assert report["thesis_composer_engagement"]["applied"] == 0
     assert report["measurement_governance"] == {
         "synthetic_actor_class": "synthetic_monitor",

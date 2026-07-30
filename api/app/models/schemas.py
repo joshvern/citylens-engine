@@ -1287,7 +1287,7 @@ class ParcelProductEventCreate(BaseModel):
 
 class ParcelWorkflowUpdate(BaseModel):
     borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
-    entry_source: Literal["parcel", "underwriting"] = Field(
+    entry_source: Literal["parcel", "underwriting", "decision_audit"] = Field(
         default="parcel",
         exclude=True,
         description=(

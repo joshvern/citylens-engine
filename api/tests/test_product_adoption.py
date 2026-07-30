@@ -47,7 +47,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_thesis_baseline_created": 1,
                     "saved_thesis_baseline_advanced": 1,
                     "saved_thesis_changes_opened": 2,
-                    "workflow_created": 2,
+                    "workflow_created": 3,
                     "workflow_evidence_reviewed": 2,
                     "workflow_evidence_issue_submitted": 1,
                 },
@@ -72,6 +72,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                     "saved_thesis_baseline_advanced:saved_views": 1,
                     "saved_thesis_changes_opened:saved_views": 2,
                     "workflow_created:comparison": 1,
+                    "workflow_created:decision_audit": 1,
                     "workflow_created:underwriting": 1,
                     "workflow_evidence_reviewed:workflow": 2,
                     "workflow_evidence_issue_submitted:workflow": 1,
@@ -181,7 +182,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["active_users"] == 2
     assert report["active_user_days"] == 2
-    assert report["total_events"] == 40
+    assert report["total_events"] == 41
     assert report["events"] == {
         "comparison_opened": 3,
         "decision_audit_opened": 3,
@@ -196,20 +197,23 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
         "thesis_composer_applied": 3,
         "underwriting_assumptions_changed": 2,
         "underwriting_opened": 3,
-        "workflow_created": 2,
+        "workflow_created": 3,
         "workflow_evidence_issue_submitted": 1,
         "workflow_evidence_reviewed": 3,
         "workflow_updated": 2,
     }
-    assert report["parcel_open_to_workflow_create_rate"] == 0.5
+    assert report["parcel_open_to_workflow_create_rate"] == 0.75
     assert report["decision_audit_engagement"] == {
         "opened": 3,
         "users": 2,
+        "workflow_creates": 1,
+        "workflow_users": 1,
         "entry_points": {
             "decision_posture": 1,
             "audit_tab": 2,
         },
         "parcel_open_to_audit_rate": 0.75,
+        "audit_to_workflow_create_rate": 0.333333,
         "evidence_gate": {
             "status": "collecting",
             "minimum_opens": 10,
@@ -220,6 +224,20 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
                 "Directional evidence-audit engagement only; opens are "
                 "best-effort aggregate counters, not unique parcels, "
                 "completed diligence, lead quality, or model accuracy."
+            ),
+        },
+        "handoff_gate": {
+            "status": "collecting",
+            "minimum_workflow_creates": 5,
+            "minimum_users": 3,
+            "workflow_creates_remaining": 4,
+            "users_remaining": 2,
+            "claim": (
+                "Canonical decision-audit-to-workflow handoffs only; the "
+                "numerator is transactionally derived and contains no "
+                "parcel IDs, actions, due dates, source facts, values, or "
+                "notes. The directional rate is not diligence completion, "
+                "lead quality, seller intent, or model accuracy."
             ),
         },
     }
@@ -310,7 +328,7 @@ def test_report_is_aggregate_only_and_uses_explicit_window() -> None:
     }
     assert report["model_accuracy_claim"] is False
     assert report["excluded_or_invalid_rows"] == 1
-    assert report["schema_version"] == "citylens/product-adoption-report@v17"
+    assert report["schema_version"] == "citylens/product-adoption-report@v18"
     assert report["measurement_governance"] == {
         "synthetic_actor_class": "synthetic_monitor",
         "synthetic_actors_excluded": 0,
@@ -497,8 +515,20 @@ def test_report_handles_empty_window_without_false_rate() -> None:
     )
     assert report["decision_audit_engagement"]["opened"] == 0
     assert report["decision_audit_engagement"]["parcel_open_to_audit_rate"] is None
+    assert report["decision_audit_engagement"]["workflow_creates"] == 0
+    assert report["decision_audit_engagement"]["workflow_users"] == 0
+    assert (
+        report["decision_audit_engagement"][
+            "audit_to_workflow_create_rate"
+        ]
+        is None
+    )
     assert (
         report["decision_audit_engagement"]["evidence_gate"]["status"]
+        == "collecting"
+    )
+    assert (
+        report["decision_audit_engagement"]["handoff_gate"]["status"]
         == "collecting"
     )
     assert report["comparison_engagement"]["opened"] == 0
@@ -888,6 +918,40 @@ def test_underwriting_gate_requires_opens_and_adjustments_across_users() -> None
     assert engagement["evidence_gate"]["open_users_remaining"] == 0
     assert engagement["evidence_gate"]["first_adjustments_remaining"] == 0
     assert engagement["evidence_gate"]["adjustment_users_remaining"] == 0
+    assert engagement["handoff_gate"]["status"] == "ready"
+    assert engagement["handoff_gate"]["workflow_creates_remaining"] == 0
+    assert engagement["handoff_gate"]["users_remaining"] == 0
+
+
+def test_decision_audit_handoff_requires_canonical_creates_across_users() -> None:
+    report = build_product_adoption_report(
+        [
+            {
+                "_user_id": f"user-{index % 3}",
+                "day": "2026-07-24",
+                "events": {
+                    "decision_audit_opened": 1,
+                    "workflow_created": 1 if index < 5 else 0,
+                },
+                "sources": {
+                    "decision_audit_opened:audit_tab": 1,
+                    "workflow_created:decision_audit": (
+                        1 if index < 5 else 0
+                    ),
+                },
+            }
+            for index in range(10)
+        ],
+        as_of=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    engagement = report["decision_audit_engagement"]
+    assert engagement["opened"] == 10
+    assert engagement["users"] == 3
+    assert engagement["workflow_creates"] == 5
+    assert engagement["workflow_users"] == 3
+    assert engagement["audit_to_workflow_create_rate"] == 0.5
+    assert engagement["evidence_gate"]["status"] == "ready"
     assert engagement["handoff_gate"]["status"] == "ready"
     assert engagement["handoff_gate"]["workflow_creates_remaining"] == 0
     assert engagement["handoff_gate"]["users_remaining"] == 0

@@ -977,6 +977,10 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
                 owner_portfolio_lot_count=8,
                 owner_portfolio_borough_count=1,
                 owner_portfolio_candidate_count=4,
+                assemblage_id="brooklyn-site-1" if i < 2 else None,
+                assemblage_lot_count=2 if i < 2 else None,
+                assemblage_combined_lot_area_sqft=12_500 if i < 2 else None,
+                assemblage_combined_buildable_sqft=50_000 if i < 2 else None,
             )
             for i in range(30)
         ],
@@ -1045,6 +1049,13 @@ def test_parcel_intel_map_combines_boroughs_and_caps_anonymous(monkeypatch) -> N
         row["nearest_transit_station_distance_m"] is None
         for row in body["rows"]
     )
+    # Stable site identity and physical totals are public-safe. They let the
+    # explorer collapse adjacent tax lots without exposing owner/member data.
+    assert body["rows"][0]["assemblage_id"] == "brooklyn-site-1"
+    assert body["rows"][0]["assemblage_lot_count"] == 2
+    assert body["rows"][0]["assemblage_combined_lot_area_sqft"] == 12_500
+    assert body["rows"][0]["assemblage_combined_buildable_sqft"] == 50_000
+    assert "assemblage_member_bbls" not in body["rows"][0]
     assert "s-maxage=600" in response.headers["cache-control"]
     assert response.headers["x-citylens-inventory-scope"] == "public_preview"
     assert response.headers["x-citylens-inventory-count"] == "50"

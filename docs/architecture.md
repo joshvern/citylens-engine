@@ -22,7 +22,9 @@ owns the browser UI.
     authenticated users receive the complete 5,000-row citywide inventory
     selected under the manifest's versioned borough-floor policy. The compact
     map returns a machine-verifiable access scope, inventory receipt, and
-    immutable feed generation. Authenticated reads bypass shared caches, and
+    immutable feed generation. It also retains a stable assemblage site ID and
+    combined physical totals while leaving member BBLs in the detail contract.
+    Authenticated reads bypass shared caches, and
     `Vary` preserves credential-specific representations across CORS. Large
     JSON responses are gzip-compressed.
     When an authenticated user searches one canonical 10-digit BBL that is

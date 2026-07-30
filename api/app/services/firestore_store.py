@@ -48,6 +48,7 @@ PRODUCT_EVENT_RETENTION_DAYS = 90
 PRODUCT_EVENT_DAILY_LIMIT = 1_000
 PILOT_REQUEST_RETENTION_DAYS = 365
 EVIDENCE_ISSUE_RETENTION_DAYS = 730
+LEAD_REVIEW_RETENTION_DAYS = 730
 _SAVED_VIEW_GENERATION_RE = re.compile(
     r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
 )
@@ -55,6 +56,20 @@ _SAVED_VIEW_GENERATION_RE = re.compile(
 
 def _hash_api_key(plaintext: str) -> str:
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def parcel_lead_review_id(*, feed_generation: str, bbl: str) -> str:
+    """Return an opaque, deterministic ID for one user/feed/parcel review.
+
+    The user is already the parent document, so it is deliberately omitted
+    from the hash input. Determinism makes repeated submissions idempotent
+    without putting a BBL or feed timestamp in the Firestore document path.
+    """
+
+    digest = hashlib.sha256(
+        f"{feed_generation}:{bbl}".encode("utf-8")
+    ).hexdigest()
+    return f"plr_{digest[:32]}"
 
 
 def is_user_api_key(token: str) -> bool:
@@ -601,6 +616,144 @@ class FirestoreStore:
                 docs = docs[: int(limit)]
 
             return [snap.to_dict() or {} for snap in docs], next_cursor
+
+        return retry_transient(_op)
+
+    # ---------- Parcel lead relevance reviews ----------
+
+    def _parcel_lead_reviews_col(self, app_user_id: str):
+        return (
+            self.client.collection(self.users_collection)
+            .document(app_user_id)
+            .collection("parcel_lead_reviews")
+        )
+
+    def get_parcel_lead_review(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        feed_generation: str,
+    ) -> dict[str, Any] | None:
+        review_id = parcel_lead_review_id(
+            feed_generation=feed_generation,
+            bbl=bbl,
+        )
+
+        def _op() -> dict[str, Any] | None:
+            snap = (
+                self._parcel_lead_reviews_col(app_user_id)
+                .document(review_id)
+                .get()
+            )
+            return (snap.to_dict() or {}) if snap.exists else None
+
+        return retry_transient(_op)
+
+    def upsert_parcel_lead_review(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        feed_generation: str,
+        verdict: str,
+        reason_codes: list[str],
+        snapshot: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        """Write one auditable review without mutating workflow or rank.
+
+        A feed generation gets its own current document and append-only event
+        history. An identical retry is a no-op and preserves timestamps.
+        """
+
+        review_id = parcel_lead_review_id(
+            feed_generation=feed_generation,
+            bbl=bbl,
+        )
+        ref = self._parcel_lead_reviews_col(app_user_id).document(review_id)
+        event_id = uuid.uuid4().hex
+        normalized_reasons = sorted(set(reason_codes))
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> tuple[dict[str, Any], str]:
+            now = utcnow()
+            usage_ref = (
+                self.client.collection(self.users_collection)
+                .document(app_user_id)
+                .collection("product_usage_days")
+                .document(now.date().isoformat())
+            )
+            snap = ref.get(transaction=transaction)
+            usage_snap = usage_ref.get(transaction=transaction)
+            existing = (snap.to_dict() or {}) if snap.exists else {}
+            existing_usage = (
+                (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            )
+            if (
+                existing.get("verdict") == verdict
+                and sorted(existing.get("reason_codes") or [])
+                == normalized_reasons
+            ):
+                return existing, "unchanged"
+
+            revision = int(existing.get("revision") or 0) + 1
+            doc = {
+                "schema_version": "citylens/parcel-lead-review@v1",
+                "review_id": review_id,
+                "bbl": bbl,
+                "feed_generation": feed_generation,
+                "verdict": verdict,
+                "reason_codes": normalized_reasons,
+                "citywide_rank": snapshot.get("citywide_rank"),
+                "acquisition_rank": snapshot.get("acquisition_rank"),
+                "priority_tier": snapshot.get("priority_tier"),
+                "opportunity_category": snapshot.get(
+                    "opportunity_category"
+                ),
+                "created_at": existing.get("created_at") or now,
+                "updated_at": now,
+                "revision": revision,
+                "expires_at": now
+                + timedelta(days=LEAD_REVIEW_RETENTION_DAYS),
+            }
+            transaction.set(ref, doc)
+            transaction.set(
+                ref.collection("lead_review_events").document(event_id),
+                {
+                    "schema_version": (
+                        "citylens/parcel-lead-review-event@v1"
+                    ),
+                    "event_id": event_id,
+                    "review_id": review_id,
+                    "occurred_at": now,
+                    "revision": revision,
+                    "from_verdict": existing.get("verdict"),
+                    "to_verdict": verdict,
+                    "from_reason_codes": sorted(
+                        existing.get("reason_codes") or []
+                    ),
+                    "to_reason_codes": normalized_reasons,
+                    "expires_at": now
+                    + timedelta(days=LEAD_REVIEW_RETENTION_DAYS),
+                },
+            )
+            usage_payload = _product_usage_day_payload(
+                existing=existing_usage,
+                event=(
+                    "lead_review_created"
+                    if not existing
+                    else "lead_review_updated"
+                ),
+                source="lead_review",
+                occurred_at=now,
+            )
+            if usage_payload is not None:
+                transaction.set(usage_ref, usage_payload)
+            return doc, "created" if not existing else "updated"
+
+        def _op() -> tuple[dict[str, Any], str]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
 
         return retry_transient(_op)
 

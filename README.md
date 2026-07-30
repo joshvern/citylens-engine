@@ -98,6 +98,16 @@ Current pinned release tag:
   responses vary on authentication credentials; authenticated responses are
   private/no-store so a cached 125-row preview cannot be reused as the
   signed-in inventory. Large JSON responses are gzip-compressed.
+- Authenticated users may record a concise lead-relevance call for the current
+  published ranking through
+  `GET|PUT /v1/parcel-intel/lead-reviews/{bbl}`. Each private review is bound
+  to the immutable feed generation and the server's rank/opportunity snapshot,
+  accepts only a controlled `pursue`, `watch`, `pass`, or `unclear` verdict
+  with compatible reason codes, and rejects a stale generation. Identical
+  retries are no-ops; changes append a revision event and expire after 730
+  days. Reviews never change a score, rank, workflow stage, or outcome. They
+  are selection-biased practitioner relevance evidence—not model accuracy,
+  seller intent, an appraisal, or a realized acquisition outcome.
 - Selected-parcel decision audits may include
   `citylens_historical_borough_benchmark_receipt@v1` plus the clicked
   parcel's reconciled borough cohort. The API requires the five borough
@@ -715,8 +725,12 @@ query selects only
 status, plan, and creation time, raises a workflow warning when requests await
 review, and never reads contact fields, request IDs, boroughs, or workflow
 text. Do not publish raw `product_usage_days`, `parcel_workflow`,
-`parcel_saved_searches`, or `pilot_requests` documents, and do not use this
-report as a model-accuracy or lead-quality claim.
+`parcel_lead_reviews`, `parcel_saved_searches`, or `pilot_requests` documents.
+Lead-review create/update counters contain no verdict, reason, parcel, rank,
+generation, or workflow state. They measure feature use only; the private
+reviews themselves require a governed, bias-aware analysis before any product
+quality conclusion. Do not use this report as a model-accuracy or lead-quality
+claim.
 
 ## Pilot intake operations
 

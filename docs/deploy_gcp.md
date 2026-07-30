@@ -829,6 +829,37 @@ gcloud firestore fields ttls list \
   --format='table(name,ttlConfig.state)'
 ```
 
+Enable the separate 730-day boundary for private lead relevance reviews and
+their append-only revision events. Firestore does not cascade-delete child
+subcollections when a parent expires, so both collection groups require an
+explicit policy:
+
+```bash
+gcloud firestore fields ttls update expires_at \
+  --collection-group=parcel_lead_reviews \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --enable-ttl
+
+gcloud firestore fields ttls update expires_at \
+  --collection-group=lead_review_events \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --enable-ttl
+
+gcloud firestore fields ttls list \
+  --collection-group=parcel_lead_reviews \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --format='table(name,ttlConfig.state)'
+
+gcloud firestore fields ttls list \
+  --collection-group=lead_review_events \
+  --database='(default)' \
+  --project="<PROJECT_ID>" \
+  --format='table(name,ttlConfig.state)'
+```
+
 Create the composite index used by the newest-first, status-filtered admin
 triage queue:
 

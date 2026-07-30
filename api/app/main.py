@@ -19,6 +19,7 @@ from .routes.demo import router as demo_router
 from .routes.health import router as health_router
 from .routes.me import router as me_router
 from .routes.parcel_intel import router as parcel_intel_router
+from .routes.parcel_reviews import router as parcel_reviews_router
 from .routes.parcel_workflow import router as parcel_workflow_router
 from .routes.pilot_requests import router as pilot_requests_router
 from .routes.run_options import router as run_options_router
@@ -35,6 +36,7 @@ from .services.settings import DEFAULT_CORS_ORIGINS, Settings, get_settings
 _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
 _PRIVATE_PARCEL_ROUTE_PREFIXES = (
     "/v1/parcel-intel/evidence-issues",
+    "/v1/parcel-intel/lead-reviews",
     "/v1/parcel-intel/official-parcel",
     "/v1/parcel-intel/product-events",
     "/v1/parcel-intel/resolve-address",
@@ -298,6 +300,7 @@ async def validation_exception_handler(
 app.include_router(health_router, prefix="/v1")
 app.include_router(demo_router, prefix="/v1")
 app.include_router(parcel_intel_router, prefix="/v1")
+app.include_router(parcel_reviews_router, prefix="/v1")
 app.include_router(parcel_workflow_router, prefix="/v1")
 app.include_router(pilot_requests_router, prefix="/v1")
 app.include_router(run_options_router, prefix="/v1")

@@ -1346,6 +1346,141 @@ ParcelProductEventSource = Literal[
     "decision_peers",
 ]
 
+ParcelLeadReviewVerdict = Literal["pursue", "watch", "pass", "unclear"]
+
+ParcelLeadReviewReason = Literal[
+    "strong_capacity",
+    "strategic_location",
+    "ownership_opportunity",
+    "market_signal",
+    "needs_diligence",
+    "timing_uncertain",
+    "active_or_completed_project",
+    "insufficient_capacity",
+    "zoning_or_site_constraint",
+    "ownership_or_assembly_complexity",
+    "pricing_or_basis",
+    "data_quality_issue",
+    "not_development_site",
+    "source_conflict",
+    "missing_facts",
+    "other",
+]
+
+_PARCEL_LEAD_REVIEW_REASONS: dict[str, set[str]] = {
+    "pursue": {
+        "strong_capacity",
+        "strategic_location",
+        "ownership_opportunity",
+        "market_signal",
+        "other",
+    },
+    "watch": {
+        "needs_diligence",
+        "timing_uncertain",
+        "ownership_or_assembly_complexity",
+        "source_conflict",
+        "missing_facts",
+        "other",
+    },
+    "pass": {
+        "active_or_completed_project",
+        "insufficient_capacity",
+        "zoning_or_site_constraint",
+        "ownership_or_assembly_complexity",
+        "pricing_or_basis",
+        "data_quality_issue",
+        "not_development_site",
+        "other",
+    },
+    "unclear": {
+        "needs_diligence",
+        "source_conflict",
+        "missing_facts",
+        "other",
+    },
+}
+
+
+class ParcelLeadReviewRequest(BaseModel):
+    """One private practitioner judgment bound to an immutable feed.
+
+    This is relevance feedback, not a workflow outcome or an instruction to
+    mutate the published rank. The server owns the parcel/rank snapshot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["citylens/parcel-lead-review-request@v1"]
+    expected_feed_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    verdict: ParcelLeadReviewVerdict
+    reason_codes: list[ParcelLeadReviewReason] = Field(
+        min_length=1,
+        max_length=3,
+    )
+
+    @model_validator(mode="after")
+    def validate_reasons(self) -> "ParcelLeadReviewRequest":
+        if len(set(self.reason_codes)) != len(self.reason_codes):
+            raise PydanticCustomError(
+                "duplicate_lead_review_reason",
+                "reason_codes must not contain duplicates",
+            )
+        allowed = _PARCEL_LEAD_REVIEW_REASONS[self.verdict]
+        invalid = sorted(set(self.reason_codes) - allowed)
+        if invalid:
+            raise PydanticCustomError(
+                "invalid_lead_review_reason",
+                "reason_codes {reasons} are invalid for verdict {verdict}",
+                {
+                    "reasons": ", ".join(invalid),
+                    "verdict": self.verdict,
+                },
+            )
+        return self
+
+
+class ParcelLeadReview(BaseModel):
+    schema_version: Literal["citylens/parcel-lead-review@v1"]
+    review_id: str = Field(pattern=r"^plr_[a-f0-9]{32}$")
+    bbl: str = Field(pattern=r"^[1-5][0-9]{9}$")
+    feed_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    verdict: ParcelLeadReviewVerdict
+    reason_codes: list[ParcelLeadReviewReason] = Field(
+        min_length=1,
+        max_length=3,
+    )
+    citywide_rank: Optional[int] = Field(default=None, ge=1)
+    acquisition_rank: Optional[int] = Field(default=None, ge=1)
+    priority_tier: Optional[
+        Literal["highest", "high", "medium", "watch"]
+    ] = None
+    opportunity_category: Optional[
+        Literal[
+            "vacant_site",
+            "ground_up_candidate",
+            "conversion_or_overbuilt",
+            "active_project",
+            "completed_project",
+        ]
+    ] = None
+    created_at: datetime
+    updated_at: datetime
+    revision: int = Field(ge=1)
+
+
+class ParcelLeadReviewState(BaseModel):
+    schema_version: Literal["citylens/parcel-lead-review-state@v1"]
+    current_feed_generation: str = Field(
+        pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$"
+    )
+    review: Optional[ParcelLeadReview] = None
+
+
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
     "market_explorer_opened": {"full_inventory"},
     "parcel_opened": {

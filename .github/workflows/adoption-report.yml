@@ -144,7 +144,10 @@ jobs:
           print(
               f"- Decision-audit opens: `{audit['opened']}` across "
               f"`{audit['users']}` user(s) "
-              f"(`{audit['evidence_gate']['status']}`)"
+              f"(`{audit['evidence_gate']['status']}`); "
+              f"`{audit['workflow_creates']}` canonical workflow create(s) "
+              f"across `{audit['workflow_users']}` user(s) "
+              f"(`{audit['handoff_gate']['status']}`)"
           )
           print(
               f"- Underwriting: `{underwriting['opened']}` opens and "
@@ -190,6 +193,9 @@ jobs:
           ]
           funnel_gate = report["acquisition_funnel"]["evidence_gate"]
           audit_gate = report["decision_audit_engagement"]["evidence_gate"]
+          audit_handoff_gate = report["decision_audit_engagement"][
+              "handoff_gate"
+          ]
           underwriting_gate = report["underwriting_engagement"][
               "evidence_gate"
           ]
@@ -238,6 +244,13 @@ jobs:
                   "::warning title=Decision-audit engagement is collecting::"
                   f"{audit_gate['opens_remaining']} open event(s) and "
                   f"{audit_gate['users_remaining']} user(s) remain."
+              )
+          if audit_handoff_gate["status"] != "ready":
+              print(
+                  "::warning title=Decision-audit-to-workflow evidence is collecting::"
+                  f"{audit_handoff_gate['workflow_creates_remaining']} "
+                  "canonical workflow create(s) and "
+                  f"{audit_handoff_gate['users_remaining']} user(s) remain."
               )
           if underwriting_gate["status"] != "ready":
               print(

@@ -87,6 +87,7 @@ def build_product_adoption_report(
     saved_thesis_baseline_advanced_users: set[str] = set()
     saved_thesis_change_review_users: set[str] = set()
     decision_audit_users: set[str] = set()
+    decision_audit_workflow_users: set[str] = set()
     thesis_composer_users: set[str] = set()
     comparison_users: set[str] = set()
     comparison_workflow_users: set[str] = set()
@@ -151,6 +152,8 @@ def build_product_adoption_report(
                 saved_thesis_change_review_users.add(user_id)
             if row_events.get("decision_audit_opened", 0) > 0:
                 decision_audit_users.add(user_id)
+            if row_sources.get("workflow_created:decision_audit", 0) > 0:
+                decision_audit_workflow_users.add(user_id)
             if row_events.get("thesis_composer_applied", 0) > 0:
                 thesis_composer_users.add(user_id)
             if row_events.get("comparison_opened", 0) > 0:
@@ -264,6 +267,9 @@ def build_product_adoption_report(
         "saved_thesis_changes_opened", 0
     )
     decision_audit_opens = events.get("decision_audit_opened", 0)
+    decision_audit_workflow_creates = sources.get(
+        "workflow_created:decision_audit", 0
+    )
     thesis_composer_applies = events.get("thesis_composer_applied", 0)
     comparison_opens = events.get("comparison_opened", 0)
     comparison_workflow_creates = sources.get(
@@ -297,6 +303,14 @@ def build_product_adoption_report(
     decision_audit_engagement_ready = (
         decision_audit_opens >= minimum_decision_audit_opens
         and len(decision_audit_users) >= minimum_decision_audit_users
+    )
+    minimum_decision_audit_workflow_creates = 5
+    minimum_decision_audit_workflow_users = 3
+    decision_audit_handoff_ready = (
+        decision_audit_workflow_creates
+        >= minimum_decision_audit_workflow_creates
+        and len(decision_audit_workflow_users)
+        >= minimum_decision_audit_workflow_users
     )
     minimum_thesis_composer_applies = 10
     minimum_thesis_composer_users = 3
@@ -432,6 +446,14 @@ def build_product_adoption_report(
             f"{decision_audit_opens}/{minimum_decision_audit_opens} opens across "
             f"{len(decision_audit_users)}/{minimum_decision_audit_users} users."
         )
+    if not decision_audit_handoff_ready:
+        warnings.append(
+            "Decision-audit-to-workflow evidence is still collecting: "
+            f"{decision_audit_workflow_creates}/"
+            f"{minimum_decision_audit_workflow_creates} canonical creates "
+            f"across {len(decision_audit_workflow_users)}/"
+            f"{minimum_decision_audit_workflow_users} users."
+        )
     if not thesis_composer_engagement_ready:
         warnings.append(
             "Constrained-thesis composer evidence is still collecting: "
@@ -492,7 +514,7 @@ def build_product_adoption_report(
         )
 
     return {
-        "schema_version": "citylens/product-adoption-report@v17",
+        "schema_version": "citylens/product-adoption-report@v18",
         "generated_at": generated_at.isoformat(),
         "window": {
             "days": days,
@@ -639,6 +661,8 @@ def build_product_adoption_report(
         "decision_audit_engagement": {
             "opened": decision_audit_opens,
             "users": len(decision_audit_users),
+            "workflow_creates": decision_audit_workflow_creates,
+            "workflow_users": len(decision_audit_workflow_users),
             "entry_points": {
                 "decision_posture": sources.get(
                     "decision_audit_opened:decision_posture", 0
@@ -650,6 +674,14 @@ def build_product_adoption_report(
             "parcel_open_to_audit_rate": (
                 round(decision_audit_opens / parcel_opens, 6)
                 if parcel_opens > 0
+                else None
+            ),
+            "audit_to_workflow_create_rate": (
+                round(
+                    decision_audit_workflow_creates / decision_audit_opens,
+                    6,
+                )
+                if decision_audit_opens > 0
                 else None
             ),
             "evidence_gate": {
@@ -672,6 +704,32 @@ def build_product_adoption_report(
                     "Directional evidence-audit engagement only; opens are "
                     "best-effort aggregate counters, not unique parcels, "
                     "completed diligence, lead quality, or model accuracy."
+                ),
+            },
+            "handoff_gate": {
+                "status": (
+                    "ready" if decision_audit_handoff_ready else "collecting"
+                ),
+                "minimum_workflow_creates": (
+                    minimum_decision_audit_workflow_creates
+                ),
+                "minimum_users": minimum_decision_audit_workflow_users,
+                "workflow_creates_remaining": max(
+                    0,
+                    minimum_decision_audit_workflow_creates
+                    - decision_audit_workflow_creates,
+                ),
+                "users_remaining": max(
+                    0,
+                    minimum_decision_audit_workflow_users
+                    - len(decision_audit_workflow_users),
+                ),
+                "claim": (
+                    "Canonical decision-audit-to-workflow handoffs only; the "
+                    "numerator is transactionally derived and contains no "
+                    "parcel IDs, actions, due dates, source facts, values, or "
+                    "notes. The directional rate is not diligence completion, "
+                    "lead quality, seller intent, or model accuracy."
                 ),
             },
         },

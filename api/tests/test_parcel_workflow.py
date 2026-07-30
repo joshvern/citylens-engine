@@ -453,7 +453,14 @@ def test_workflow_crud(auth_override) -> None:
     assert client.get("/v1/parcel-intel/workflow/3020960069").json() is None
 
 
-def test_underwriting_entry_source_is_aggregate_only(auth_override) -> None:
+@pytest.mark.parametrize(
+    "entry_source",
+    ["underwriting", "decision_audit"],
+)
+def test_workflow_entry_source_is_aggregate_only(
+    auth_override,
+    entry_source: str,
+) -> None:
     auth_override(app_user_id="underwriting-user")
     store = FakeWorkflowStore()
     app.dependency_overrides[parcel_workflow.get_store] = lambda: store
@@ -463,14 +470,14 @@ def test_underwriting_entry_source_is_aggregate_only(auth_override) -> None:
         "/v1/parcel-intel/workflow/3020960069",
         json={
             "borough": "brooklyn",
-            "entry_source": "underwriting",
+            "entry_source": entry_source,
             "stage": "reviewing",
             "next_action": "Validate current capacity and cost assumptions.",
         },
     )
 
     assert response.status_code == 200, response.text
-    assert store.entry_sources == ["underwriting"]
+    assert store.entry_sources == [entry_source]
     assert "entry_source" not in response.json()
     assert "entry_source" not in store.items["3020960069"]
 

@@ -802,7 +802,10 @@ class ParcelIntelMapRow(BaseModel):
         "active_project",
         "completed_project",
     ] = "ground_up_candidate"
+    assemblage_id: Optional[str] = None
     assemblage_lot_count: Optional[int] = None
+    assemblage_combined_lot_area_sqft: Optional[float] = None
+    assemblage_combined_buildable_sqft: Optional[float] = None
 
 
 class ParcelIntelBorough(BaseModel):

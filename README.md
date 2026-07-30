@@ -90,8 +90,11 @@ Current pinned release tag:
   complete 5,000-row citywide inventory selected under the manifest's
   versioned borough-floor policy. The compact map response includes an
   explicit access scope, returned/available counts, an inventory-complete
-  receipt, and the immutable feed generation used to produce the rows. Tiered
-  map, sweep, and detail
+  receipt, and the immutable feed generation used to produce the rows. Map
+  rows also preserve the publisher-issued assemblage ID and combined
+  physical totals, allowing the web decision list to group adjacent tax lots
+  into one acquisition site without hiding any parcel from the map or CSV.
+  Tiered map, sweep, and detail
   responses vary on authentication credentials; authenticated responses are
   private/no-store so a cached 125-row preview cannot be reused as the
   signed-in inventory. Large JSON responses are gzip-compressed.

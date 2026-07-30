@@ -126,14 +126,16 @@ Current pinned release tag:
   beneficial-owner inference, workflow data, or seller-intent claim. The API
   reads and integrity-checks one private SHA-256 BBL shard, returns one lot,
   rate-limits the user, and marks every response private/no-store.
-- The public index carries a strict, parcel-free
-  `prospective-validation-status@v1` only when its source generation matches
-  the active atomic feed. It separates the live cohort's
+- The public index carries a strict, identity-free
+  `prospective-validation-status@v1` or site-aware `@v2` only when its source
+  generation matches the active atomic feed. It separates the live cohort's
   awaiting/collecting/mature state from historical forward-test metrics,
-  keeps immature final precision null, and exposes only aggregate hit-rate
-  evidence, maturity dates, official DOB source dates, and a digest-bound
-  private-report reference. Invalid, stale-generation, or parcel-bearing
-  status payloads are discarded rather than served. The API separately derives
+  keeps immature final precision null, and exposes only aggregate parcel/site
+  hit-rate evidence, maturity dates, official DOB source dates, and a
+  digest-bound private-report reference. V2 site membership is frozen by the
+  publisher at issuance; site IDs and member BBLs remain private. Invalid,
+  stale-generation, or identity-bearing status payloads are discarded rather
+  than served. The API separately derives
   `prospective_validation_health` from the accepted observation date. The
   weekly monitor remains `current` through an eight-day lag, becomes `stale`
   after that deadline, and is `unavailable` when the pointer is missing or

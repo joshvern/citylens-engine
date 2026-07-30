@@ -92,12 +92,14 @@ owns the browser UI.
     entered/left lead event. Monitoring is evaluated in-app and does not imply
     notifications, seller intent, or a new model prediction.
   - The public index may include one
-    `prospective-validation-status@v1` projection produced by the independent
-    weekly ranking monitor. The API validates the complete maturity contract,
-    requires the status source generation to equal the active feed, rejects
-    unknown/private fields, and strips the private GCS object name before
-    serialization. A missing or invalid status is explicit `null`; historical
-    metrics never substitute for live-cohort evidence.
+    `prospective-validation-status@v1` or site-aware `@v2` projection produced
+    by the independent weekly ranking monitor. The API validates the complete
+    maturity contract, requires the status source generation to equal the
+    active feed, and rejects unknown/private fields. V2 exposes only aggregate
+    acquisition-site counts and metrics; frozen site IDs/member BBLs and the
+    private GCS object name never reach clients. A missing or invalid status is
+    explicit `null`; historical metrics never substitute for live-cohort
+    evidence.
   - New manifests carry `generation_diff` evidence from the publisher:
     inventory turnover, top-rank retention, rank movement, score PSI, source
     vintages, model identity, cohorts, required-field coverage, full 142-column

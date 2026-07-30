@@ -623,11 +623,14 @@ def _prospective_status(
     generation: str,
     *,
     source_generation: str | None = None,
+    site_aware: bool = False,
 ) -> dict:
     observation_id = "20260723-aaaaaaaaaaaa"
-    return {
+    status = {
         "schema": (
-            "citylens-parcel-intel/prospective-validation-status@v1"
+            "citylens-parcel-intel/prospective-validation-status@v2"
+            if site_aware
+            else "citylens-parcel-intel/prospective-validation-status@v1"
         ),
         "cohort_id": generation,
         "source_generation": source_generation or generation,
@@ -678,6 +681,19 @@ def _prospective_status(
             "Immature metrics are lower bounds and do not measure seller intent."
         ),
     }
+    if site_aware:
+        status["site_count"] = 4769
+        status["site_metrics"] = {
+            name: {
+                "eligible_sites": count,
+                "observed_nb_filing_hits": None,
+                "observed_precision_lower_bound": None,
+                "final_precision": None,
+                "final_precision_95ci": None,
+            }
+            for name, count in (("top_100", 100), ("top_1000", 1000))
+        }
+    return status
 
 
 def test_parcel_intel_index_returns_borough_summary(monkeypatch) -> None:
@@ -801,6 +817,42 @@ def test_index_exposes_only_active_generation_prospective_status(
             "2026-07-23T20:00:00Z"
         ),
     }
+
+
+def test_index_exposes_public_safe_site_prospective_status(
+    monkeypatch,
+) -> None:
+    _set_required_env(monkeypatch)
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+    )
+    generation = "20260723T230308737433Z-aaaaaaaaaaaa"
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        generation=generation,
+    )
+    fake._store["parcel-intel/v1/prospective-validation.json"] = (
+        json.dumps(
+            _prospective_status(generation, site_aware=True)
+        ).encode("utf-8")
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    response = TestClient(app).get("/v1/parcel-intel/index")
+
+    assert response.status_code == 200
+    status = response.json()["prospective_validation"]
+    assert (
+        status["schema"]
+        == "citylens-parcel-intel/prospective-validation-status@v2"
+    )
+    assert status["site_count"] == 4769
+    assert status["site_metrics"]["top_100"]["eligible_sites"] == 100
+    serialized = json.dumps(status)
+    assert "site_id" not in serialized
+    assert "member_bbls" not in serialized
 
 
 @pytest.mark.parametrize(

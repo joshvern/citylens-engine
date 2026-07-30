@@ -836,6 +836,27 @@ class ParcelProspectiveValidationMetrics(BaseModel):
     top_1000: ParcelProspectiveValidationMetric
 
 
+class ParcelProspectiveSiteValidationMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    eligible_sites: int = Field(ge=1, le=1000)
+    observed_nb_filing_hits: Optional[int] = Field(default=None, ge=0)
+    observed_precision_lower_bound: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+    )
+    final_precision: Optional[float] = Field(default=None, ge=0, le=1)
+    final_precision_95ci: Optional[tuple[float, float]] = None
+
+
+class ParcelProspectiveSiteValidationMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    top_100: ParcelProspectiveSiteValidationMetric
+    top_1000: ParcelProspectiveSiteValidationMetric
+
+
 class ParcelProspectiveHistoricalBenchmark(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -868,7 +889,10 @@ class ParcelProspectiveValidationStatus(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_version: Literal["citylens-parcel-intel/prospective-validation-status@v1"] = Field(
+    schema_version: Literal[
+        "citylens-parcel-intel/prospective-validation-status@v1",
+        "citylens-parcel-intel/prospective-validation-status@v2",
+    ] = Field(
         alias="schema"
     )
     cohort_id: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$")
@@ -886,6 +910,8 @@ class ParcelProspectiveValidationStatus(BaseModel):
     elapsed_days: int = Field(ge=0, le=365)
     maturity_fraction: float = Field(ge=0, le=1)
     metrics: ParcelProspectiveValidationMetrics
+    site_count: Optional[int] = Field(default=None, ge=1000)
+    site_metrics: Optional[ParcelProspectiveSiteValidationMetrics] = None
     historical_benchmark: ParcelProspectiveHistoricalBenchmark
     official_sources: list[ParcelProspectiveOfficialSource] = Field(
         min_length=2,
@@ -1018,6 +1044,96 @@ class ParcelProspectiveValidationStatus(BaseModel):
                     "prospective_final_consistency",
                     "final precision and confidence interval disagree",
                 )
+        site_schema = (
+            self.schema_version
+            == "citylens-parcel-intel/prospective-validation-status@v2"
+        )
+        if site_schema and (
+            self.site_count is None or self.site_metrics is None
+        ):
+            raise PydanticCustomError(
+                "prospective_site_metrics_missing",
+                "v2 prospective status requires frozen site metrics",
+            )
+        if not site_schema and (
+            self.site_count is not None or self.site_metrics is not None
+        ):
+            raise PydanticCustomError(
+                "prospective_site_metrics_version",
+                "site metrics require prospective status v2",
+            )
+        if self.site_metrics is not None:
+            for name, expected in expected_counts.items():
+                metric = getattr(self.site_metrics, name)
+                if metric.eligible_sites != expected:
+                    raise PydanticCustomError(
+                        "prospective_site_metric_population",
+                        f"{name} eligible_sites must equal {expected}",
+                    )
+                if self.measurement_status == "awaiting_post_issue_data":
+                    if (
+                        metric.observed_nb_filing_hits is not None
+                        or metric.observed_precision_lower_bound is not None
+                    ):
+                        raise PydanticCustomError(
+                            "prospective_site_premature_observation",
+                            "pre-observation site metrics must remain null",
+                        )
+                elif (
+                    metric.observed_nb_filing_hits is None
+                    or metric.observed_precision_lower_bound is None
+                ):
+                    raise PydanticCustomError(
+                        "prospective_site_missing_observation",
+                        "started cohorts require site lower-bound metrics",
+                    )
+                elif (
+                    metric.observed_nb_filing_hits > expected
+                    or not math.isclose(
+                        metric.observed_precision_lower_bound,
+                        metric.observed_nb_filing_hits / expected,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    raise PydanticCustomError(
+                        "prospective_site_metric_consistency",
+                        "site hits and precision lower bound disagree",
+                    )
+                if self.measurement_status != "mature":
+                    if (
+                        metric.final_precision is not None
+                        or metric.final_precision_95ci is not None
+                    ):
+                        raise PydanticCustomError(
+                            "prospective_site_premature_final",
+                            "immature final site metrics must remain null",
+                        )
+                elif (
+                    metric.final_precision is None
+                    or metric.final_precision_95ci is None
+                ):
+                    raise PydanticCustomError(
+                        "prospective_site_missing_final",
+                        "mature cohorts require final site precision",
+                    )
+                elif (
+                    not math.isclose(
+                        metric.final_precision,
+                        metric.observed_precision_lower_bound or 0.0,
+                        abs_tol=1e-12,
+                    )
+                    or not 0 <= metric.final_precision_95ci[0] <= 1
+                    or not 0 <= metric.final_precision_95ci[1] <= 1
+                    or not (
+                        metric.final_precision_95ci[0]
+                        <= metric.final_precision
+                        <= metric.final_precision_95ci[1]
+                    )
+                ):
+                    raise PydanticCustomError(
+                        "prospective_site_final_consistency",
+                        "final site precision and interval disagree",
+                    )
         if {item.dataset_id for item in self.official_sources} != {
             "ic3t-wcy2",
             "w9ak-ipjd",

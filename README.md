@@ -100,13 +100,16 @@ Current pinned release tag:
   signed-in inventory. Large JSON responses are gzip-compressed.
 - Authenticated users may record a concise lead-relevance call for the current
   published ranking through
-  `GET|PUT /v1/parcel-intel/lead-reviews/{bbl}`. Each private review is bound
+  `GET|PUT /v1/parcel-intel/lead-reviews/{bbl}`. The private
+  `GET /v1/parcel-intel/lead-reviews` index reports current-generation
+  coverage and verdict counts, and returns only that user's reviews so the
+  browser can offer a systematic next-unreviewed queue. Each private review is bound
   to the immutable feed generation and the server's rank/opportunity snapshot,
   accepts only a controlled `pursue`, `watch`, `pass`, or `unclear` verdict
   with compatible reason codes, and rejects a stale generation. Identical
   retries are no-ops; changes append a revision event and expire after 730
   days. Reviews never change a score, rank, workflow stage, or outcome. They
-  are selection-biased practitioner relevance evidence—not model accuracy,
+  remain practitioner relevance evidence—not model accuracy,
   seller intent, an appraisal, or a realized acquisition outcome.
 - Selected-parcel decision audits may include
   `citylens_historical_borough_benchmark_receipt@v1` plus the clicked

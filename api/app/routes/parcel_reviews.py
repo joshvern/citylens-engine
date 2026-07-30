@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..models.schemas import (
     ParcelLeadReview,
+    ParcelLeadReviewIndex,
     ParcelLeadReviewRequest,
     ParcelLeadReviewState,
+    ParcelLeadReviewVerdictCounts,
 )
 from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
@@ -60,6 +62,73 @@ def _current_parcel(
 def _set_private_headers(response: Response) -> None:
     response.headers["Cache-Control"] = _PRIVATE_CACHE
     response.headers["Vary"] = _PRIVATE_VARY
+
+
+@router.get(
+    "/parcel-intel/lead-reviews",
+    response_model=ParcelLeadReviewIndex,
+)
+def list_lead_reviews(
+    response: Response,
+    auth: AuthContext = Depends(require_auth),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    registry: ParcelIntelRegistry = Depends(get_registry),
+    store: FirestoreStore = Depends(get_store),
+) -> ParcelLeadReviewIndex:
+    """Return this user's coverage for the current immutable feed only."""
+
+    enforce_token_bucket(
+        key=f"parcel-lead-review-index:{auth.app_user_id}",
+        capacity=30,
+        refill_per_second=0.1,
+    )
+    index = registry.index(gcs)
+    generation = index.feed_generation
+    if (
+        not isinstance(generation, str)
+        or _GENERATION_RE.fullmatch(generation) is None
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "PARCEL_REVIEW_GENERATION_UNAVAILABLE",
+                "message": (
+                    "The current parcel feed has no immutable generation "
+                    "receipt. Review coverage is temporarily unavailable."
+                ),
+            },
+        )
+    available_count = sum(
+        max(0, borough.count) for borough in index.boroughs
+    )
+    items = [
+        ParcelLeadReview.model_validate(review)
+        for review in store.list_parcel_lead_reviews(
+            app_user_id=auth.app_user_id,
+            feed_generation=generation,
+        )
+    ]
+    verdict_counts = {
+        "pursue": 0,
+        "watch": 0,
+        "pass": 0,
+        "unclear": 0,
+    }
+    for item in items:
+        verdict_counts[item.verdict] += 1
+    reviewed_count = len(items)
+    _set_private_headers(response)
+    return ParcelLeadReviewIndex(
+        schema_version="citylens/parcel-lead-review-index@v1",
+        current_feed_generation=generation,
+        available_count=available_count,
+        reviewed_count=reviewed_count,
+        unreviewed_count=available_count - reviewed_count,
+        verdict_counts=ParcelLeadReviewVerdictCounts.model_validate(
+            verdict_counts
+        ),
+        items=items,
+    )
 
 
 @router.get(

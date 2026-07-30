@@ -44,6 +44,44 @@ class _Collection:
     def document(self, identifier: str) -> _Document:
         return _Document(self.client, (*self.path, identifier))
 
+    def where(self, *, filter) -> "_Query":
+        return _Query(self.client, self.path, filter=filter)
+
+
+class _Query:
+    def __init__(
+        self,
+        client: "_Client",
+        path: tuple[str, ...],
+        *,
+        filter,
+        limit: int | None = None,
+    ) -> None:
+        self.client = client
+        self.path = path
+        self.filter = filter
+        self._limit = limit
+
+    def limit(self, value: int) -> "_Query":
+        return _Query(
+            self.client,
+            self.path,
+            filter=self.filter,
+            limit=value,
+        )
+
+    def stream(self):
+        matches = [
+            value
+            for path, value in self.client.documents.items()
+            if path[:-1] == self.path
+            and self.filter.op_string == "=="
+            and value.get(self.filter.field_path) == self.filter.value
+        ]
+        if self._limit is not None:
+            matches = matches[: self._limit]
+        return [_Snapshot(value) for value in matches]
+
 
 class _Transaction:
     def __init__(self, client: "_Client") -> None:
@@ -125,6 +163,27 @@ def test_lead_review_is_generation_bound_auditable_and_workflow_independent(
         bbl=bbl,
         feed_generation=generation,
     ) == created
+    stale_generation = "20260729T092749819158Z-daf06394d35b"
+    stale_review_id = parcel_lead_review_id(
+        feed_generation=stale_generation,
+        bbl=bbl,
+    )
+    client.documents[
+        (
+            "users",
+            "private-user",
+            "parcel_lead_reviews",
+            stale_review_id,
+        )
+    ] = {
+        **created,
+        "review_id": stale_review_id,
+        "feed_generation": stale_generation,
+    }
+    assert store.list_parcel_lead_reviews(
+        app_user_id="private-user",
+        feed_generation=generation,
+    ) == [created]
     review_path = (
         "users",
         "private-user",

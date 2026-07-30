@@ -54,6 +54,7 @@ from ..models.schemas import (
     ParcelOfficialLinks,
     ParcelProspectiveValidationHealth,
     ParcelProspectiveValidationStatus,
+    ParcelSalesComparablesResponse,
     ParcelScreeningLedgerRow,
     ParcelScreeningStatusResponse,
 )
@@ -70,6 +71,9 @@ from ..services.parcel_official_dossier import (
     ACRIS_DATASET_IDS,
     PLUTO_DATASET_ID,
     ParcelOfficialDossierStore,
+)
+from ..services.parcel_sales_comparables import (
+    ParcelSalesComparableService,
 )
 from ..services.rate_limit import demo_rate_limit, enforce_token_bucket
 from ..services.settings import Settings, get_settings
@@ -787,6 +791,7 @@ class ParcelIntelRegistry:
 _REGISTRY = ParcelIntelRegistry()
 _ADDRESS_RESOLVER = ParcelAddressResolver()
 _OFFICIAL_DOSSIERS = ParcelOfficialDossierStore()
+_SALES_COMPARABLES = ParcelSalesComparableService()
 
 
 def get_registry() -> ParcelIntelRegistry:
@@ -799,6 +804,10 @@ def get_address_resolver() -> ParcelAddressResolver:
 
 def get_official_dossiers() -> ParcelOfficialDossierStore:
     return _OFFICIAL_DOSSIERS
+
+
+def get_sales_comparables() -> ParcelSalesComparableService:
+    return _SALES_COMPARABLES
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -1284,6 +1293,37 @@ def parcel_intel_official_parcel(
             "inference, or seller-intent signal. Verify controlling records "
             "in the linked NYC systems."
         ),
+    )
+
+
+@router.get(
+    "/parcel-intel/official-parcel/{bbl}/sales-comparables",
+    response_model=ParcelSalesComparablesResponse,
+)
+def parcel_intel_sales_comparables(
+    bbl: str,
+    response: Response,
+    auth: AuthContext = Depends(require_parcel_read_auth),
+    gcs: GcsArtifacts = Depends(get_gcs),
+    dossiers: ParcelOfficialDossierStore = Depends(get_official_dossiers),
+    comparables: ParcelSalesComparableService = Depends(
+        get_sales_comparables
+    ),
+) -> ParcelSalesComparablesResponse:
+    """Screen recent official DOF sales near one authenticated tax lot."""
+
+    enforce_token_bucket(
+        key=f"parcel-sales-comparables:{auth.app_user_id}",
+        capacity=12,
+        refill_per_second=0.1,
+    )
+    dossier = dossiers.get(gcs, bbl)
+    response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    response.headers["Vary"] = (
+        "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
+    )
+    return ParcelSalesComparablesResponse.model_validate(
+        comparables.get(bbl, dossier_row=dossier.row)
     )
 
 

@@ -126,6 +126,17 @@ Current pinned release tag:
   beneficial-owner inference, workflow data, or seller-intent claim. The API
   reads and integrity-checks one private SHA-256 BBL shard, returns one lot,
   rate-limits the user, and marks every response private/no-store.
+- From that dossier, authenticated users may request
+  `GET /v1/parcel-intel/official-parcel/{bbl}/sales-comparables` for an
+  on-demand, official-source comparable-transaction screen. The API combines
+  current PLUTO location/class/area facts with the NYC Department of Finance
+  annualized sales dataset (`w2pb-icbu`), rejects unit sales, nominal
+  transfers, the subject BBL, malformed records, and transactions beyond two
+  miles, requires the reported class family to align and lot or building area
+  to be within 35%, then returns at most five explained matches. Selection is
+  bounded, cached for six hours, private/no-store, and rate-limited. It is not
+  an appraisal or land-value estimate; users must verify the deed, interest
+  transferred, zoning, condition, and development rights.
 - The public index carries a strict, identity-free
   `prospective-validation-status@v1` or site-aware `@v2` only when its source
   generation matches the active atomic feed. It separates the live cohort's
@@ -387,7 +398,8 @@ Current pinned release tag:
   `CITYLENS_PARCEL_SMOKE_KEY` secret; the API receives only its SHA-256 in
   `CITYLENS_PARCEL_SMOKE_API_KEY_HASHES`. It is accepted only by the tiered
   Parcel Intelligence map, sweep, detail, and one-BBL official-dossier
-  routes—not run creation or acquisition workflow routes.
+  and sales-comparable routes—not run creation or acquisition workflow
+  routes.
 
 See [docs/security.md](docs/security.md) for the full credential model.
 

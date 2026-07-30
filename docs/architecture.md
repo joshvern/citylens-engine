@@ -57,6 +57,16 @@ owns the browser UI.
     inference, workflow, and seller-intent fields. Responses are
     authenticated, rate-limited, private/no-store, and fail closed on source,
     schema, count, digest, privacy-manifest, or generation drift.
+    The nested
+    `/v1/parcel-intel/official-parcel/{bbl}/sales-comparables` endpoint adds a
+    bounded diligence screen from current PLUTO subject facts and NYC DOF
+    annualized tax-lot sales. It excludes unit transactions, nominal
+    consideration, the subject parcel, malformed coordinates, and distant
+    records before requiring a shared reported building-class family and lot
+    or building area within 35%. It then ranks at most five candidates by
+    physical scale, proximity, and recency. The response preserves source
+    identity, freshness, selection reasons, and an explicit non-appraisal
+    limitation; it does not alter the acquisition score or infer value.
     Historical NYC DOF final lien-sale and current DOB
     Safety/OATH/HPD violation fields, NYC Planning MIH overlap, and current MTA
     station-complex proximity are premium diligence context and never exposed

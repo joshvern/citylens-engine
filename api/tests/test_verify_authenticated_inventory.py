@@ -9,6 +9,7 @@ from scripts.verify_authenticated_inventory import (
     validate_authenticated_detail,
     validate_authenticated_map,
     validate_official_dossier,
+    validate_sales_comparables,
 )
 
 BOROUGHS = (
@@ -258,6 +259,48 @@ def _dossier_headers() -> dict[str, str]:
     }
 
 
+def _comparables_payload() -> dict:
+    return {
+        "schema_version": "citylens/parcel-sales-comparables@v1",
+        "status": "available",
+        "subject_bbl": "3058920038",
+        "search_zip_code": "11209",
+        "query_window_start": "2023-01-01",
+        "source_candidate_count": 1391,
+        "eligible_candidate_count": 128,
+        "source_limit_reached": False,
+        "comparables": [
+            {
+                "bbl": "3058750084",
+                "address": "609 OVINGTON AVENUE",
+                "sale_date": "2024-10-25",
+                "sale_price": 1_610_000,
+                "distance_miles": 0.21,
+                "lot_area_sqft": 7_500,
+                "gross_area_sqft": 3_100,
+                "match_reasons": [
+                    "Same building-class family",
+                    "Lot area within 35%",
+                    "Within 0.2 miles",
+                ],
+            }
+        ],
+        "summary": {
+            "comparable_count": 1,
+            "median_sale_price": 1_610_000,
+        },
+        "source_dataset_id": "w2pb-icbu",
+        "source_url": (
+            "https://data.cityofnewyork.us/City-Government/"
+            "NYC-Citywide-Annualized-Calendar-Sales-Update/w2pb-icbu"
+        ),
+        "source_data_updated_at": "2026-06-09T18:31:52Z",
+        "interpretation": (
+            "This is not an appraisal. Verify the official deed and property."
+        ),
+    }
+
+
 def test_official_dossier_validator_accepts_source_dated_private_facts() -> None:
     assert (
         validate_official_dossier(
@@ -289,6 +332,41 @@ def test_official_dossier_validator_rejects_leakage_and_public_cache() -> None:
     assert any("every credential" in failure for failure in failures)
 
 
+def test_sales_comparables_validator_accepts_bounded_official_set() -> None:
+    assert (
+        validate_sales_comparables(
+            _comparables_payload(),
+            _dossier_headers(),
+            expected_bbl="3058920038",
+        )
+        == []
+    )
+
+
+def test_sales_comparables_validator_rejects_weak_or_leaky_set() -> None:
+    payload = _comparables_payload()
+    payload["subject_bbl"] = "3058920039"
+    payload["comparables"][0]["bbl"] = "3058920038"
+    payload["comparables"][0]["sale_price"] = 10
+    payload["comparables"][0]["match_reasons"] = []
+    payload["summary"]["comparable_count"] = 2
+    payload["interpretation"] = "Estimated market value."
+
+    failures = validate_sales_comparables(
+        payload,
+        {"cache-control": "public, max-age=600"},
+        expected_bbl="3058920038",
+    )
+
+    assert any("response BBL" in failure for failure in failures)
+    assert any("invalid BBL" in failure for failure in failures)
+    assert any("nominal consideration" in failure for failure in failures)
+    assert any("selection reasons" in failure for failure in failures)
+    assert any("does not reconcile" in failure for failure in failures)
+    assert any("limitations" in failure for failure in failures)
+    assert any("private, no-store" in failure for failure in failures)
+
+
 def test_report_omits_smoke_key_owner_and_selected_parcel(
     monkeypatch,
 ) -> None:
@@ -302,6 +380,7 @@ def test_report_omits_smoke_key_owner_and_selected_parcel(
     detail_headers = {"cache-control": "private, no-store"}
     dossier_payload = _dossier_payload()
     dossier_headers = _dossier_headers()
+    comparables_payload = _comparables_payload()
 
     def fake_request(url: str, *, smoke_key: str, timeout: float):
         assert smoke_key == "do-not-report-this"
@@ -310,6 +389,8 @@ def test_report_omits_smoke_key_owner_and_selected_parcel(
             return 200, {}, _index_payload(), 0.05
         if url.endswith("top_per_borough=1"):
             return 200, map_headers, map_payload, 0.2
+        if url.endswith("/sales-comparables"):
+            return 200, dossier_headers, comparables_payload, 0.25
         if "/official-parcel/" in url:
             return 200, dossier_headers, dossier_payload, 0.15
         return 200, detail_headers, detail_payload, 0.1

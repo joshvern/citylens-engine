@@ -234,6 +234,98 @@ def test_official_dossier_returns_source_specific_facts_privately(
         assert forbidden not in rendered
 
 
+def test_sales_comparables_route_uses_private_authenticated_dossier(
+    auth_override,
+) -> None:
+    _authenticate(auth_override)
+    fake = FakeGcs(_store([_row()]))
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    class FakeComparables:
+        calls: list[tuple[str, dict]] = []
+
+        def get(self, bbl: str, *, dossier_row: dict) -> dict:
+            self.calls.append((bbl, dossier_row))
+            return {
+                "schema_version": (
+                    "citylens/parcel-sales-comparables@v1"
+                ),
+                "status": "available",
+                "subject_bbl": bbl,
+                "search_zip_code": "11209",
+                "query_window_start": "2023-01-01",
+                "source_candidate_count": 12,
+                "eligible_candidate_count": 4,
+                "source_limit_reached": False,
+                "comparables": [
+                    {
+                        "bbl": "3058900040",
+                        "address": "450 OVINGTON AVENUE",
+                        "sale_date": "2025-10-15",
+                        "sale_price": 1_500_000,
+                        "distance_miles": 0.2,
+                        "lot_area_sqft": 9_000,
+                        "gross_area_sqft": 3_200,
+                        "residential_units": 2,
+                        "commercial_units": 0,
+                        "total_units": 2,
+                        "year_built": 1910,
+                        "building_class": "B2",
+                        "building_class_category": (
+                            "01 ONE FAMILY DWELLINGS"
+                        ),
+                        "price_per_land_sqft": 166.67,
+                        "price_per_gross_sqft": 468.75,
+                        "match_reasons": [
+                            "Same building-class family",
+                            "Lot area within 15%",
+                            "Within 0.2 miles",
+                        ],
+                    }
+                ],
+                "summary": {
+                    "comparable_count": 1,
+                    "median_sale_price": 1_500_000,
+                    "median_price_per_land_sqft": 166.67,
+                    "median_price_per_gross_sqft": 468.75,
+                    "minimum_sale_price": 1_500_000,
+                    "maximum_sale_price": 1_500_000,
+                },
+                "source_name": (
+                    "NYC Department of Finance annualized property sales"
+                ),
+                "source_dataset_id": "w2pb-icbu",
+                "source_url": (
+                    "https://data.cityofnewyork.us/"
+                    "City-Government/NYC-Citywide-Annualized-"
+                    "Calendar-Sales-Update/w2pb-icbu"
+                ),
+                "source_data_updated_at": "2026-06-09T14:00:00Z",
+                "source_retrieved_at": "2026-07-30T12:00:00Z",
+                "selection_method": "Transparent bounded screen.",
+                "interpretation": "Not an appraisal.",
+            }
+
+    service = FakeComparables()
+    app.dependency_overrides[
+        parcel_intel_routes.get_sales_comparables
+    ] = lambda: service
+
+    response = TestClient(app).get(
+        "/v1/parcel-intel/official-parcel/"
+        "3058920038/sales-comparables"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    payload = response.json()
+    assert payload["status"] == "available"
+    assert payload["summary"]["comparable_count"] == 1
+    assert payload["comparables"][0]["bbl"] == "3058900040"
+    assert service.calls[0][0] == "3058920038"
+    assert service.calls[0][1]["a"] == "464 OVINGTON AVENUE"
+
+
 def test_owner_disagreement_is_preserved_not_reconciled(
     auth_override,
 ) -> None:

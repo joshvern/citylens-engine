@@ -233,11 +233,15 @@ def _quality_row() -> dict:
     }
 
 
-def _prospective_validation() -> dict:
+def _prospective_validation(*, site_aware: bool = False) -> dict:
     generation = "20260723T000000000000Z-aaaaaaaaaaaa"
     observation_id = "20260723-aaaaaaaaaaaa"
-    return {
-        "schema": ("citylens-parcel-intel/prospective-validation-status@v1"),
+    status = {
+        "schema": (
+            "citylens-parcel-intel/prospective-validation-status@v2"
+            if site_aware
+            else "citylens-parcel-intel/prospective-validation-status@v1"
+        ),
         "cohort_id": generation,
         "source_generation": generation,
         "label_definition": "dob_nb_job_filing",
@@ -284,6 +288,19 @@ def _prospective_validation() -> dict:
         },
         "interpretation": ("Immature metrics are lower bounds and do not measure seller intent."),
     }
+    if site_aware:
+        status["site_count"] = 4769
+        status["site_metrics"] = {
+            name: {
+                "eligible_sites": count,
+                "observed_nb_filing_hits": None,
+                "observed_precision_lower_bound": None,
+                "final_precision": None,
+                "final_precision_95ci": None,
+            }
+            for name, count in (("top_100", 100), ("top_1000", 1000))
+        }
+    return status
 
 
 def _prospective_validation_health() -> dict:
@@ -674,6 +691,59 @@ def test_prospective_validation_rejects_leakage_and_premature_accuracy() -> None
     assert any("matched_filings" in failure for failure in failures)
     assert any(".bbl" in failure for failure in failures)
     assert any(".rank" in failure for failure in failures)
+
+
+def test_prospective_validation_accepts_site_aware_status_and_rejects_tampering() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    status = _prospective_validation(site_aware=True)
+    assert (
+        validate_prospective_validation(
+            status,
+            feed_generation=generation,
+            health=_prospective_validation_health(),
+            now=datetime(2026, 7, 24, tzinfo=timezone.utc),
+        )
+        == []
+    )
+
+    bad = deepcopy(status)
+    bad["site_metrics"]["top_100"]["eligible_sites"] = 99
+    bad["site_id"] = "assemblage-secret"
+    bad["member_bbls"] = ["3020960069"]
+    failures = validate_prospective_validation(
+        bad,
+        feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    assert "index: prospective site top_100 population is invalid" in failures
+    assert any("site_id" in failure for failure in failures)
+    assert any("member_bbls" in failure for failure in failures)
+
+
+def test_prospective_validation_rejects_cross_version_site_fields() -> None:
+    generation = "20260723T000000000000Z-aaaaaaaaaaaa"
+    v1 = _prospective_validation()
+    v1["site_count"] = 4769
+    v1["site_metrics"] = {}
+    failures = validate_prospective_validation(
+        v1,
+        feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+    assert "index: prospective v1 status contains v2 site metrics" in failures
+
+    v2 = _prospective_validation(site_aware=True)
+    del v2["site_metrics"]
+    failures = validate_prospective_validation(
+        v2,
+        feed_generation=generation,
+        health=_prospective_validation_health(),
+        now=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+    assert "index: prospective site metrics are incomplete" in failures
 
 
 def test_prospective_validation_rejects_inconsistent_maturity_telemetry() -> None:

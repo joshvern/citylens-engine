@@ -732,9 +732,13 @@ def validate_prospective_validation(
     )
     if not isinstance(status, dict):
         return failures
+    schema = status.get("schema")
     _expect(
-        status.get("schema")
-        == "citylens-parcel-intel/prospective-validation-status@v1",
+        schema
+        in {
+            "citylens-parcel-intel/prospective-validation-status@v1",
+            "citylens-parcel-intel/prospective-validation-status@v2",
+        },
         "index: prospective validation schema is invalid",
         failures,
     )
@@ -831,78 +835,120 @@ def validate_prospective_validation(
         failures,
     )
 
-    metrics = status.get("metrics")
-    _expect(
-        isinstance(metrics, dict) and set(metrics) == {"top_100", "top_1000"},
-        "index: prospective metrics are incomplete",
-        failures,
-    )
-    for name, expected_count in (("top_100", 100), ("top_1000", 1000)):
-        metric = metrics.get(name) if isinstance(metrics, dict) else None
+    def validate_metrics(
+        raw_metrics: Any,
+        *,
+        label: str,
+        count_field: str,
+    ) -> None:
         _expect(
-            isinstance(metric, dict)
-            and metric.get("eligible_parcels") == expected_count,
-            f"index: prospective {name} population is invalid",
+            isinstance(raw_metrics, dict)
+            and set(raw_metrics) == {"top_100", "top_1000"},
+            f"index: prospective {label} metrics are incomplete",
             failures,
         )
-        if not isinstance(metric, dict):
-            continue
-        hits = metric.get("observed_nb_filing_hits")
-        lower_bound = metric.get("observed_precision_lower_bound")
-        final_precision = metric.get("final_precision")
-        final_interval = metric.get("final_precision_95ci")
-        if measurement_status == "awaiting_post_issue_data":
-            _expect(
-                hits is None
-                and lower_bound is None
-                and final_precision is None
-                and final_interval is None,
-                f"index: prospective {name} exposes premature metrics",
-                failures,
-            )
-        elif measurement_status == "collecting":
-            _expect(
-                isinstance(hits, int)
-                and not isinstance(hits, bool)
-                and 0 <= hits <= expected_count
-                and isinstance(lower_bound, (int, float))
-                and not isinstance(lower_bound, bool)
-                and abs(lower_bound - hits / expected_count) <= 1e-12
-                and final_precision is None
-                and final_interval is None,
-                f"index: prospective {name} lower bound is invalid",
-                failures,
-            )
-        elif measurement_status == "mature":
-            _expect(
-                isinstance(hits, int)
-                and not isinstance(hits, bool)
-                and 0 <= hits <= expected_count
-                and isinstance(lower_bound, (int, float))
-                and not isinstance(lower_bound, bool)
-                and abs(lower_bound - hits / expected_count) <= 1e-12
-                and isinstance(final_precision, (int, float))
-                and not isinstance(final_precision, bool)
-                and abs(final_precision - lower_bound) <= 1e-12
-                and isinstance(final_interval, list)
-                and len(final_interval) == 2,
-                f"index: prospective {name} final metric is incomplete",
-                failures,
+        for name, expected_count in (("top_100", 100), ("top_1000", 1000)):
+            metric = (
+                raw_metrics.get(name)
+                if isinstance(raw_metrics, dict)
+                else None
             )
             _expect(
-                isinstance(final_interval, list)
-                and len(final_interval) == 2
-                and all(
-                    isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                    and 0 <= value <= 1
-                    for value in final_interval
+                isinstance(metric, dict)
+                and metric.get(count_field) == expected_count,
+                f"index: prospective {label} {name} population is invalid",
+                failures,
+            )
+            if not isinstance(metric, dict):
+                continue
+            hits = metric.get("observed_nb_filing_hits")
+            lower_bound = metric.get("observed_precision_lower_bound")
+            final_precision = metric.get("final_precision")
+            final_interval = metric.get("final_precision_95ci")
+            if measurement_status == "awaiting_post_issue_data":
+                _expect(
+                    hits is None
+                    and lower_bound is None
+                    and final_precision is None
+                    and final_interval is None,
+                    f"index: prospective {label} {name} exposes "
+                    "premature metrics",
+                    failures,
                 )
-                and isinstance(final_precision, (int, float))
-                and final_interval[0] <= final_precision <= final_interval[1],
-                f"index: prospective {name} confidence interval is invalid",
-                failures,
-            )
+            elif measurement_status == "collecting":
+                _expect(
+                    isinstance(hits, int)
+                    and not isinstance(hits, bool)
+                    and 0 <= hits <= expected_count
+                    and isinstance(lower_bound, (int, float))
+                    and not isinstance(lower_bound, bool)
+                    and abs(lower_bound - hits / expected_count) <= 1e-12
+                    and final_precision is None
+                    and final_interval is None,
+                    f"index: prospective {label} {name} lower bound "
+                    "is invalid",
+                    failures,
+                )
+            elif measurement_status == "mature":
+                _expect(
+                    isinstance(hits, int)
+                    and not isinstance(hits, bool)
+                    and 0 <= hits <= expected_count
+                    and isinstance(lower_bound, (int, float))
+                    and not isinstance(lower_bound, bool)
+                    and abs(lower_bound - hits / expected_count) <= 1e-12
+                    and isinstance(final_precision, (int, float))
+                    and not isinstance(final_precision, bool)
+                    and abs(final_precision - lower_bound) <= 1e-12
+                    and isinstance(final_interval, list)
+                    and len(final_interval) == 2,
+                    f"index: prospective {label} {name} final metric "
+                    "is incomplete",
+                    failures,
+                )
+                _expect(
+                    isinstance(final_interval, list)
+                    and len(final_interval) == 2
+                    and all(
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and 0 <= value <= 1
+                        for value in final_interval
+                    )
+                    and isinstance(final_precision, (int, float))
+                    and final_interval[0]
+                    <= final_precision
+                    <= final_interval[1],
+                    f"index: prospective {label} {name} confidence "
+                    "interval is invalid",
+                    failures,
+                )
+
+    validate_metrics(
+        status.get("metrics"),
+        label="parcel",
+        count_field="eligible_parcels",
+    )
+    if schema == "citylens-parcel-intel/prospective-validation-status@v2":
+        site_count = status.get("site_count")
+        _expect(
+            isinstance(site_count, int)
+            and not isinstance(site_count, bool)
+            and site_count >= 1000,
+            "index: prospective site count is invalid",
+            failures,
+        )
+        validate_metrics(
+            status.get("site_metrics"),
+            label="site",
+            count_field="eligible_sites",
+        )
+    elif schema == "citylens-parcel-intel/prospective-validation-status@v1":
+        _expect(
+            "site_count" not in status and "site_metrics" not in status,
+            "index: prospective v1 status contains v2 site metrics",
+            failures,
+        )
 
     historical = status.get("historical_benchmark")
     _expect(
@@ -1018,12 +1064,15 @@ def validate_prospective_validation(
         "bbl",
         "email",
         "matched_filings",
+        "matched_site_filings",
+        "member_bbls",
         "owner",
         "owner_name",
         "phone",
         "rank",
         "score",
         "score_calibrated",
+        "site_id",
     }
 
     def scan(value: Any, path: tuple[Any, ...] = ()) -> None:

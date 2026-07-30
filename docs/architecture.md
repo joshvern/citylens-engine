@@ -161,6 +161,16 @@ owns the browser UI.
     service prioritizes material source/status changes above source-date and
     generation-only changes so routine refreshes do not masquerade as new
     acquisition conclusions.
+  - Lead relevance is captured through a separate private contract rather than
+    the acquisition workflow. A `pursue`, `watch`, `pass`, or `unclear`
+    practitioner call is bound to the immutable published feed generation and
+    a server-owned rank/opportunity snapshot. Controlled reason codes, stale
+    generation rejection, idempotent retries, append-only revision events, and
+    a 730-day expiry make the evidence auditable without letting feedback
+    rewrite the ranking. Review records never create workflow items or
+    outcomes. Because reviewers choose what to inspect and review, these calls
+    are relevance evidence from a selected sample—not an unbiased accuracy
+    estimate, seller-intent signal, appraisal, or realized outcome.
   - Any non-archived workflow may carry one latest `evidence_issues` request
     per reviewable check. Submission binds a correction or suppression review
     to the current server citation with the same optimistic-concurrency
@@ -246,6 +256,12 @@ Firestore:
   workflow state, including optional source-bound evidence-review markers and
   latest evidence-issue mirrors;
   reporting reads only aggregate record/user counts and archive state
+- `users/{app_user_id}/parcel_lead_reviews/{review_id}`: private,
+  generation-bound lead-relevance judgment with a controlled verdict/reason
+  set, server-captured rank snapshot, revision, and 730-day expiry. Child
+  `lead_review_events` preserve value-minimized append-only changes under
+  their own 730-day TTL policy. These records remain separate from workflow
+  and outcome exports.
 - `users/{app_user_id}/parcel_saved_searches/{search_id}`: private
   `citylens/parcel-saved-view@v2` explorer state. It restores the citywide
   borough/filter/search/overlay context and is never shared-cacheable. Saved

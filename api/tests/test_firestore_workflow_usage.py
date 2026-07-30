@@ -10,6 +10,7 @@ from app.services import firestore_store
 from app.services.firestore_store import (
     FirestoreStore,
     StaleSavedSearchSnapshot,
+    parcel_lead_review_id,
 )
 
 
@@ -77,6 +78,126 @@ class _Client:
 
     def transaction(self) -> _Transaction:
         return _Transaction(self)
+
+
+def test_lead_review_is_generation_bound_auditable_and_workflow_independent(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(
+        project_id="test",
+        client=client,  # type: ignore[arg-type]
+    )
+    generation = "20260730T092749819158Z-daf06394d35b"
+    bbl = "3058920038"
+    review_id = parcel_lead_review_id(
+        feed_generation=generation,
+        bbl=bbl,
+    )
+
+    created, status = store.upsert_parcel_lead_review(
+        app_user_id="private-user",
+        bbl=bbl,
+        feed_generation=generation,
+        verdict="pass",
+        reason_codes=["active_or_completed_project"],
+        snapshot={
+            "citywide_rank": 42,
+            "acquisition_rank": 39,
+            "priority_tier": "highest",
+            "opportunity_category": "ground_up_candidate",
+        },
+    )
+
+    assert status == "created"
+    assert created["revision"] == 1
+    assert created["feed_generation"] == generation
+    assert created["citywide_rank"] == 42
+    assert store.get_parcel_lead_review(
+        app_user_id="private-user",
+        bbl=bbl,
+        feed_generation=generation,
+    ) == created
+    review_path = (
+        "users",
+        "private-user",
+        "parcel_lead_reviews",
+        review_id,
+    )
+    assert client.documents[review_path]["bbl"] == bbl
+    assert not {
+        "address",
+        "owner_name",
+        "notes",
+        "assignee",
+        "user_id",
+    }.intersection(client.documents[review_path])
+    assert not any("parcel_workflow" in path for path in client.documents)
+
+    usage_path = (
+        "users",
+        "private-user",
+        "product_usage_days",
+        "2026-07-30",
+    )
+    assert client.documents[usage_path]["events"] == {
+        "lead_review_created": 1
+    }
+    assert client.documents[usage_path]["sources"] == {
+        "lead_review_created:lead_review": 1
+    }
+
+    repeated, repeated_status = store.upsert_parcel_lead_review(
+        app_user_id="private-user",
+        bbl=bbl,
+        feed_generation=generation,
+        verdict="pass",
+        reason_codes=["active_or_completed_project"],
+        snapshot={"citywide_rank": 999},
+    )
+    assert repeated_status == "unchanged"
+    assert repeated["revision"] == 1
+    assert repeated["citywide_rank"] == 42
+    assert client.documents[usage_path]["events"] == {
+        "lead_review_created": 1
+    }
+
+    updated, updated_status = store.upsert_parcel_lead_review(
+        app_user_id="private-user",
+        bbl=bbl,
+        feed_generation=generation,
+        verdict="watch",
+        reason_codes=["missing_facts"],
+        snapshot={
+            "citywide_rank": 42,
+            "acquisition_rank": 39,
+            "priority_tier": "highest",
+            "opportunity_category": "ground_up_candidate",
+        },
+    )
+    assert updated_status == "updated"
+    assert updated["revision"] == 2
+    assert client.documents[usage_path]["events"] == {
+        "lead_review_created": 1,
+        "lead_review_updated": 1,
+    }
+    events = [
+        value
+        for path, value in client.documents.items()
+        if path[:4] == review_path and "lead_review_events" in path
+    ]
+    assert len(events) == 2
+    assert {event["to_verdict"] for event in events} == {
+        "pass",
+        "watch",
+    }
 
 
 def test_workflow_lifecycle_usage_is_transactional_and_idempotent(

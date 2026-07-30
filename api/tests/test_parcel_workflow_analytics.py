@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+from pydantic import ValidationError
+
+from app.models.schemas import ParcelWorkflowAnalytics
 from app.services.parcel_workflow_analytics import (
     build_workflow_analytics,
     milestone_patch,
@@ -69,12 +73,8 @@ def test_analytics_uses_explicit_denominators_and_preserves_archived_labels() ->
     assert analytics["funnel"]["contacted_per_saved"] == {
         "numerator": 1,
         "denominator": 2,
-        "rate": 0.5,
-        "confidence_interval": {
-            "confidence_level": 0.95,
-            "lower": 0.0945,
-            "upper": 0.9055,
-        },
+        "rate": None,
+        "confidence_interval": None,
         "sufficient_denominator": False,
     }
 
@@ -188,3 +188,91 @@ def test_analytics_withholds_directional_status_until_observation_time_matures()
     assert analytics["maturity_windows"][0]["eligible_records"] == 0
     assert analytics["maturity_windows"][0]["confidence_interval"] is None
     assert any("invalid" in warning for warning in analytics["warnings"])
+
+
+def test_analytics_omits_every_subthreshold_rate_from_the_api() -> None:
+    as_of = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    rows: list[dict] = []
+    for index in range(9):
+        saved_at = as_of - timedelta(days=400)
+        rows.append(
+            {
+                "borough": "brooklyn",
+                "stage": "pursue",
+                "outcome": "qualified" if index < 4 else "unknown",
+                "saved_at": saved_at,
+                "archived_at": None,
+                "event_count": 2,
+                "first_contacted_at": (
+                    saved_at + timedelta(days=10) if index < 6 else None
+                ),
+                "first_qualified_at": (
+                    saved_at + timedelta(days=45) if index < 4 else None
+                ),
+                "snapshot": {
+                    "citywide_rank": index + 1,
+                    "opportunity_category": "ground_up_candidate",
+                },
+            }
+        )
+
+    analytics = build_workflow_analytics(rows, as_of=as_of)
+
+    assert analytics["measurement_status"] == "collecting"
+    assert analytics["funnel"]["contacted_per_saved"] == {
+        "numerator": 6,
+        "denominator": 9,
+        "rate": None,
+        "confidence_interval": None,
+        "sufficient_denominator": False,
+    }
+    assert all(
+        window["rate"] is None
+        and window["confidence_interval"] is None
+        and window["sufficient_denominator"] is False
+        for window in analytics["maturity_windows"]
+    )
+    rank_cohort = next(
+        cohort
+        for cohort in analytics["cohorts"]
+        if cohort["dimension"] == "rank_band" and cohort["value"] == "1-100"
+    )
+    assert rank_cohort["contacted_rate_denominator"] == 9
+    assert rank_cohort["qualified_rate_denominator"] == 9
+    assert rank_cohort["close_rate_denominator"] == 9
+    assert rank_cohort["contacted_rate"] is None
+    assert rank_cohort["contacted_confidence_interval"] is None
+    assert rank_cohort["qualified_rate"] is None
+    assert rank_cohort["qualified_confidence_interval"] is None
+    assert rank_cohort["close_rate"] is None
+    assert rank_cohort["close_confidence_interval"] is None
+
+
+def test_analytics_schema_rejects_a_subthreshold_rate_leak() -> None:
+    as_of = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    payload = build_workflow_analytics(
+        [
+            {
+                "borough": "brooklyn",
+                "stage": "pursue",
+                "outcome": "owner_contacted",
+                "saved_at": as_of - timedelta(days=40),
+                "event_count": 1,
+                "first_contacted_at": as_of - timedelta(days=20),
+                "snapshot": {"citywide_rank": 1},
+            }
+        ],
+        as_of=as_of,
+    )
+    payload["maturity_windows"][0]["rate"] = 1.0
+    payload["maturity_windows"][0]["confidence_interval"] = {
+        "confidence_level": 0.95,
+        "lower": 0.2,
+        "upper": 1.0,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="maturity-window rate and interval must be present only after maturity",
+    ):
+        ParcelWorkflowAnalytics.model_validate(payload)

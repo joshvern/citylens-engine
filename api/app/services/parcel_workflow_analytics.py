@@ -68,8 +68,9 @@ def workflow_analytics_methodology() -> dict[str, Any]:
         ),
         "uncertainty_semantics": (
             "Displayed prospective rates include two-sided 95% Wilson score "
-            "intervals. Point estimates remain hidden in the product until "
-            "the fixed-horizon denominator reaches the minimum rate threshold."
+            "intervals. Point estimates and intervals are omitted from the API "
+            "and product until the fixed-horizon denominator reaches the "
+            "minimum rate threshold."
         ),
         "model_accuracy_claim": False,
     }
@@ -146,12 +147,21 @@ def _wilson_interval(numerator: int, denominator: int) -> dict[str, float] | Non
 
 
 def _rate(numerator: int, denominator: int) -> dict[str, Any]:
+    sufficient_denominator = denominator >= MINIMUM_RATE_DENOMINATOR
     return {
         "numerator": numerator,
         "denominator": denominator,
-        "rate": round(numerator / denominator, 4) if denominator else None,
-        "confidence_interval": _wilson_interval(numerator, denominator),
-        "sufficient_denominator": denominator >= MINIMUM_RATE_DENOMINATOR,
+        "rate": (
+            round(numerator / denominator, 4)
+            if sufficient_denominator
+            else None
+        ),
+        "confidence_interval": (
+            _wilson_interval(numerator, denominator)
+            if sufficient_denominator
+            else None
+        ),
+        "sufficient_denominator": sufficient_denominator,
     }
 
 
@@ -224,6 +234,7 @@ def _maturity_window(
         )
         for item in eligible
     )
+    sufficient_denominator = len(eligible) >= MINIMUM_RATE_DENOMINATOR
     return {
         "milestone": milestone,
         "label": label,
@@ -231,9 +242,17 @@ def _maturity_window(
         "eligible_records": len(eligible),
         "reached_within_horizon": reached,
         "pending_records": len(valid) - len(eligible),
-        "rate": round(reached / len(eligible), 4) if eligible else None,
-        "confidence_interval": _wilson_interval(reached, len(eligible)),
-        "sufficient_denominator": len(eligible) >= MINIMUM_RATE_DENOMINATOR,
+        "rate": (
+            round(reached / len(eligible), 4)
+            if sufficient_denominator
+            else None
+        ),
+        "confidence_interval": (
+            _wilson_interval(reached, len(eligible))
+            if sufficient_denominator
+            else None
+        ),
+        "sufficient_denominator": sufficient_denominator,
     }
 
 
@@ -319,6 +338,15 @@ def _cohort_rows(
                 )
                 for item in close_eligible
             )
+            contacted_sufficient = (
+                len(contacted_eligible) >= MINIMUM_RATE_DENOMINATOR
+            )
+            qualified_sufficient = (
+                len(qualified_eligible) >= MINIMUM_RATE_DENOMINATOR
+            )
+            close_sufficient = (
+                len(close_eligible) >= MINIMUM_RATE_DENOMINATOR
+            )
             rows.append(
                 {
                     "dimension": dimension,
@@ -336,27 +364,39 @@ def _cohort_rows(
                     "close_rate_denominator": len(close_eligible),
                     "contacted_rate": (
                         round(contacted_in_window / len(contacted_eligible), 4)
-                        if contacted_eligible
+                        if contacted_sufficient
                         else None
                     ),
-                    "contacted_confidence_interval": _wilson_interval(
-                        contacted_in_window, len(contacted_eligible)
+                    "contacted_confidence_interval": (
+                        _wilson_interval(
+                            contacted_in_window, len(contacted_eligible)
+                        )
+                        if contacted_sufficient
+                        else None
                     ),
                     "qualified_rate": (
                         round(qualified_in_window / len(qualified_eligible), 4)
-                        if qualified_eligible
+                        if qualified_sufficient
                         else None
                     ),
-                    "qualified_confidence_interval": _wilson_interval(
-                        qualified_in_window, len(qualified_eligible)
+                    "qualified_confidence_interval": (
+                        _wilson_interval(
+                            qualified_in_window, len(qualified_eligible)
+                        )
+                        if qualified_sufficient
+                        else None
                     ),
                     "close_rate": (
                         round(closed_in_window / len(close_eligible), 4)
-                        if close_eligible
+                        if close_sufficient
                         else None
                     ),
-                    "close_confidence_interval": _wilson_interval(
-                        closed_in_window, len(close_eligible)
+                    "close_confidence_interval": (
+                        _wilson_interval(
+                            closed_in_window, len(close_eligible)
+                        )
+                        if close_sufficient
+                        else None
                     ),
                 }
             )

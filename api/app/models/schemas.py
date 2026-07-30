@@ -1647,6 +1647,94 @@ class ParcelWorkflowAnalytics(BaseModel):
     cohorts: list[ParcelWorkflowCohort] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_maturity_safe_rates(self) -> "ParcelWorkflowAnalytics":
+        if self.active_records + self.archived_records != self.total_records:
+            raise ValueError(
+                "active_records plus archived_records must equal total_records"
+            )
+        for label, count in (
+            ("event_history_records", self.event_history_records),
+            ("rank_snapshot_records", self.rank_snapshot_records),
+            ("valid_saved_at_records", self.valid_saved_at_records),
+        ):
+            if count > self.total_records:
+                raise ValueError(f"{label} cannot exceed total_records")
+
+        funnel_rates = (
+            self.funnel.contacted_per_saved,
+            self.funnel.qualified_per_contacted,
+            self.funnel.offer_per_qualified,
+            self.funnel.contract_per_offer,
+            self.funnel.close_per_contract,
+        )
+        for rate in funnel_rates:
+            if rate.numerator > rate.denominator:
+                raise ValueError("workflow rate numerator cannot exceed denominator")
+            sufficient = rate.denominator >= self.minimum_rate_denominator
+            if rate.sufficient_denominator != sufficient:
+                raise ValueError(
+                    "workflow rate sufficiency must match the minimum denominator"
+                )
+            if sufficient != (
+                rate.rate is not None and rate.confidence_interval is not None
+            ):
+                raise ValueError(
+                    "workflow rate and interval must be present only after maturity"
+                )
+
+        for window in self.maturity_windows:
+            if window.reached_within_horizon > window.eligible_records:
+                raise ValueError(
+                    "maturity-window numerator cannot exceed its denominator"
+                )
+            if (
+                window.eligible_records + window.pending_records
+                != self.valid_saved_at_records
+            ):
+                raise ValueError(
+                    "maturity-window eligible and pending counts must reconcile"
+                )
+            sufficient = (
+                window.eligible_records >= self.minimum_rate_denominator
+            )
+            if window.sufficient_denominator != sufficient:
+                raise ValueError(
+                    "maturity-window sufficiency must match the minimum denominator"
+                )
+            if sufficient != (
+                window.rate is not None
+                and window.confidence_interval is not None
+            ):
+                raise ValueError(
+                    "maturity-window rate and interval must be present only after maturity"
+                )
+
+        for cohort in self.cohorts:
+            for denominator, rate, interval in (
+                (
+                    cohort.contacted_rate_denominator,
+                    cohort.contacted_rate,
+                    cohort.contacted_confidence_interval,
+                ),
+                (
+                    cohort.qualified_rate_denominator,
+                    cohort.qualified_rate,
+                    cohort.qualified_confidence_interval,
+                ),
+                (
+                    cohort.close_rate_denominator,
+                    cohort.close_rate,
+                    cohort.close_confidence_interval,
+                ),
+            ):
+                sufficient = denominator >= self.minimum_rate_denominator
+                if sufficient != (rate is not None and interval is not None):
+                    raise ValueError(
+                        "cohort rate and interval must be present only after maturity"
+                    )
+        return self
+
 
 ParcelWorkflowOutcomeLabelState = Literal[
     "pending",

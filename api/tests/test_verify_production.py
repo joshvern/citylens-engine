@@ -839,7 +839,10 @@ def test_workflow_methodology_validator_requires_maturity_aware_contract() -> No
         "model_accuracy_claim": False,
         "minimum_rate_denominator": 10,
         "confidence_level": 0.95,
-        "uncertainty_semantics": "Two-sided 95% Wilson score intervals.",
+        "uncertainty_semantics": (
+            "Two-sided 95% Wilson score intervals are omitted from the API "
+            "until the minimum denominator is met."
+        ),
         "horizons": [
             {"milestone": milestone, "horizon_days": days}
             for milestone, days in (
@@ -857,10 +860,12 @@ def test_workflow_methodology_validator_requires_maturity_aware_contract() -> No
     bad["analytics_schema_version"] = "citylens/parcel-workflow-analytics@v1"
     bad["model_accuracy_claim"] = True
     bad["horizons"][0]["horizon_days"] = 5
+    bad["uncertainty_semantics"] = "Two-sided 95% Wilson score intervals."
     failures = validate_workflow_methodology(bad)
     assert any("analytics v3" in failure for failure in failures)
     assert any("must not claim model accuracy" in failure for failure in failures)
     assert any("fixed horizons" in failure for failure in failures)
+    assert any("API-level maturity-safe" in failure for failure in failures)
 
 
 def test_source_sla_validator_recomputes_age_and_warns_before_breach() -> None:

@@ -1359,9 +1359,16 @@ def test_workflow_events_and_prospective_analytics(auth_override) -> None:
     assert payload["total_records"] == 1
     assert payload["valid_saved_at_records"] == 1
     assert payload["maturity_windows"][0]["eligible_records"] == 0
+    assert payload["maturity_windows"][0]["rate"] is None
+    assert payload["maturity_windows"][0]["confidence_interval"] is None
     assert payload["funnel"]["contacted"] == 1
     assert payload["funnel"]["qualified"] == 1
     assert payload["funnel"]["contacted_per_saved"]["denominator"] == 1
+    assert payload["funnel"]["contacted_per_saved"]["rate"] is None
+    assert (
+        payload["funnel"]["contacted_per_saved"]["confidence_interval"]
+        is None
+    )
     assert payload["rank_snapshot_records"] == 1
     assert any(
         cohort["dimension"] == "rank_band"

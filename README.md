@@ -200,7 +200,9 @@ Current pinned release tag:
   270-day contract, and 365-day close rates with 95% Wilson intervals. A lead
   enters a denominator only
   after its full observation window; late-recorded milestones do not count as
-  on-time outcomes. The public, data-free
+  on-time outcomes. Point estimates and intervals remain `null` in both the
+  API and product until the minimum mature denominator is met. The public,
+  data-free
   `/v1/parcel-intel/workflow/analytics/methodology` endpoint publishes this
   contract for deployment verification. These are selected, user-saved
   workflow outcomes—not model accuracy, seller intent, or transaction

@@ -89,3 +89,7 @@ CityLens has four different credentials. They protect different things and never
   `adoption_measurement_class=synthetic_monitor` are excluded before aggregate
   product-event, workflow, and saved-view measurement. This classification is
   server-governed; product-event clients cannot self-exclude.
+- Verified market-open counters contain no parcel, inventory-size, filter,
+  geography, session, account, or source-fact value. Funnel rates are
+  suppressed until the report has at least 10 verified opens across three
+  non-synthetic users.

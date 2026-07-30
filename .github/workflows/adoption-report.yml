@@ -78,6 +78,7 @@ jobs:
           reuse = report["saved_view_reuse"]
           thesis = report["thesis_monitor_engagement"]
           composer = report["thesis_composer_engagement"]
+          funnel = report["acquisition_funnel"]
           audit = report["decision_audit_engagement"]
           underwriting = report["underwriting_engagement"]
           pilot = report["pilot_intake"]
@@ -99,6 +100,16 @@ jobs:
               "view record(s)"
           )
           print(f"- Parcel opens: `{report['events'].get('parcel_opened', 0)}`")
+          print(
+              f"- Verified market opens: "
+              f"`{funnel['market_explorer']['opened']}` across "
+              f"`{funnel['market_explorer']['users']}` user(s); "
+              f"`{funnel['parcel_review']['market_users_reached']}` reviewed "
+              "a parcel, "
+              f"`{funnel['comparison']['market_users_reached']}` compared, "
+              f"and `{funnel['workflow_create']['market_users_reached']}` "
+              f"created a workflow (`{funnel['evidence_gate']['status']}`)"
+          )
           print(
               f"- Canonical workflow records: `{inventory['records']}` "
               f"(`{inventory['active']}` active, "
@@ -172,6 +183,7 @@ jobs:
           composer_gate = report["thesis_composer_engagement"][
               "evidence_gate"
           ]
+          funnel_gate = report["acquisition_funnel"]["evidence_gate"]
           audit_gate = report["decision_audit_engagement"]["evidence_gate"]
           underwriting_gate = report["underwriting_engagement"][
               "evidence_gate"
@@ -206,6 +218,12 @@ jobs:
                   "::warning title=Constrained-thesis engagement is collecting::"
                   f"{composer_gate['applies_remaining']} apply event(s) and "
                   f"{composer_gate['users_remaining']} user(s) remain."
+              )
+          if funnel_gate["status"] != "ready":
+              print(
+                  "::warning title=Market-to-diligence evidence is collecting::"
+                  f"{funnel_gate['opens_remaining']} verified market open(s) "
+                  f"and {funnel_gate['users_remaining']} user(s) remain."
               )
           if audit_gate["status"] != "ready":
               print(

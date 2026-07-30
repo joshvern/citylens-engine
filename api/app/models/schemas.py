@@ -1190,6 +1190,7 @@ ParcelWorkflowEvidenceCheckStatus = Literal[
 ]
 
 ParcelProductEventName = Literal[
+    "market_explorer_opened",
     "parcel_opened",
     "official_dossier_opened",
     "screening_lookup_completed",
@@ -1206,6 +1207,7 @@ ParcelProductEventName = Literal[
 ]
 
 ParcelProductEventSource = Literal[
+    "full_inventory",
     "direct",
     "official_dossier",
     "screening_lookup",
@@ -1226,6 +1228,7 @@ ParcelProductEventSource = Literal[
 ]
 
 _PARCEL_PRODUCT_EVENT_SOURCES: dict[str, set[str]] = {
+    "market_explorer_opened": {"full_inventory"},
     "parcel_opened": {
         "direct",
         "map",
@@ -1254,11 +1257,11 @@ class ParcelProductEventCreate(BaseModel):
     """Value-minimized client event.
 
     Workflow and saved-view mutation counters are derived transactionally by
-    the API from canonical writes. Only parcel/comparison opens, official
-    dossier opens, decision-audit opens, underwriting opens/first adjustments,
-    saved-view applies, exact-BBL screening lookups, coarse screen-audit
-    interactions, constrained-thesis applies, and coarse saved-thesis
-    change-review opens remain client-reported.
+    the API from canonical writes. Only verified full-inventory explorer opens,
+    parcel/comparison opens, official dossier opens, decision-audit opens,
+    underwriting opens/first adjustments, saved-view applies, exact-BBL
+    screening lookups, coarse screen-audit interactions, constrained-thesis
+    applies, and coarse saved-thesis change-review opens remain client-reported.
     Parcel, official-dossier, saved-screen, and screen-audit comparison events
     and thesis-composer events carry no parcel or saved-view identifiers,
     addresses, owners, source facts, prompt text, filter values, queries,

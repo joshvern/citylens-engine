@@ -158,19 +158,22 @@ owns the browser UI.
     scores, ranks, or review markers. The evidence-change center includes
     submitted requests until they are resolved, dismissed, or withdrawn.
   - Aggregate product-adoption evidence is stored as one value-minimized
-    `product_usage_days` counter document per user/day. Workflow lifecycle
+    `product_usage_days` counter document per user/day. Workflow lifecycle,
     saved-view mutation, and saved-thesis baseline lifecycle counters are
     updated in the same transaction as their canonical mutations; parcel
-    opens, official-dossier opens,
+    opens, verified full-inventory market opens, official-dossier opens,
     comparison opens, decision-audit opens, underwriting opens/first
     adjustments, saved-view applies, and saved-thesis change-review opens
-    remain directional client counters.
+    remain directional client counters. The v16 report exposes a
+    market-to-review-to-comparison-to-workflow same-window funnel, but withholds
+    its rates until at least 10 verified market opens across three users.
     Firestore user records explicitly classified as
     `adoption_measurement_class=synthetic_monitor` are excluded before
     aggregation so scheduled production verification cannot inflate product
     adoption. The aggregate report exposes only exclusion counts, not actor
     identities.
-    Official-dossier events contain no BBL, address, owner, source fact,
+    Market-open events contain no inventory size, filter, geography, parcel,
+    session, account, or source-fact value. Official-dossier events contain no BBL, address, owner, source fact,
     readiness state, lead membership, or result. Comparison events contain no
     parcel IDs or compared values. Decision-audit events identify only the posture or tab
     entry point. Underwriting events identify only the Underwrite tab or first

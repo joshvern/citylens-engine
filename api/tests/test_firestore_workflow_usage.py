@@ -154,6 +154,50 @@ def test_workflow_lifecycle_usage_is_transactional_and_idempotent(
     assert client.documents[usage_path]["events"]["workflow_archived"] == 1
 
 
+def test_underwriting_workflow_source_is_transactional_and_value_minimized(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(firestore_store, "utcnow", lambda: now)
+    monkeypatch.setattr(
+        firestore_store.firestore,
+        "transactional",
+        lambda function: function,
+    )
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+
+    store.upsert_parcel_workflow(
+        app_user_id="private-user",
+        bbl="3020960069",
+        payload={
+            "borough": "brooklyn",
+            "stage": "reviewing",
+            "snapshot": {"citywide_rank": 12},
+        },
+        entry_source="underwriting",
+    )
+
+    usage = client.documents[
+        (
+            "users",
+            "private-user",
+            "product_usage_days",
+            "2026-07-24",
+        )
+    ]
+    assert usage["events"] == {"workflow_created": 1}
+    assert usage["sources"] == {"workflow_created:underwriting": 1}
+    assert not {
+        "bbl",
+        "address",
+        "owner",
+        "notes",
+        "tags",
+        "entry_source",
+    }.intersection(usage)
+
+
 def test_comparison_advance_is_atomic_and_attributed_without_identifiers(
     monkeypatch,
 ) -> None:

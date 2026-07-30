@@ -24,6 +24,7 @@ class FakeWorkflowStore:
         self.product_events: list[dict] = []
         self.searches: dict[str, dict] = {}
         self.evidence_issues: dict[str, dict] = {}
+        self.entry_sources: list[str] = []
 
     def list_parcel_workflow(
         self, *, app_user_id: str, include_archived: bool = False
@@ -38,7 +39,15 @@ class FakeWorkflowStore:
     ) -> dict | None:
         return self.items.get(bbl)
 
-    def upsert_parcel_workflow(self, *, app_user_id: str, bbl: str, payload: dict) -> dict:
+    def upsert_parcel_workflow(
+        self,
+        *,
+        app_user_id: str,
+        bbl: str,
+        payload: dict,
+        entry_source: str = "parcel",
+    ) -> dict:
+        self.entry_sources.append(entry_source)
         now = datetime.now(timezone.utc)
         existing = self.items.get(bbl, {})
         effective_payload = dict(payload)
@@ -442,6 +451,28 @@ def test_workflow_crud(auth_override) -> None:
     assert removed.status_code == 204
     assert client.get("/v1/parcel-intel/workflow").json() == []
     assert client.get("/v1/parcel-intel/workflow/3020960069").json() is None
+
+
+def test_underwriting_entry_source_is_aggregate_only(auth_override) -> None:
+    auth_override(app_user_id="underwriting-user")
+    store = FakeWorkflowStore()
+    app.dependency_overrides[parcel_workflow.get_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.put(
+        "/v1/parcel-intel/workflow/3020960069",
+        json={
+            "borough": "brooklyn",
+            "entry_source": "underwriting",
+            "stage": "reviewing",
+            "next_action": "Validate current capacity and cost assumptions.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert store.entry_sources == ["underwriting"]
+    assert "entry_source" not in response.json()
+    assert "entry_source" not in store.items["3020960069"]
 
 
 def test_comparison_handoff_creates_restores_and_preserves_active_work(

@@ -1287,6 +1287,14 @@ class ParcelProductEventCreate(BaseModel):
 
 class ParcelWorkflowUpdate(BaseModel):
     borough: Literal["manhattan", "brooklyn", "queens", "bronx", "staten_island"]
+    entry_source: Literal["parcel", "underwriting"] = Field(
+        default="parcel",
+        exclude=True,
+        description=(
+            "Value-minimized creation source used only for aggregate workflow "
+            "adoption evidence; never persisted on the parcel record."
+        ),
+    )
     stage: ParcelWorkflowStage = "new"
     notes: str = Field(default="", max_length=4000)
     tags: list[str] = Field(default_factory=list, max_length=10)

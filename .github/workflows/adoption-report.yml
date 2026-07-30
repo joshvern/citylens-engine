@@ -150,7 +150,10 @@ jobs:
               f"- Underwriting: `{underwriting['opened']}` opens and "
               f"`{underwriting['first_adjustments']}` first adjustment(s) "
               f"across `{underwriting['adjustment_users']}` adjusting "
-              f"user(s) (`{underwriting['evidence_gate']['status']}`)"
+              f"user(s) (`{underwriting['evidence_gate']['status']}`); "
+              f"`{underwriting['workflow_creates']}` canonical workflow "
+              f"create(s) across `{underwriting['workflow_users']}` user(s) "
+              f"(`{underwriting['handoff_gate']['status']}`)"
           )
           print(
               f"- Pilot requests: `{pilot['records']}` total, "
@@ -189,6 +192,9 @@ jobs:
           audit_gate = report["decision_audit_engagement"]["evidence_gate"]
           underwriting_gate = report["underwriting_engagement"][
               "evidence_gate"
+          ]
+          underwriting_handoff_gate = report["underwriting_engagement"][
+              "handoff_gate"
           ]
           pilot = report["pilot_intake"]
           if gate["status"] != "ready":
@@ -243,6 +249,14 @@ jobs:
                   "adjustment event(s), and "
                   f"{underwriting_gate['adjustment_users_remaining']} "
                   "adjusting user(s) remain."
+              )
+          if underwriting_handoff_gate["status"] != "ready":
+              print(
+                  "::warning title=Underwriting-to-workflow evidence is collecting::"
+                  f"{underwriting_handoff_gate['workflow_creates_remaining']} "
+                  "canonical workflow create(s) and "
+                  f"{underwriting_handoff_gate['users_remaining']} user(s) "
+                  "remain."
               )
           if pilot["new_requests_waiting"]:
               print(

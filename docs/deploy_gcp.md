@@ -1094,6 +1094,7 @@ Failure modes to watch for:
 - 401 on `/v1/runs` → the JWT failed JWKS verification. Check `CITYLENS_AUTH_JWKS_URL` is reachable from the Cloud Run service and that the issuer/audience claims line up.
 - 429 with `code=MONTHLY_QUOTA_EXCEEDED` after 5 successful runs → expected free-plan behavior; promote yourself by adding your email to `CITYLENS_ADMIN_EMAILS` (must be `email_verified=true`) or by sub via `CITYLENS_ADMIN_AUTH_SUBS`.
 - Trigger-failure path: if the Cloud Run Job trigger fails, the API decrements the monthly counter automatically. Check the API logs for the `failed to trigger worker job` log line and the run doc's `error.code=TRIGGER_FAILED`.
+- Intermittent saved-search PUT/DELETE 500 with `The referenced transaction has expired or is no longer valid` → deploy engine `6d99e5b` or later. That release retries only this exact Firestore transaction-expiry condition with a fresh transaction. Do not broaden retries to every `InvalidArgument`.
 
 ### 11c) Docs gate smoke-test
 

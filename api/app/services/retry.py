@@ -25,6 +25,22 @@ _TRANSIENT_EXCEPTIONS = tuple(
     if exc is not None
 )
 
+_EXPIRED_TRANSACTION_DETAIL = (
+    "the referenced transaction has expired or is no longer valid"
+)
+
+
+def _is_transient_exception(exc: Exception) -> bool:
+    if isinstance(exc, _TRANSIENT_EXCEPTIONS):
+        return True
+
+    # Firestore occasionally reports an expired transaction as INVALID_ARGUMENT
+    # rather than ABORTED. Retrying every InvalidArgument would hide real request
+    # defects, so recognize only the service's exact transient transaction detail.
+    return isinstance(exc, gexc.InvalidArgument) and (
+        _EXPIRED_TRANSACTION_DETAIL in str(exc).casefold()
+    )
+
 
 def retry_transient(
     fn: Callable[[], T],
@@ -39,7 +55,9 @@ def retry_transient(
     for attempt in range(1, max_attempts + 1):
         try:
             return fn()
-        except _TRANSIENT_EXCEPTIONS as exc:  # type: ignore[misc]
+        except Exception as exc:
+            if not _is_transient_exception(exc):
+                raise
             last_exc = exc
             if attempt >= max_attempts:
                 break

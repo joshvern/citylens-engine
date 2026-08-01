@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from google.api_core import exceptions as gexc
 
-from app.services import firestore_store
+from app.services import firestore_store, retry
 from app.services.firestore_store import (
     FirestoreStore,
     StaleSavedSearchSnapshot,
@@ -753,6 +754,52 @@ def test_saved_view_lifecycle_usage_is_transactional_private_and_idempotent(
         search_id="private-search-id",
     )
     assert client.documents[usage_path]["events"]["saved_view_deleted"] == 1
+
+
+def test_saved_view_upsert_restarts_an_expired_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def transactional(function):
+        def wrapped(transaction):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise gexc.InvalidArgument(
+                    "The referenced transaction has expired or is no longer valid."
+                )
+            return function(transaction)
+
+        return wrapped
+
+    monkeypatch.setattr(firestore_store.firestore, "transactional", transactional)
+    monkeypatch.setattr(retry.time, "sleep", lambda _seconds: None)
+    client = _Client()
+    store = FirestoreStore(project_id="test", client=client)  # type: ignore[arg-type]
+
+    saved = store.upsert_parcel_saved_search(
+        app_user_id="private-user",
+        search_id="transaction-recovery",
+        payload={
+            "schema_version": "citylens/parcel-saved-view@v2",
+            "name": "Recovered saved screen",
+            "borough": "all",
+            "filters": {"priority": "highest", "overlay": "priority"},
+            "alert_frequency": "off",
+        },
+    )
+
+    assert attempts == 2
+    assert saved["name"] == "Recovered saved screen"
+    assert client.documents[
+        (
+            "users",
+            "private-user",
+            "parcel_saved_searches",
+            "transaction-recovery",
+        )
+    ]["search_id"] == "transaction-recovery"
 
 
 def test_saved_thesis_baselines_are_monotonic_private_and_transactional(

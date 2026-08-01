@@ -333,6 +333,11 @@ Current pinned release tag:
   conservatively rather than being labeled a market change. Baselines are
   monotonic: a stale browser cannot overwrite a newer feed generation, and a
   metadata-only update cannot silently remove an existing baseline.
+  Saved-view transactions use the shared transient retry boundary. Firestore
+  can classify an expired transaction as `InvalidArgument`; the API retries
+  only the exact `referenced transaction has expired or is no longer valid`
+  condition with a fresh transaction. Other invalid arguments remain
+  fail-fast so request defects are never hidden.
 - Authenticated Parcel Intelligence clients may submit the strict
   `citylens/parcel-product-event@v1` contract to
   `POST /v1/parcel-intel/product-events`. The endpoint accepts only coarse

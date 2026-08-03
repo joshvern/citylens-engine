@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "ruff>=0.3"]
+dev = ["pytest>=7.4", "ruff>=0.16.1"]
 
 # The worker's core, SAM2, LiDAR, and CPU Torch graph is locked at the
 # workspace root. Updating any of these is an intentional manifest + lockfile

@@ -312,7 +312,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.25" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.13.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3" },

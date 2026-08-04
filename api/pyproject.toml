@@ -19,7 +19,7 @@ dependencies = [
   "google-auth>=2.25",
   "requests>=2.31",
   "httpx>=0.25",
-  "pyjwt[crypto]>=2.8",
+  "pyjwt[crypto]>=2.13.0",
   "citylens-core @ git+https://github.com/joshvern/citylens-core.git@v0.3.25",
 ]
 

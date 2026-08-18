@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import PlainTextResponse, Response
 
+from .routes.admin_runs import router as admin_runs_router
+from .routes.admin_users import router as admin_users_router
 from .routes.api_keys import router as api_keys_router
 from .routes.demo import router as demo_router
 from .routes.health import router as health_router
@@ -231,6 +233,10 @@ async def security_headers_middleware(
         # Intake responses can include validation detail or private queue
         # records and must never enter a browser or intermediary cache.
         response.headers.setdefault("Cache-Control", "no-store")
+    if request.url.path.startswith("/v1/admin/"):
+        # Admin user records carry account PII. Cover early 401/403/422
+        # responses as well as successful route responses.
+        response.headers.setdefault("Cache-Control", "private, no-store")
     if request.url.path.startswith(
         _PRIVATE_PARCEL_ROUTE_PREFIXES
     ) and request.url.path != "/v1/parcel-intel/workflow/analytics/methodology":
@@ -307,6 +313,8 @@ app.include_router(run_options_router, prefix="/v1")
 app.include_router(me_router, prefix="/v1")
 app.include_router(runs_router, prefix="/v1")
 app.include_router(api_keys_router, prefix="/v1")
+app.include_router(admin_users_router, prefix="/v1")
+app.include_router(admin_runs_router, prefix="/v1")
 
 
 __all__ = ["app", "Settings"]

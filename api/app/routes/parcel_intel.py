@@ -12,9 +12,14 @@ Access tiers:
 - `/v1/parcel-intel/sweep` is a public *preview* + authenticated *full
   feed*. Anonymous callers get at most `_ANON_TOP_CAP` rows with premium
   fields stripped (calibration bands, SHAP attributions, change signal,
-  owner of record). Any valid credential — Neon Auth JWT, `clk_live_`
-  user API key, or admin X-API-Key — unlocks the full feed. Invalid
-  credentials 401 rather than silently downgrading.
+  owner of record). Authenticated callers are served according to their
+  plan's feed entitlement (`services/plans.py::feed_entitlement`) — under
+  the shipped policy table every plan (free, acquisitions, concierge,
+  admin, and the internal smoke_read_only) receives the full feed, so any
+  valid credential — Neon Auth JWT, `clk_live_` user API key, or admin
+  X-API-Key — unlocks it. Tightening a tier is a plans.py policy edit,
+  not a route change here. Invalid credentials 401 rather than silently
+  downgrading.
 
 Caching strategy:
 - Process-level: a module-level registry caches parsed JSONL keyed on
@@ -33,6 +38,7 @@ import json
 import logging
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -75,6 +81,7 @@ from ..services.parcel_official_dossier import (
 from ..services.parcel_sales_comparables import (
     ParcelSalesComparableService,
 )
+from ..services.plans import ANONYMOUS_FEED_ROW_CAP, feed_entitlement
 from ..services.rate_limit import demo_rate_limit, enforce_token_bucket
 from ..services.settings import Settings, get_settings
 
@@ -93,8 +100,10 @@ _MAP_CACHE = "public, s-maxage=600, stale-while-revalidate=300"
 _MAP_CACHE_AUTHED = "private, no-store"
 
 # Anonymous preview cap: unauthenticated callers get at most this many
-# rows per borough (silently clamped, not an error).
-_ANON_TOP_CAP = 25
+# rows per borough (silently clamped, not an error). The value lives in the
+# plan registry so the anonymous tier is governed by the same policy table
+# as authenticated plans.
+_ANON_TOP_CAP = ANONYMOUS_FEED_ROW_CAP
 # One borough may contain well over the former 1,000-row quota now that
 # publication uses a citywide merit order with only a borough floor. Keep the
 # authenticated sweep ceiling aligned with the complete published inventory
@@ -105,6 +114,14 @@ _PUBLISHED_INVENTORY_LIMIT = 5_000
 # Data older than this is flagged stale on the index (the sweep cadence
 # is monthly; 45 days means a missed retrain/publish cycle).
 _STALE_THRESHOLD_DAYS = 45.0
+
+# The manifest pointer and prospective-validation status are re-read from GCS
+# at most this often (monotonic clock). The publish cadence is monthly and
+# anonymous responses are already edge-cached for 10 minutes, so a 60s window
+# only removes the per-request GCS round trip; a republish becomes visible
+# within a minute, after which the existing generation-keyed invalidation
+# drops the row caches exactly as before.
+_MANIFEST_TTL_SECONDS = 60.0
 
 # Competing-project evidence is operationally different from quarterly parcel
 # facts. A newly filed DOB or ZAP project can make outreach inappropriate
@@ -184,11 +201,28 @@ class ParcelIntelRegistry:
         self._lock = threading.Lock()
         self._manifest: dict[str, Any] | None = None
         self._manifest_cache_key: str | None = None
+        self._manifest_fetched_at: float | None = None
         self._rows_by_borough: dict[tuple[str, str], list[dict]] = {}
+        self._validated_rows_by_borough: dict[
+            tuple[str, str], list[ParcelIntelRow]
+        ] = {}
         self._map_rows: dict[str, list[ParcelIntelMapRow]] = {}
         self._screening_rows: dict[
             str, dict[str, ParcelScreeningLedgerRow]
         ] = {}
+        self._prospective_cache: tuple[
+            str, ParcelProspectiveValidationStatus | None
+        ] | None = None
+        self._prospective_fetched_at: float | None = None
+
+    def expire_ttl_caches(self) -> None:
+        """Force the next request to re-read manifest + prospective status
+        from GCS, as if the TTL had elapsed (test/ops hook). Generation-keyed
+        row caches are untouched — they still invalidate only when a refresh
+        observes a new generation, preserving the mixed-feed protection."""
+        with self._lock:
+            self._manifest_fetched_at = None
+            self._prospective_fetched_at = None
 
     def _gcs_object_name(self, leaf: str) -> str:
         return f"{_GCS_PREFIX}/{leaf}"
@@ -350,6 +384,17 @@ class ParcelIntelRegistry:
         return payload, metadata["row_count"]
 
     def _refresh_manifest(self, gcs: GcsArtifacts) -> dict[str, Any]:
+        # TTL fast path: skip the GCS round trip while the last successful
+        # manifest read is fresh. The manifest dict is treated as immutable
+        # by all readers.
+        with self._lock:
+            if (
+                self._manifest is not None
+                and self._manifest_fetched_at is not None
+                and time.monotonic() - self._manifest_fetched_at
+                < _MANIFEST_TTL_SECONDS
+            ):
+                return self._manifest
         try:
             payload, _ = gcs.download_bytes(object_name=self._gcs_object_name("manifest.json"))
         except FileNotFoundError as exc:
@@ -380,10 +425,12 @@ class ParcelIntelRegistry:
             if new_key != self._manifest_cache_key:
                 # Drop borough caches; they'll lazy-reload on next read.
                 self._rows_by_borough = {}
+                self._validated_rows_by_borough = {}
                 self._map_rows = {}
                 self._screening_rows = {}
                 self._manifest_cache_key = new_key
             self._manifest = manifest
+            self._manifest_fetched_at = time.monotonic()
         return manifest
 
     def index(self, gcs: GcsArtifacts) -> ParcelIntelIndex:
@@ -446,10 +493,41 @@ class ParcelIntelRegistry:
         *,
         now: datetime,
     ) -> ParcelProspectiveValidationStatus | None:
-        """Load only a strict, parcel-free status for the active generation."""
+        """Load only a strict, parcel-free status for the active generation.
+
+        The validated outcome is cached per active generation with the same
+        60s TTL as the manifest, so /index doesn't re-download the status
+        object on every request. A generation change bypasses the cache
+        immediately regardless of age."""
         active_generation = manifest.get("artifact_generation")
         if not isinstance(active_generation, str):
             return None
+        with self._lock:
+            if (
+                self._prospective_cache is not None
+                and self._prospective_cache[0] == active_generation
+                and self._prospective_fetched_at is not None
+                and time.monotonic() - self._prospective_fetched_at
+                < _MANIFEST_TTL_SECONDS
+            ):
+                return self._prospective_cache[1]
+        status = self._load_prospective_validation(
+            gcs,
+            active_generation,
+            now=now,
+        )
+        with self._lock:
+            self._prospective_cache = (active_generation, status)
+            self._prospective_fetched_at = time.monotonic()
+        return status
+
+    def _load_prospective_validation(
+        self,
+        gcs: GcsArtifacts,
+        active_generation: str,
+        *,
+        now: datetime,
+    ) -> ParcelProspectiveValidationStatus | None:
         try:
             body, content_type = gcs.download_bytes(
                 object_name=_PROSPECTIVE_STATUS_OBJECT
@@ -550,7 +628,14 @@ class ParcelIntelRegistry:
         cache_id = (cache_key, slug)
 
         with self._lock:
+            validated = self._validated_rows_by_borough.get(cache_id)
             cached = self._rows_by_borough.get(cache_id)
+        if validated is not None:
+            # Constructed-model fast path: skip re-validating up to 5,000
+            # Pydantic rows per request. Keyed by generation, so a republish
+            # invalidates it together with the raw rows. Callers never mutate
+            # rows (tier stripping uses model_copy), so sharing is safe.
+            return validated, manifest
         if cached is None:
             try:
                 payload, expected_rows = self._download_artifact(
@@ -635,6 +720,8 @@ class ParcelIntelRegistry:
                 bad_rows,
                 len(rows),
             )
+        with self._lock:
+            self._validated_rows_by_borough[cache_id] = rows
         return rows, manifest
 
     def citywide_map(
@@ -1346,14 +1433,15 @@ def parcel_intel_map(
     registry: ParcelIntelRegistry = Depends(get_registry),
 ) -> ParcelIntelMapResponse:
     rows, manifest = registry.citywide_map(gcs)
-    if auth is not None:
-        # Authenticated citywide access means the complete published
+    entitlement = feed_entitlement(auth)
+    if entitlement.feed_row_cap is None:
+        # A full-inventory entitlement means the complete published
         # inventory. The publication policy may intentionally emit more than
         # 1,000 rows in one borough, so applying the legacy per-borough cap
         # here would silently truncate a verified 5,000-row generation.
         selected = list(rows)
     else:
-        cap = min(top_per_borough, _ANON_TOP_CAP)
+        cap = min(top_per_borough, entitlement.feed_row_cap)
         counts: dict[str, int] = {}
         selected = []
         for row in rows:
@@ -1361,7 +1449,9 @@ def parcel_intel_map(
             if count >= cap:
                 continue
             counts[row.borough] = count + 1
-            selected.append(_strip_map_premium_fields(row))
+            selected.append(row)
+    if not entitlement.include_premium_fields:
+        selected = [_strip_map_premium_fields(row) for row in selected]
     response.headers["Cache-Control"] = (
         _MAP_CACHE_AUTHED if auth is not None else _MAP_CACHE
     )
@@ -1372,9 +1462,12 @@ def parcel_intel_map(
     response.headers["Vary"] = (
         "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
     )
-    response.headers["X-CityLens-Inventory-Scope"] = (
-        "authenticated_full" if auth is not None else "public_preview"
-    )
+    # Scope metadata derives from the entitlement (not `auth is not None`),
+    # so it can never lie the day a policy tightens a tier: a capped or
+    # premium-stripped authenticated tier would surface as
+    # "authenticated_limited". Under today's policy table the emitted
+    # values are byte-identical to before.
+    response.headers["X-CityLens-Inventory-Scope"] = entitlement.access_scope
     response.headers["X-CityLens-Inventory-Count"] = str(len(selected))
     response.headers["X-CityLens-Inventory-Available"] = str(len(rows))
     return ParcelIntelMapResponse(
@@ -1385,9 +1478,7 @@ def parcel_intel_map(
             if isinstance(manifest.get("artifact_generation"), str)
             else None
         ),
-        access_scope=(
-            "authenticated_full" if auth is not None else "public_preview"
-        ),
+        access_scope=entitlement.access_scope,
         requested_top_per_borough=top_per_borough,
         returned_count=len(selected),
         available_count=len(rows),
@@ -1408,15 +1499,21 @@ def parcel_intel_parcel(
     registry: ParcelIntelRegistry = Depends(get_registry),
 ) -> ParcelIntelParcelResponse:
     row, manifest = registry.parcel(gcs, bbl)
-    if auth is None:
+    entitlement = feed_entitlement(auth)
+    if entitlement.feed_row_cap is not None:
+        # Row-capped tiers may only see parcels inside their preview
+        # window; anything deeper 404s rather than confirming existence.
         rank = row.acquisition_rank
-        if not isinstance(rank, int) or rank > _ANON_TOP_CAP:
+        if not isinstance(rank, int) or rank > entitlement.feed_row_cap:
             raise HTTPException(status_code=404, detail="Parcel not found")
-        response.headers["Cache-Control"] = _SWEEP_CACHE
-        served_row = _strip_premium_fields(row)
-    else:
-        response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
-        served_row = row
+    response.headers["Cache-Control"] = (
+        _SWEEP_CACHE if auth is None else _SWEEP_CACHE_AUTHED
+    )
+    served_row = (
+        row
+        if entitlement.include_premium_fields
+        else _strip_premium_fields(row)
+    )
     response.headers["Vary"] = (
         "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
     )
@@ -1425,7 +1522,7 @@ def parcel_intel_parcel(
         decision_audit=build_parcel_decision_audit(
             served_row,
             manifest,
-            premium_access=auth is not None,
+            premium_access=entitlement.include_premium_fields,
         ),
     )
 
@@ -1451,13 +1548,18 @@ def parcel_intel_sweep(
 ) -> ParcelIntelSweepResponse:
     rows, manifest = registry.borough(gcs, borough)
 
-    if auth is None:
-        # Anonymous preview tier: clamp row count + strip premium fields.
-        rows = [_strip_premium_fields(r) for r in rows[: min(top, _ANON_TOP_CAP)]]
-        response.headers["Cache-Control"] = _SWEEP_CACHE
-    else:
-        rows = rows[:top]
-        response.headers["Cache-Control"] = _SWEEP_CACHE_AUTHED
+    entitlement = feed_entitlement(auth)
+    limit = (
+        top
+        if entitlement.feed_row_cap is None
+        else min(top, entitlement.feed_row_cap)
+    )
+    rows = rows[:limit]
+    if not entitlement.include_premium_fields:
+        rows = [_strip_premium_fields(r) for r in rows]
+    response.headers["Cache-Control"] = (
+        _SWEEP_CACHE if auth is None else _SWEEP_CACHE_AUTHED
+    )
     response.headers["Vary"] = (
         "Authorization, X-API-Key, X-CityLens-Parcel-Smoke-Key"
     )

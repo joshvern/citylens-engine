@@ -25,13 +25,25 @@ def main() -> int:
     store = FirestoreStore(project_id=settings.project_id, runs_collection=settings.runs_collection)
     gcs = GcsArtifacts(bucket=settings.bucket)
 
-    run_doc = store.get_run(run_id)
-    if not run_doc:
+    # Transactional claim guard: a queued execution can be delayed long
+    # enough for the stuck-run reconciler to fail + refund the run. Writing
+    # "running" unconditionally here would resurrect that terminal run and
+    # let a refunded run finish as succeeded (a free run). The claim
+    # re-reads status inside a transaction and refuses terminal runs.
+    claimed, run_doc = store.claim_run_for_processing(run_id)
+    if run_doc is None:
         raise RuntimeError(f"Run not found: {run_id}")
-
-    store.update_run(
-        run_id, {"status": "running", "stage": "starting", "progress": 1, "error": None}
-    )
+    if not claimed:
+        # Exit 0 on purpose: a non-zero exit could retrigger the job, and
+        # there is nothing to retry — the run already reached a terminal
+        # state ("failed" or "succeeded") owned by someone else.
+        logger.warning(
+            "run %s is already terminal (%s); exiting without processing",
+            run_id,
+            str(run_doc.get("status") or "unknown"),
+            extra={"run_id": run_id, "stage": "startup"},
+        )
+        return 0
 
     try:
         request_dict = dict(run_doc.get("request") or {})

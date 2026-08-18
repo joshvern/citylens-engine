@@ -6,6 +6,7 @@ from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
 from ..services.quotas import get_quota_state
+from ..services.rate_limit import me_rate_limit
 from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["me"])
@@ -29,6 +30,7 @@ def get_store(settings: Settings = Depends(get_settings)) -> FirestoreStore:
 def me(
     auth: AuthContext = Depends(require_auth),
     store: FirestoreStore = Depends(get_store),
+    _rate_limit: None = Depends(me_rate_limit),
 ) -> dict:
     quota = get_quota_state(store=store, app_user_id=auth.app_user_id, plan_type=auth.plan_type)
     return {

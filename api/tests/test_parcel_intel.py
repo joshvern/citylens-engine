@@ -59,13 +59,17 @@ def _reset_registry_and_overrides():
 
 
 def _authed(
-    *, app_user_id: str = "user-pi-1", plan_type: str = "free", is_admin: bool = False
+    *,
+    app_user_id: str = "user-pi-1",
+    plan_type: str = "free",
+    is_admin: bool = False,
+    auth_provider: str = "mock",
 ) -> AuthContext:
     """Install a maybe_auth override so the sweep sees an authenticated
     caller. Cleared by the autouse fixture above."""
     ctx = AuthContext(
         app_user_id=app_user_id,
-        auth_provider="mock",
+        auth_provider=auth_provider,
         auth_subject=f"sub-{app_user_id}",
         email=f"{app_user_id}@example.com",
         email_verified=True,
@@ -1528,11 +1532,14 @@ def test_parcel_intel_invalidates_cache_on_new_generated_at(monkeypatch) -> None
     first = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
     assert first.json()["rows"][0]["address"] == "ROW V1"
 
-    # Simulate a republish: bump generated_at + swap rows.
+    # Simulate a republish: bump generated_at + swap rows. The manifest
+    # pointer is TTL-cached for 60s, so also simulate the TTL elapsing —
+    # generation-keyed row-cache invalidation is what's under test here.
     fake._store["parcel-intel/v1/manifest.json"] = json.dumps(
         _manifest(["brooklyn"], generated_at="2026-05-09T00:00:00+00:00")
     ).encode("utf-8")
     fake._store["parcel-intel/v1/brooklyn.jsonl"] = (json.dumps(rows_v2[0]) + "\n").encode("utf-8")
+    parcel_intel_routes._REGISTRY.expire_ttl_caches()
 
     second = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
     assert second.json()["rows"][0]["address"] == "ROW V2"
@@ -1686,6 +1693,9 @@ def test_atomic_cache_uses_generation_even_when_generated_at_is_unchanged(
         generated_at=generated_at,
     )._store
     fake._store.update(second_store)
+    # Simulate the manifest TTL elapsing so the refresh observes the new
+    # generation; the generation-keyed invalidation is what's under test.
+    parcel_intel_routes._REGISTRY.expire_ttl_caches()
 
     second = client.get(
         "/v1/parcel-intel/sweep",
@@ -1839,6 +1849,126 @@ def test_authed_sweep_full_rows_and_no_store_header(monkeypatch) -> None:
     assert served["environmental_designation_kind"] == "restrictive_declaration"
     # Authenticated payloads must never sit in a shared cache.
     assert r.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize(
+    ("auth_provider", "plan_type", "is_admin"),
+    [
+        # Signed-in free user (Neon Auth JWT) — the common web session.
+        ("mock", "free", False),
+        # clk_live_ programmatic key on the free plan — this is exactly the
+        # Vercel SSR "vercel-server-feed" credential the live product uses.
+        ("user_api_key", "free", False),
+        ("user_api_key", "acquisitions", False),
+        ("mock", "concierge", False),
+        ("mock", "admin", True),
+        # Internal production-smoke credential: full feed is deliberate —
+        # the scheduled smoke asserts the complete authenticated inventory.
+        ("parcel_smoke_api_key", "smoke_read_only", False),
+        # Unknown persisted plan must fall back to the free entitlement
+        # (which today is still the full feed).
+        ("mock", "unrecognized-plan", False),
+    ],
+)
+def test_each_authenticated_tier_gets_identical_full_feed(
+    monkeypatch, auth_provider: str, plan_type: str, is_admin: bool
+) -> None:
+    """Entitlement lock for the shipped policy table: every authenticated
+    plan receives the complete inventory with premium fields, byte-identical
+    across tiers. Tightening a tier is a plans.py policy edit and must
+    update this test alongside it."""
+
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            f"30200003{i:02d}",
+            acquisition_rank=i + 1,
+            score_calibrated_p10=0.6,
+            score_calibrated_p90=0.95,
+            owner_name="ACME REALTY LLC",
+            recent_change=True,
+        )
+        for i in range(30)
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    _authed(plan_type=plan_type, is_admin=is_admin, auth_provider=auth_provider)
+    client = TestClient(app)
+
+    sweep = client.get(
+        "/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 5000}
+    )
+    assert sweep.status_code == 200, sweep.text
+    served = sweep.json()["rows"]
+    assert len(served) == 30  # beyond the 25-row anonymous cap
+    assert served[0]["score_calibrated_p10"] == 0.6
+    assert served[0]["owner_name"] == "ACME REALTY LLC"
+    assert served[0]["recent_change"] is True
+    assert sweep.headers["cache-control"] == "private, no-store"
+
+    map_resp = client.get(
+        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+    )
+    assert map_resp.status_code == 200, map_resp.text
+    map_body = map_resp.json()
+    assert map_body["access_scope"] == "authenticated_full"
+    assert map_body["returned_count"] == 30
+    assert map_body["inventory_complete"] is True
+    assert map_body["rows"][0]["owner_name"] == "ACME REALTY LLC"
+    assert map_resp.headers["cache-control"] == "private, no-store"
+
+    # A parcel deeper than the anonymous preview window stays reachable
+    # with premium data intact.
+    deep = client.get("/v1/parcel-intel/parcel/3020000329")
+    assert deep.status_code == 200, deep.text
+    assert deep.json()["acquisition_rank"] == 30
+    assert deep.json()["owner_name"] == "ACME REALTY LLC"
+    assert deep.json()["score_calibrated_p90"] == 0.95
+
+
+def test_anonymous_tier_stays_capped_stripped_and_edge_cacheable(
+    monkeypatch,
+) -> None:
+    """Companion to the authenticated-tier lock above: no credential means
+    the 25-row preview, premium values stripped, public cache headers, and
+    no deep-parcel access."""
+
+    _set_required_env(monkeypatch)
+    rows = [
+        _row(
+            f"30200003{i:02d}",
+            acquisition_rank=i + 1,
+            score_calibrated_p10=0.6,
+            owner_name="ACME REALTY LLC",
+            recent_change=True,
+        )
+        for i in range(30)
+    ]
+    fake = _make_fake_gcs(["brooklyn"], {"brooklyn": rows})
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+    client = TestClient(app)
+
+    sweep = client.get(
+        "/v1/parcel-intel/sweep", params={"borough": "brooklyn", "top": 5000}
+    )
+    assert sweep.status_code == 200, sweep.text
+    served = sweep.json()["rows"]
+    assert len(served) == 25
+    assert served[0]["score_calibrated_p10"] is None
+    assert served[0]["owner_name"] is None
+    assert served[0]["recent_change"] is False
+    assert "s-maxage=600" in sweep.headers["cache-control"]
+
+    map_resp = client.get(
+        "/v1/parcel-intel/map", params={"top_per_borough": 1000}
+    )
+    assert map_resp.status_code == 200, map_resp.text
+    assert map_resp.json()["access_scope"] == "public_preview"
+    assert map_resp.json()["returned_count"] == 25
+    assert map_resp.json()["rows"][0]["owner_name"] is None
+
+    deep = client.get("/v1/parcel-intel/parcel/3020000329")
+    assert deep.status_code == 404
 
 
 def test_invalid_bearer_on_sweep_is_401_not_anon_downgrade(monkeypatch) -> None:
@@ -2067,3 +2197,92 @@ def test_change_and_owner_fields_default_when_absent(monkeypatch) -> None:
     assert served["change_latest_imagery_year"] is None
     assert served["recent_change"] is False
     assert served["owner_name"] is None
+
+
+# --- TTL caches: manifest, prospective status, validated rows ---
+
+
+def test_manifest_is_ttl_cached_across_requests(monkeypatch) -> None:
+    """Within the 60s TTL, repeated requests must not re-download
+    manifest.json from GCS."""
+    _set_required_env(monkeypatch)
+    fake = _make_fake_gcs(["brooklyn"])
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    for _ in range(3):
+        r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+        assert r.status_code == 200, r.text
+
+    manifest_fetches = fake.requests.count("parcel-intel/v1/manifest.json")
+    assert manifest_fetches == 1
+
+    # After the TTL elapses the manifest is re-read (and, unchanged
+    # generation, the borough cache is retained: no extra JSONL fetch).
+    parcel_intel_routes._REGISTRY.expire_ttl_caches()
+    r = client.get("/v1/parcel-intel/sweep", params={"borough": "brooklyn"})
+    assert r.status_code == 200, r.text
+    assert fake.requests.count("parcel-intel/v1/manifest.json") == 2
+    assert fake.requests.count("parcel-intel/v1/brooklyn.jsonl") == 1
+
+
+def test_prospective_status_is_ttl_cached_on_index(monkeypatch) -> None:
+    _set_required_env(monkeypatch)
+    monkeypatch.setattr(
+        parcel_intel_routes,
+        "_utc_now",
+        lambda: datetime(2026, 7, 24, 12, tzinfo=timezone.utc),
+    )
+    generation = "20260723T230308737433Z-aaaaaaaaaaaa"
+    fake = _make_atomic_fake_gcs(["brooklyn"], generation=generation)
+    fake._store["parcel-intel/v1/prospective-validation.json"] = (
+        json.dumps(_prospective_status(generation)).encode("utf-8")
+    )
+    app.dependency_overrides[parcel_intel_routes.get_gcs] = lambda: fake
+
+    client = TestClient(app)
+    for _ in range(3):
+        r = client.get("/v1/parcel-intel/index")
+        assert r.status_code == 200, r.text
+        assert r.json()["prospective_validation"] is not None
+
+    status_fetches = fake.requests.count(
+        "parcel-intel/v1/prospective-validation.json"
+    )
+    assert status_fetches == 1
+
+    parcel_intel_routes._REGISTRY.expire_ttl_caches()
+    r = client.get("/v1/parcel-intel/index")
+    assert r.status_code == 200, r.text
+    assert fake.requests.count(
+        "parcel-intel/v1/prospective-validation.json"
+    ) == 2
+
+
+def test_validated_rows_are_cached_per_generation() -> None:
+    """The registry must reuse constructed ParcelIntelRow objects for an
+    unchanged generation instead of re-validating thousands of Pydantic
+    models per request, and must rebuild them for a new generation."""
+    fake = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        {"brooklyn": [_row("3020000001", address="GENERATION ONE")]},
+        generation="20260723T230308737433Z-aaaaaaaaaaaa",
+    )
+    registry = parcel_intel_routes.ParcelIntelRegistry()
+
+    rows_first, _ = registry.borough(fake, "brooklyn")
+    rows_second, _ = registry.borough(fake, "brooklyn")
+    assert rows_first is rows_second  # same constructed objects reused
+    assert rows_first[0].address == "GENERATION ONE"
+
+    second_store = _make_atomic_fake_gcs(
+        ["brooklyn"],
+        {"brooklyn": [_row("3020000002", address="GENERATION TWO")]},
+        generation="20260723T230308737433Z-bbbbbbbbbbbb",
+    )._store
+    fake._store.update(second_store)
+    registry.expire_ttl_caches()
+
+    rows_third, _ = registry.borough(fake, "brooklyn")
+    assert rows_third is not rows_first
+    assert rows_third[0].address == "GENERATION TWO"

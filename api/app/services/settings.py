@@ -111,7 +111,13 @@ class Settings:
     admin_api_key_hashes: list[str] = field(default_factory=list)
 
     # User-level programmatic API keys (Bearer `clk_live_…`).
-    # Off by default so production deploys must explicitly opt in.
+    # Deliberate divergence from the deploy scripts: the code default stays
+    # False (secure-by-default for local/dev/test environments, where an
+    # unset env var must not silently enable a credential path), while every
+    # production deploy script passes CITYLENS_ALLOW_USER_API_KEYS explicitly
+    # (defaulting to true in deploy/deploy_api.sh and deploy/deploy_all.sh)
+    # so the live product keeps `clk_live_` keys working. Do not "fix" this
+    # by flipping the default here — change the deploy scripts instead.
     allow_user_api_keys: bool = False
 
     # Hash-only, read-only credential used by the scheduled production smoke
@@ -122,6 +128,16 @@ class Settings:
 
     # Plan
     free_monthly_runs: int = 5
+
+    # Stuck-run reconciler (POST /v1/admin/runs/reconcile).
+    # A run still "queued"/"running" whose updated_at is older than this is
+    # considered abandoned (SIGKILL on the Cloud Run task timeout, OOM, …).
+    # Default 35 min deliberately exceeds the 30-min worker task timeout so a
+    # slow-but-alive run is never reconciled out from under the worker.
+    run_stale_minutes: int = 35
+    # Upper bound on runs reconciled per invocation; keeps each scheduled
+    # pass small and idempotent-safe.
+    run_reconcile_batch_size: int = 50
 
     # Docs gating
     docs_access_key_sha256: str | None = None
@@ -173,5 +189,7 @@ def get_settings() -> Settings:
             required=False,
         ),
         free_monthly_runs=_env_int("CITYLENS_FREE_MONTHLY_RUNS", 5),
+        run_stale_minutes=_env_int("CITYLENS_RUN_STALE_MINUTES", 35),
+        run_reconcile_batch_size=_env_int("CITYLENS_RUN_RECONCILE_BATCH_SIZE", 50),
         docs_access_key_sha256=_opt_env("CITYLENS_DOCS_ACCESS_KEY_SHA256"),
     )

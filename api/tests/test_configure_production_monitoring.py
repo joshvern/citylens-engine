@@ -5,10 +5,13 @@ from typing import Any
 
 from scripts.configure_production_monitoring import (
     API_REGIONS,
+    METRIC_ALERT_SPECS,
     SPECS,
     _canonical_policy,
+    build_metric_policy,
     build_policy,
     configure,
+    ensure_metric_policy,
     ensure_policy,
     ensure_uptime,
     uptime_drift,
@@ -174,11 +177,82 @@ def test_configure_dry_run_plans_missing_resources_without_writes() -> None:
         "create",
         "create",
     ]
+    # Uptime-bound policies are blocked until their checks exist; the two
+    # Cloud Run metric policies have no uptime dependency and plan a create.
     assert [row["action"] for row in result["alert_policies"]] == [
         "blocked_until_uptime_check_exists",
         "blocked_until_uptime_check_exists",
+        "create",
+        "create",
     ]
     assert len(command.calls) == 2
+
+
+def test_metric_alert_specs_cover_api_5xx_and_worker_failures() -> None:
+    by_key = {spec.key: spec for spec in METRIC_ALERT_SPECS}
+    assert set(by_key) == {"api_5xx", "worker_job_failures"}
+
+    api = by_key["api_5xx"]
+    assert 'metric.type="run.googleapis.com/request_count"' in api.metric_filter
+    assert 'resource.label.service_name="citylens-api"' in api.metric_filter
+    assert 'metric.label.response_code_class="5xx"' in api.metric_filter
+    assert api.comparison == "COMPARISON_GT"
+    assert api.threshold > 0
+    assert api.duration == "300s"
+
+    worker = by_key["worker_job_failures"]
+    assert (
+        'metric.type="run.googleapis.com/job/completed_execution_count"'
+        in worker.metric_filter
+    )
+    assert 'resource.label.job_name="citylens-worker"' in worker.metric_filter
+    assert 'metric.label.result="failed"' in worker.metric_filter
+    assert worker.comparison == "COMPARISON_GT"
+    assert worker.threshold == 0  # any failed execution alerts
+
+
+def test_metric_policy_unchanged_detection_and_channel_preservation() -> None:
+    spec = METRIC_ALERT_SPECS[0]
+    channel = "projects/citylens-001/notificationChannels/existing-channel"
+    existing = build_metric_policy(
+        spec=spec,
+        notification_channels=[channel],
+        name="projects/citylens-001/alertPolicies/existing-metric-policy",
+    )
+    existing["conditions"][0]["name"] = "server-generated-condition"
+
+    command = FakeCommand()
+    result = ensure_metric_policy(
+        command,
+        spec=spec,
+        existing=existing,
+        requested_channels=[],
+        apply=True,
+    )
+    assert result["action"] == "unchanged"
+    assert result["notification_channels"] == [channel]
+    assert command.calls == []
+
+
+def test_metric_policy_dry_run_reports_update_without_writes() -> None:
+    spec = METRIC_ALERT_SPECS[1]
+    existing = build_metric_policy(
+        spec=spec,
+        notification_channels=[],
+        name="projects/citylens-001/alertPolicies/existing-metric-policy",
+    )
+    existing["conditions"][0]["conditionThreshold"]["thresholdValue"] = 99
+
+    command = FakeCommand()
+    result = ensure_metric_policy(
+        command,
+        spec=spec,
+        existing=existing,
+        requested_channels=[],
+        apply=False,
+    )
+    assert result["action"] == "update"
+    assert command.calls == []
 
 
 def test_duplicate_display_names_fail_closed() -> None:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
 import google.auth
+from google.api_core import exceptions as gexc
 from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request
 from google.cloud import storage
@@ -14,6 +16,28 @@ from .retry import retry_transient
 _METADATA_SA_EMAIL_URL = (
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
 )
+
+# Process-level storage client. `storage.Client()` performs credential
+# resolution on construction, so building one per request adds latency and
+# connection churn; a single client is thread-safe and reusable.
+_shared_client_lock = threading.Lock()
+_shared_client: storage.Client | None = None
+
+
+def _shared_storage_client() -> storage.Client:
+    global _shared_client
+    if _shared_client is None:
+        with _shared_client_lock:
+            if _shared_client is None:
+                _shared_client = storage.Client()
+    return _shared_client
+
+
+def reset_shared_storage_client() -> None:
+    """Test hook: drop the cached process-level client."""
+    global _shared_client
+    with _shared_client_lock:
+        _shared_client = None
 
 
 def _metadata_service_account_email(*, timeout_seconds: float = 2.0) -> str | None:
@@ -34,17 +58,22 @@ def _service_account_email_from_credentials(credentials: object) -> str | None:
 
 class GcsArtifacts:
     def __init__(self, *, bucket: str, client: storage.Client | None = None) -> None:
-        self.client = client or storage.Client()
+        self.client = client or _shared_storage_client()
         self.bucket_name = bucket
 
     def download_bytes(self, *, object_name: str) -> tuple[bytes, str | None]:
         def _op() -> tuple[bytes, str | None]:
             bucket = self.client.bucket(self.bucket_name)
             blob = bucket.blob(object_name)
-            if not blob.exists():
-                raise FileNotFoundError(object_name)
-            blob.reload()
-            return blob.download_as_bytes(), blob.content_type
+            # Single round trip: the download response's headers populate
+            # blob.content_type, so no exists()/reload() precheck is needed.
+            # A missing object surfaces as NotFound, preserved as the
+            # FileNotFoundError contract callers already handle.
+            try:
+                payload = blob.download_as_bytes()
+            except gexc.NotFound as exc:
+                raise FileNotFoundError(object_name) from exc
+            return payload, blob.content_type
 
         return retry_transient(_op)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -20,6 +21,51 @@ from .retry import retry_transient
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# Process-level Firestore clients, keyed by project. `firestore.Client(...)`
+# resolves credentials and opens a gRPC channel on construction; stores are
+# built per request (auth dependency + per-route `get_store`), so sharing one
+# client per project avoids that per-request cost. The client is thread-safe.
+_shared_client_lock = threading.Lock()
+_shared_clients: dict[str, firestore.Client] = {}
+
+
+def _shared_firestore_client(project_id: str) -> firestore.Client:
+    client = _shared_clients.get(project_id)
+    if client is None:
+        with _shared_client_lock:
+            client = _shared_clients.get(project_id)
+            if client is None:
+                client = firestore.Client(project=project_id)
+                _shared_clients[project_id] = client
+    return client
+
+
+def reset_shared_firestore_clients() -> None:
+    """Test hook: drop cached process-level clients."""
+    with _shared_client_lock:
+        _shared_clients.clear()
+
+
+# Successful auth used to write activity timestamps (`last_login_at`,
+# identity `updated_at`, API-key `last_used_at`) on every request. These are
+# observability fields, not security state, so re-writing them within this
+# window is pure Firestore write amplification. Reads still happen on every
+# request; only the redundant writes are skipped.
+AUTH_ACTIVITY_WRITE_INTERVAL = timedelta(minutes=15)
+
+
+def _within_activity_write_interval(value: Any, now: datetime) -> bool:
+    """True when `value` is a recent-enough activity timestamp to skip the
+    refresh write. Future timestamps (clock skew, bad data) fail open and
+    trigger a corrective write."""
+    if not isinstance(value, datetime):
+        return False
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    delta = now - value
+    return timedelta() <= delta < AUTH_ACTIVITY_WRITE_INTERVAL
 
 
 def identity_id_for(provider: str, subject: str) -> str:
@@ -192,7 +238,7 @@ class FirestoreStore:
         parcel_evidence_issues_collection: str = "parcel_evidence_issues",
         client: firestore.Client | None = None,
     ) -> None:
-        self.client = client or firestore.Client(project=project_id)
+        self.client = client or _shared_firestore_client(project_id)
         self.runs_collection = runs_collection
         self.users_collection = users_collection
         self.auth_identities_collection = auth_identities_collection
@@ -345,6 +391,7 @@ class FirestoreStore:
             now = utcnow()
             ident_ref = self.client.collection(self.auth_identities_collection).document(ident_id)
             ident_snap = ident_ref.get()
+            ident_doc: dict[str, Any] = {}
             if ident_snap.exists:
                 ident_doc = ident_snap.to_dict() or {}
                 app_user_id = str(ident_doc.get("app_user_id") or "")
@@ -389,8 +436,19 @@ class FirestoreStore:
                 if is_admin_override:
                     patch["is_admin"] = True
                     patch["plan_type"] = "admin"
-                user_ref.set(patch, merge=True)
-                user_doc = {**user_doc, **patch}
+                # Skip the per-request refresh write when nothing material
+                # changed and the stored login timestamp is recent — the only
+                # thing the patch would do is bump `last_login_at`.
+                material_change = any(
+                    user_doc.get(key) != value
+                    for key, value in patch.items()
+                    if key not in ("last_login_at", "updated_at")
+                )
+                if material_change or not _within_activity_write_interval(
+                    user_doc.get("last_login_at"), now
+                ):
+                    user_ref.set(patch, merge=True)
+                    user_doc = {**user_doc, **patch}
 
             ident_patch = {
                 "identity_id": ident_id,
@@ -401,9 +459,18 @@ class FirestoreStore:
                 "email_verified": bool(email_verified),
                 "updated_at": now,
             }
-            if not ident_snap.exists:
-                ident_patch["created_at"] = now
-            ident_ref.set(ident_patch, merge=True)
+            ident_unchanged = ident_snap.exists and all(
+                ident_doc.get(key) == value
+                for key, value in ident_patch.items()
+                if key != "updated_at"
+            )
+            if not (
+                ident_unchanged
+                and _within_activity_write_interval(ident_doc.get("updated_at"), now)
+            ):
+                if not ident_snap.exists:
+                    ident_patch["created_at"] = now
+                ident_ref.set(ident_patch, merge=True)
 
             return user_doc
 
@@ -454,6 +521,76 @@ class FirestoreStore:
 
         return retry_transient(_op)
 
+    def find_users_by_email(
+        self, email: str, *, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Exact-match lookup on the stored (claim-provided) email."""
+
+        def _op() -> list[dict[str, Any]]:
+            docs = (
+                self.client.collection(self.users_collection)
+                .where(filter=FieldFilter("email", "==", email))
+                .limit(int(limit))
+                .stream()
+            )
+            return [snap.to_dict() or {} for snap in docs]
+
+        return retry_transient(_op)
+
+    def set_user_plan(
+        self,
+        *,
+        app_user_id: str,
+        plan_type: str,
+        changed_by: str,
+    ) -> Optional[dict[str, Any]]:
+        """Persist a plan assignment with an audit-friendly history entry.
+
+        Returns the updated user document, or ``None`` when the user does
+        not exist. Idempotent: re-assigning the current plan neither
+        rewrites ``plan_changed_at`` nor appends history. ``is_admin`` is
+        deliberately untouched — plan_type drives quotas and feed
+        entitlements only; admin API access stays governed by the existing
+        admin allowlists and hash-only admin keys.
+        """
+
+        ref = self.client.collection(self.users_collection).document(app_user_id)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> Optional[dict[str, Any]]:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return None
+            existing = snap.to_dict() or {}
+            previous = str(existing.get("plan_type") or "free")
+            if previous == plan_type:
+                return existing
+            now = utcnow()
+            history = list(existing.get("plan_history") or [])
+            history.append(
+                {
+                    "previous_plan_type": previous,
+                    "plan_type": plan_type,
+                    "changed_at": now,
+                    "changed_by": changed_by,
+                }
+            )
+            updated = {
+                **existing,
+                "plan_type": plan_type,
+                "plan_changed_at": now,
+                "plan_history": history,
+                "updated_at": now,
+            }
+            transaction.set(ref, updated)
+            return updated
+
+        def _op() -> Optional[dict[str, Any]]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
     # ---------- Runs ----------
 
     def create_run(self, *, user_id: str, request_dict: dict[str, Any]) -> dict[str, Any]:
@@ -475,6 +612,154 @@ class FirestoreStore:
             }
             self.client.collection(self.runs_collection).document(run_id).set(doc)
             return doc
+
+        return retry_transient(_op)
+
+    def create_run_idempotent(
+        self,
+        *,
+        run_id: str,
+        user_id: str,
+        request_dict: dict[str, Any],
+        request_fingerprint: str,
+        month_key: str,
+        monthly_limit: Optional[int],
+    ) -> tuple[dict[str, Any], bool]:
+        """Duplicate check + monthly quota + create in ONE transaction.
+
+        Two concurrent requests carrying the same Idempotency-Key race on the
+        deterministic ``run_id`` document:
+
+        - Winner: the run doc is absent, the monthly counter is below the
+          limit → the counter increments AND the run doc is created in the
+          same transaction (preserving ``try_increment_monthly_usage``
+          semantics, including raising :class:`MonthlyQuotaExceeded`).
+        - Loser: the run doc already exists → the existing document is
+          returned untouched, ``created`` is False, and the loser's monthly
+          counter is NEVER incremented — there is no reserve-then-release
+          window, so the loser cannot burn a slot or rely on a best-effort
+          decrement.
+
+        ``request_fingerprint`` (canonical hash of the validated payload) is
+        persisted on the doc so replays can detect the same key being reused
+        with different parameters.
+        """
+
+        run_ref = self.client.collection(self.runs_collection).document(run_id)
+        usage_ref = self._usage_doc_ref(app_user_id=user_id, month_key=month_key)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> tuple[dict[str, Any], bool]:
+            # Firestore transactions require all reads before any write.
+            snap = run_ref.get(transaction=transaction)
+            if snap.exists:
+                return snap.to_dict() or {}, False
+            usage_snap = usage_ref.get(transaction=transaction)
+            now = utcnow()
+            usage = (usage_snap.to_dict() or {}) if usage_snap.exists else {}
+            runs_used = int(usage.get("runs_used", 0) or 0)
+            if monthly_limit is not None and runs_used >= monthly_limit:
+                raise MonthlyQuotaExceeded(
+                    runs_used=runs_used,
+                    monthly_run_limit=int(monthly_limit),
+                    month_key=month_key,
+                )
+            usage_payload: dict[str, Any] = {
+                "app_user_id": user_id,
+                "month_key": month_key,
+                "runs_used": runs_used + 1,
+                "updated_at": now,
+            }
+            if not usage_snap.exists:
+                usage_payload["created_at"] = now
+            transaction.set(usage_ref, usage_payload, merge=True)
+            doc = {
+                "run_id": run_id,
+                "user_id": user_id,
+                "status": "queued",
+                "stage": "queued",
+                "progress": 0,
+                "request": request_dict,
+                "request_fingerprint": request_fingerprint,
+                "error": None,
+                "execution_id": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+            transaction.set(run_ref, doc)
+            return doc, True
+
+        def _op() -> tuple[dict[str, Any], bool]:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    # Bounded scan for the stuck-run reconciler. Active runs are capped per
+    # user by the concurrency quota, so the citywide active set stays tiny;
+    # the cap only guards against pathological data.
+    RECONCILE_SCAN_CAP = 1000
+
+    def list_stale_active_runs(
+        self, *, cutoff: datetime, limit: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return active runs whose ``updated_at`` is older than ``cutoff``.
+
+        The query orders by ``updated_at`` ascending so the scan examines the
+        OLDEST active runs first: if the active population ever exceeds
+        ``RECONCILE_SCAN_CAP``, an unordered first-N read could repeatedly
+        select the same fresh subset and starve stale runs outside it
+        forever. Oldest-first guarantees every stale run is eventually
+        examined.
+
+        COMPOSITE INDEX REQUIRED: ``status IN`` + ``ORDER BY updated_at``
+        needs a composite index on the runs collection
+        (status ASC, updated_at ASC). Create it with:
+
+            gcloud firestore indexes composite create \\
+              --collection-group=runs \\
+              --field-config field-path=status,order=ascending \\
+              --field-config field-path=updated_at,order=ascending
+
+        (or via the console link in the FAILED_PRECONDITION error Firestore
+        returns on first use). See deploy/deploy_commands.md §12.
+
+        The staleness comparison still happens in memory as a defensive
+        re-check; missing/naive timestamps are skipped or normalized.
+
+        Returns ``(stale_runs, examined)`` where ``examined`` is the number
+        of active candidates scanned. ``stale_runs`` is oldest-first and
+        truncated to ``limit`` so the longest-stuck runs are reconciled
+        first when a batch overflows.
+        """
+
+        def _op() -> tuple[list[dict[str, Any]], int]:
+            snapshots = (
+                self.client.collection(self.runs_collection)
+                .where(
+                    filter=FieldFilter("status", "in", ["queued", "running"])
+                )
+                .order_by("updated_at")
+                .limit(self.RECONCILE_SCAN_CAP)
+                .stream()
+            )
+            rows = [snap.to_dict() or {} for snap in snapshots]
+
+            def _updated_at(row: dict[str, Any]) -> Optional[datetime]:
+                value = row.get("updated_at")
+                if not isinstance(value, datetime):
+                    return None
+                if value.tzinfo is None:
+                    return value.replace(tzinfo=timezone.utc)
+                return value.astimezone(timezone.utc)
+
+            stale = [
+                row
+                for row in rows
+                if (ts := _updated_at(row)) is not None and ts < cutoff
+            ]
+            stale.sort(key=lambda row: _updated_at(row) or cutoff)
+            return stale[: max(0, int(limit))], len(rows)
 
         return retry_transient(_op)
 
@@ -550,6 +835,108 @@ class FirestoreStore:
             return True
 
         def _op() -> bool:
+            transaction = self.client.transaction()
+            return _txn(transaction)
+
+        return retry_transient(_op)
+
+    def fail_and_refund_if_stale_active(
+        self,
+        *,
+        run_id: str,
+        cutoff: datetime,
+        error: dict[str, Any],
+    ) -> tuple[bool, bool]:
+        """Fail + refund one stuck run, conditionally and atomically.
+
+        The reconciler's scan is only a snapshot: a queued execution delayed
+        past the staleness window can legitimately start AFTER the scan and
+        BEFORE the failure write. This method therefore re-reads the run
+        inside ONE Firestore transaction and proceeds only when the run is
+        still stale-active — ``status in ("queued", "running")`` AND
+        ``updated_at < cutoff``. A run that progressed (fresh ``updated_at``)
+        or finished in the meantime is left untouched and reported as
+        skipped.
+
+        The quota refund is folded into the same transaction (same
+        semantics as ``refund_run_quota_if_failed``: idempotent via the
+        ``quota_refunded`` flag, decrement floored at zero, no-op when the
+        usage doc is missing), so "failed" and "refunded" commit or abort
+        together — the succeeded-but-refunded state cannot exist.
+
+        Transaction footprint: reads+writes ``runs/{run_id}`` and (when a
+        refund applies) ``usage_months/{user_id}_{month}``.
+
+        Returns ``(reconciled, refunded)``.
+        """
+
+        ref = self.client.collection(self.runs_collection).document(run_id)
+
+        @firestore.transactional  # type: ignore[misc]
+        def _txn(transaction) -> tuple[bool, bool]:
+            # Firestore transactions require all reads before any write.
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return False, False
+            data = snap.to_dict() or {}
+            if str(data.get("status") or "") not in ("queued", "running"):
+                return False, False
+            updated_at = data.get("updated_at")
+            if not isinstance(updated_at, datetime):
+                # No provable staleness — never fail a run on a missing
+                # timestamp.
+                return False, False
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if updated_at.astimezone(timezone.utc) >= cutoff:
+                return False, False
+
+            refund = False
+            usage_ref = None
+            usage_snap = None
+            user_id = str(data.get("user_id") or "")
+            created_at = data.get("created_at")
+            if (
+                data.get("quota_refunded") is not True
+                and user_id
+                and isinstance(created_at, datetime)
+            ):
+                created_utc = created_at.astimezone(timezone.utc)
+                mk = f"{created_utc.year:04d}-{created_utc.month:02d}"
+                usage_ref = self._usage_doc_ref(
+                    app_user_id=user_id, month_key=mk
+                )
+                usage_snap = usage_ref.get(transaction=transaction)
+                refund = True
+
+            now = utcnow()
+            if (
+                refund
+                and usage_ref is not None
+                and usage_snap is not None
+                and usage_snap.exists
+            ):
+                usage = usage_snap.to_dict() or {}
+                runs_used = int(usage.get("runs_used", 0) or 0)
+                transaction.set(
+                    usage_ref,
+                    {"runs_used": max(0, runs_used - 1), "updated_at": now},
+                    merge=True,
+                )
+
+            run_patch: dict[str, Any] = {
+                "status": "failed",
+                "stage": "failed",
+                "error": error,
+                "progress": 100,
+                "updated_at": now,
+            }
+            if refund:
+                run_patch["quota_refunded"] = True
+            transaction.set(ref, run_patch, merge=True)
+            return True, refund
+
+        def _op() -> tuple[bool, bool]:
             transaction = self.client.transaction()
             return _txn(transaction)
 
@@ -1923,7 +2310,7 @@ class FirestoreStore:
     def get_user_id_for_api_key(self, plaintext: str) -> Optional[str]:
         """Resolve a plaintext API key to its owning app_user_id. Returns
         None if the key is unknown or revoked. Best-effort updates
-        `last_used_at` on hit."""
+        `last_used_at` on hit, at most once per activity-write interval."""
         if not is_user_api_key(plaintext):
             return None
         plaintext_hash = _hash_api_key(plaintext)
@@ -1941,12 +2328,19 @@ class FirestoreStore:
                 return None
 
             # Best-effort `last_used_at` update — doesn't block auth on
-            # a transient write failure.
-            try:
-                user_key_ref = self._user_api_keys_col(app_user_id).document(key_id)
-                user_key_ref.set({"last_used_at": utcnow()}, merge=True)
-            except Exception:
-                pass
+            # a transient write failure. `last_used_at` is mirrored onto the
+            # index doc (already read above) so the refresh can be throttled
+            # to once per AUTH_ACTIVITY_WRITE_INTERVAL without a second read.
+            now = utcnow()
+            if not _within_activity_write_interval(index_doc.get("last_used_at"), now):
+                try:
+                    user_key_ref = self._user_api_keys_col(app_user_id).document(key_id)
+                    user_key_ref.set({"last_used_at": now}, merge=True)
+                    self._api_key_index_doc(plaintext_hash).set(
+                        {"last_used_at": now}, merge=True
+                    )
+                except Exception:
+                    pass
 
             return app_user_id
 

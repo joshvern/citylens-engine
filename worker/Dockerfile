@@ -45,8 +45,11 @@ WORKDIR /app
 # The old worker installed Git in the final image, which pulled the complete
 # Perl runtime and multiplied critical CVEs. Production needs neither. The
 # uv-created venv intentionally retains its locked setuptools dependency
-# because Torch imports it at runtime.
+# because Torch imports it at runtime. The pinned base lags Debian security
+# between upstream rebuilds and the Trivy gate rejects fixable HIGH/CRITICAL
+# findings, so pending OS security upgrades are applied at build time.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends libexpat1 \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall -y pip setuptools wheel \

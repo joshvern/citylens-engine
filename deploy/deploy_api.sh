@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: `gcloud run deploy --update-env-vars` is ADDITIVE — it merges into the
+# service's existing env vars. Anything set once by hand (e.g. a one-time
+# CITYLENS_ALLOW_MOCK_AUTH=true) persists across every subsequent deploy until
+# explicitly cleared with --remove-env-vars / --clear-env-vars. After deploying,
+# review the live configuration with:
+#   gcloud run services describe citylens-api --region <region> \
+#     --format='value(spec.template.spec.containers[0].env)'
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ ! -f "${ROOT_DIR}/.env" ]]; then
@@ -35,6 +43,16 @@ SIGN_URL_TTL_SECONDS="${CITYLENS_SIGN_URL_TTL_SECONDS:-300}"
 API_SERVICE_NAME="${API_SERVICE_NAME:-citylens-api}"
 API_SA_NAME="${API_SA_NAME:-citylens-api}"
 API_SA_EMAIL="${API_SA_EMAIL:-${API_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
+
+# Explicit serving capacity: without these flags Cloud Run falls back to
+# platform defaults (1 vCPU / 512Mi / concurrency 80 / min-instances 0),
+# which under-provisions the JSON-heavy parcel feeds and cold-starts every
+# quiet-period request. Override per-deploy via .env if needed.
+API_CPU="${API_CPU:-2}"
+API_MEMORY="${API_MEMORY:-1Gi}"
+API_CONCURRENCY="${API_CONCURRENCY:-40}"
+API_MIN_INSTANCES="${API_MIN_INSTANCES:-1}"
+API_MAX_INSTANCES="${API_MAX_INSTANCES:-30}"
 
 API_IMAGE="${API_IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/citylens-api:latest}"
 
@@ -90,6 +108,11 @@ gcloud run deploy "${API_SERVICE_NAME}" \
   --project "${PROJECT_ID}" \
   --service-account "${API_SA_EMAIL}" \
   --allow-unauthenticated \
+  --cpu "${API_CPU}" \
+  --memory "${API_MEMORY}" \
+  --concurrency "${API_CONCURRENCY}" \
+  --min-instances "${API_MIN_INSTANCES}" \
+  --max-instances "${API_MAX_INSTANCES}" \
   --update-env-vars "GOOGLE_CLOUD_PROJECT=${PROJECT_ID},CITYLENS_REGION=${REGION},CITYLENS_BUCKET=${BUCKET_NAME},CITYLENS_JOB_NAME=${JOB_NAME},CITYLENS_RUNS_COLLECTION=${RUNS_COLLECTION},CITYLENS_USERS_COLLECTION=${USERS_COLLECTION},CITYLENS_PILOT_REQUESTS_COLLECTION=${PILOT_REQUESTS_COLLECTION},CITYLENS_PARCEL_EVIDENCE_ISSUES_COLLECTION=${PARCEL_EVIDENCE_ISSUES_COLLECTION},CITYLENS_SIGN_URLS=${SIGN_URLS},CITYLENS_SIGN_URL_TTL_SECONDS=${SIGN_URL_TTL_SECONDS},CITYLENS_ALLOW_ADMIN_API_KEYS=${CITYLENS_ALLOW_ADMIN_API_KEYS:-false},CITYLENS_ADMIN_API_KEY_HASHES=${CITYLENS_ADMIN_API_KEY_HASHES:-},CITYLENS_ALLOW_USER_API_KEYS=${CITYLENS_ALLOW_USER_API_KEYS:-true}"
 
 API_URL="$(gcloud run services describe "${API_SERVICE_NAME}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"

@@ -54,6 +54,20 @@ class RunListResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+class RunReconcileResponse(BaseModel):
+    """Receipt for one stuck-run reconciler pass (admin/Cloud Scheduler)."""
+
+    examined: int = Field(ge=0)
+    reconciled: int = Field(ge=0)
+    refunded: int = Field(ge=0)
+    # Scan candidates that turned out to be legitimately active again when
+    # re-read inside the fail-and-refund transaction (a delayed worker
+    # claimed or finished them between scan and transaction). Skipped, not
+    # failed.
+    skipped_now_active: int = Field(ge=0, default=0)
+    run_ids: list[str] = Field(default_factory=list)
+
+
 class DemoRunFeatured(BaseModel):
     run_id: str
     label: str
@@ -172,6 +186,42 @@ class PilotRequestStatusUpdate(BaseModel):
 
     schema_version: Literal["citylens/pilot-request-status@v1"]
     status: PilotRequestStatus
+
+
+# --- Admin user/plan management ---
+#
+# Admin-only views of a user document. Kept deliberately narrow so
+# internal fields (auth subjects, key hashes) never leave the store.
+
+
+class AdminUserPlanHistoryEntry(BaseModel):
+    previous_plan_type: str
+    plan_type: str
+    changed_at: datetime
+    changed_by: str
+
+
+class AdminUserRecord(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    email_verified: bool = False
+    plan_type: str = "free"
+    is_admin: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+    plan_changed_at: Optional[datetime] = None
+    plan_history: list[AdminUserPlanHistoryEntry] = Field(default_factory=list)
+
+
+class AdminUserList(BaseModel):
+    items: list[AdminUserRecord] = Field(default_factory=list)
+
+
+class AdminUserPlanUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_type: str = Field(..., min_length=1, max_length=40)
 
 
 # --- Parcel Intelligence (per-borough redev candidate ranking) ---
@@ -1259,7 +1309,14 @@ class ParcelIntelMapResponse(BaseModel):
         default=None,
         pattern=r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}$",
     )
-    access_scope: Literal["public_preview", "authenticated_full"]
+    # Derived from the FeedEntitlement, never from mere credential presence:
+    # "authenticated_limited" labels an authenticated tier whose entitlement
+    # is row-capped or premium-stripped (no such tier exists in today's
+    # policy table, but the label keeps scope metadata truthful if one is
+    # ever introduced).
+    access_scope: Literal[
+        "public_preview", "authenticated_full", "authenticated_limited"
+    ]
     requested_top_per_borough: int = Field(ge=1, le=1000)
     returned_count: int = Field(ge=0)
     available_count: int = Field(ge=0)

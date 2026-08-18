@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from ..services.auth import require_auth
 from ..services.auth_context import AuthContext
 from ..services.firestore_store import FirestoreStore
+from ..services.rate_limit import api_keys_rate_limit
 from ..services.settings import Settings, get_settings
 
 router = APIRouter(tags=["api-keys"])
@@ -73,6 +74,7 @@ def create_api_key(
     auth: AuthContext = Depends(require_auth),
     settings: Settings = Depends(get_settings),
     store: FirestoreStore = Depends(get_store),
+    _rate_limit: None = Depends(api_keys_rate_limit),
 ) -> dict[str, Any]:
     _ensure_enabled(settings)
     _, plaintext, record = store.create_api_key(app_user_id=auth.app_user_id, label=body.label)
@@ -87,6 +89,7 @@ def list_api_keys(
     auth: AuthContext = Depends(require_auth),
     settings: Settings = Depends(get_settings),
     store: FirestoreStore = Depends(get_store),
+    _rate_limit: None = Depends(api_keys_rate_limit),
 ) -> dict[str, Any]:
     _ensure_enabled(settings)
     items = store.list_api_keys(app_user_id=auth.app_user_id)
@@ -99,6 +102,7 @@ def revoke_api_key(
     auth: AuthContext = Depends(require_auth),
     settings: Settings = Depends(get_settings),
     store: FirestoreStore = Depends(get_store),
+    _rate_limit: None = Depends(api_keys_rate_limit),
 ) -> Response:
     _ensure_enabled(settings)
     revoked = store.revoke_api_key(app_user_id=auth.app_user_id, key_id=key_id)

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Plan or apply CityLens production uptime monitoring.
+"""Plan or apply CityLens production monitoring.
 
 The command is dry-run by default. It manages two public HTTPS uptime checks
 and their alert policies through the authenticated ``gcloud`` CLI:
 
 * API readiness plus prospective-evidence freshness.
 * Parcel Intelligence web availability plus product-content validation.
+
+It also manages two Cloud Run metric alert policies in the same declarative
+style (no uptime check involved):
+
+* API service 5xx response rate above threshold over a 5-minute window.
+* Worker job failed executions (> 0 in any 5-minute window).
 
 Existing notification channels are preserved. New channels can be attached by
 passing their fully qualified Cloud Monitoring resource names.
@@ -43,6 +49,28 @@ class MonitorSpec:
     matcher: str
     failure_condition_name: str
     tls_condition_name: str
+    policy_documentation: str
+
+
+@dataclass(frozen=True)
+class MetricAlertSpec:
+    """One Cloud Monitoring metric alert policy (no uptime check).
+
+    Mirrors MonitorSpec's declarative style for alerts driven directly by
+    Cloud Run metrics rather than uptime probes.
+    """
+
+    key: str
+    policy_display_name: str
+    condition_name: str
+    service_label: str
+    metric_filter: str
+    aligner: str
+    reducer: str
+    alignment_period: str
+    comparison: str
+    threshold: float
+    duration: str
     policy_documentation: str
 
 
@@ -94,6 +122,66 @@ SPECS = (
     ),
 )
 
+METRIC_ALERT_SPECS = (
+    MetricAlertSpec(
+        key="api_5xx",
+        policy_display_name="CityLens API 5xx error rate",
+        condition_name=(
+            "Cloud Run citylens-api 5xx rate exceeds 0.05/s over 5 minutes"
+        ),
+        service_label="citylens-api",
+        metric_filter=(
+            'metric.type="run.googleapis.com/request_count" '
+            'AND resource.type="cloud_run_revision" '
+            'AND resource.label.service_name="citylens-api" '
+            'AND metric.label.response_code_class="5xx"'
+        ),
+        aligner="ALIGN_RATE",
+        reducer="REDUCE_SUM",
+        alignment_period="300s",
+        comparison="COMPARISON_GT",
+        # requests/second averaged over the alignment window: 0.05/s
+        # sustained for 5 minutes is ~15 server errors — above background
+        # noise, below a full outage the uptime policy already catches.
+        threshold=0.05,
+        duration="300s",
+        policy_documentation=(
+            "The `citylens-api` Cloud Run service is returning 5xx responses "
+            "above 0.05/s sustained for 5 minutes. Check Cloud Run logs for "
+            "the failing route (severity>=ERROR now carries Error Reporting "
+            "payloads), recent deploys, and Firestore/GCS dependency health "
+            "before resolving the incident."
+        ),
+    ),
+    MetricAlertSpec(
+        key="worker_job_failures",
+        policy_display_name="CityLens worker job execution failure",
+        condition_name=(
+            "Cloud Run job citylens-worker completed a failed execution"
+        ),
+        service_label="citylens-worker",
+        metric_filter=(
+            'metric.type="run.googleapis.com/job/completed_execution_count" '
+            'AND resource.type="cloud_run_job" '
+            'AND resource.label.job_name="citylens-worker" '
+            'AND metric.label.result="failed"'
+        ),
+        aligner="ALIGN_DELTA",
+        reducer="REDUCE_SUM",
+        alignment_period="300s",
+        comparison="COMPARISON_GT",
+        threshold=0,
+        duration="0s",
+        policy_documentation=(
+            "A `citylens-worker` Cloud Run job execution finished as failed "
+            "(pipeline crash, OOM, or task timeout). Check the execution "
+            "logs, the run document in Firestore, and whether the stuck-run "
+            "reconciler refunded the user's quota before resolving the "
+            "incident."
+        ),
+    ),
+)
+
 
 class JsonCommand(Protocol):
     def json(self, *args: str) -> Any: ...
@@ -128,7 +216,7 @@ class Gcloud:
         return json.loads(completed.stdout)
 
 
-def _labels(spec: MonitorSpec) -> dict[str, str]:
+def _labels(spec: MonitorSpec | MetricAlertSpec) -> dict[str, str]:
     return {
         "environment": "production",
         "managed_by": "citylens",
@@ -415,6 +503,49 @@ def build_policy(
     return policy
 
 
+def build_metric_policy(
+    *,
+    spec: MetricAlertSpec,
+    notification_channels: list[str],
+    name: str | None = None,
+) -> dict[str, Any]:
+    policy: dict[str, Any] = {
+        "displayName": spec.policy_display_name,
+        "combiner": "OR",
+        "enabled": True,
+        "conditions": [
+            {
+                "displayName": spec.condition_name,
+                "conditionThreshold": {
+                    "filter": spec.metric_filter,
+                    "aggregations": [
+                        {
+                            "alignmentPeriod": spec.alignment_period,
+                            "perSeriesAligner": spec.aligner,
+                            "crossSeriesReducer": spec.reducer,
+                            "groupByFields": ["resource.label.*"],
+                        }
+                    ],
+                    "comparison": spec.comparison,
+                    "thresholdValue": spec.threshold,
+                    "duration": spec.duration,
+                    "trigger": {"count": 1},
+                },
+            }
+        ],
+        "documentation": {
+            "mimeType": "text/markdown",
+            "content": spec.policy_documentation,
+        },
+        "userLabels": _labels(spec),
+    }
+    if notification_channels:
+        policy["notificationChannels"] = sorted(set(notification_channels))
+    if name:
+        policy["name"] = name
+    return policy
+
+
 def _canonical_policy(policy: dict[str, Any]) -> dict[str, Any]:
     result = {
         key: policy.get(key)
@@ -444,28 +575,18 @@ def _canonical_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def ensure_policy(
+def _reconcile_policy(
     command: JsonCommand,
     *,
-    spec: MonitorSpec,
-    check_id: str,
+    key: str,
+    desired: dict[str, Any],
+    channels: list[str],
     existing: dict[str, Any] | None,
-    requested_channels: list[str],
     apply: bool,
 ) -> dict[str, Any]:
-    existing_channels = (
-        list(existing.get("notificationChannels") or []) if existing else []
-    )
-    channels = sorted(set(existing_channels + requested_channels))
-    desired = build_policy(
-        spec=spec,
-        check_id=check_id,
-        notification_channels=channels,
-        name=str(existing.get("name")) if existing else None,
-    )
     if existing is None:
         if not apply:
-            return {"key": spec.key, "action": "create"}
+            return {"key": key, "action": "create"}
         created = command.json(
             "monitoring",
             "policies",
@@ -473,7 +594,7 @@ def ensure_policy(
             f"--policy={json.dumps(desired, separators=(',', ':'))}",
         )
         return {
-            "key": spec.key,
+            "key": key,
             "action": "created",
             "policy_id": _policy_id(created),
         }
@@ -481,14 +602,14 @@ def ensure_policy(
     policy_id = _policy_id(existing)
     if _canonical_policy(existing) == _canonical_policy(desired):
         return {
-            "key": spec.key,
+            "key": key,
             "action": "unchanged",
             "policy_id": policy_id,
             "notification_channels": channels,
         }
     if not apply:
         return {
-            "key": spec.key,
+            "key": key,
             "action": "update",
             "policy_id": policy_id,
             "notification_channels": channels,
@@ -501,11 +622,71 @@ def ensure_policy(
         f"--policy={json.dumps(desired, separators=(',', ':'))}",
     )
     return {
-        "key": spec.key,
+        "key": key,
         "action": "updated",
         "policy_id": _policy_id(updated),
         "notification_channels": channels,
     }
+
+
+def _merged_channels(
+    existing: dict[str, Any] | None,
+    requested_channels: list[str],
+) -> list[str]:
+    existing_channels = (
+        list(existing.get("notificationChannels") or []) if existing else []
+    )
+    return sorted(set(existing_channels + requested_channels))
+
+
+def ensure_policy(
+    command: JsonCommand,
+    *,
+    spec: MonitorSpec,
+    check_id: str,
+    existing: dict[str, Any] | None,
+    requested_channels: list[str],
+    apply: bool,
+) -> dict[str, Any]:
+    channels = _merged_channels(existing, requested_channels)
+    desired = build_policy(
+        spec=spec,
+        check_id=check_id,
+        notification_channels=channels,
+        name=str(existing.get("name")) if existing else None,
+    )
+    return _reconcile_policy(
+        command,
+        key=spec.key,
+        desired=desired,
+        channels=channels,
+        existing=existing,
+        apply=apply,
+    )
+
+
+def ensure_metric_policy(
+    command: JsonCommand,
+    *,
+    spec: MetricAlertSpec,
+    existing: dict[str, Any] | None,
+    requested_channels: list[str],
+    apply: bool,
+) -> dict[str, Any]:
+    channels = _merged_channels(existing, requested_channels)
+    desired = build_metric_policy(
+        spec=spec,
+        notification_channels=channels,
+        name=str(existing.get("name")) if existing else None,
+    )
+    return _reconcile_policy(
+        command,
+        key=spec.key,
+        desired=desired,
+        channels=channels,
+        existing=existing,
+        apply=apply,
+    )
 
 
 def configure(
@@ -563,6 +744,22 @@ def configure(
                 command,
                 spec=spec,
                 check_id=_uptime_id(check),
+                existing=existing,
+                requested_channels=notification_channels,
+                apply=apply,
+            )
+        )
+
+    for metric_spec in METRIC_ALERT_SPECS:
+        existing = _single_by_display_name(
+            policy_rows,
+            metric_spec.policy_display_name,
+            resource_label="alert policy",
+        )
+        policy_results.append(
+            ensure_metric_policy(
+                command,
+                spec=metric_spec,
                 existing=existing,
                 requested_channels=notification_channels,
                 apply=apply,

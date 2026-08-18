@@ -10,8 +10,8 @@ dev:
 	cd api && $(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 test:
-	cd api && $(PYTHON) -m pytest
-	cd worker && $(PYTHON) -m pytest
+	$(PYTHON) -m pytest api/tests
+	$(PYTHON) -m pytest worker
 
 fmt:
 	cd api && $(PYTHON) -m ruff format . && $(PYTHON) -m ruff check . --fix

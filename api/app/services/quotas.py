@@ -58,7 +58,42 @@ def enforce_concurrent_quota(*, store: FirestoreStore, app_user_id: str, plan_ty
                 "max_concurrent_runs": int(max_concurrent),
                 "currently_running": int(currently_running),
             },
+            # A slot frees when an active run finishes; the pipeline runs in
+            # minutes, so 60s is a sensible client poll interval.
+            headers={"Retry-After": "60"},
         )
+
+
+def monthly_quota_exceeded_http(
+    exc: MonthlyQuotaExceeded, *, plan_type: str
+) -> HTTPException:
+    """Map MonthlyQuotaExceeded onto the canonical 429 response.
+
+    Shared by the keyless reservation path (``reserve_monthly_run``) and the
+    idempotent create transaction in routes/runs.py, so both surface an
+    identical error shape.
+    """
+
+    return HTTPException(
+        status_code=429,
+        detail={
+            "code": "MONTHLY_QUOTA_EXCEEDED",
+            "message": (
+                f"{plan_type.capitalize()} plan includes "
+                f"{exc.monthly_run_limit} runs per month."
+            ),
+            "plan_type": plan_type,
+            "monthly_run_limit": exc.monthly_run_limit,
+            "runs_used": exc.runs_used,
+            "runs_remaining": 0,
+            "month_key": exc.month_key,
+        },
+        # The monthly window resets at the UTC month boundary — hours to
+        # days away. A constant 1h Retry-After steers well-behaved
+        # clients to a sane re-check cadence without computing the exact
+        # month-end (the response's month_key carries that context).
+        headers={"Retry-After": "3600"},
+    )
 
 
 def reserve_monthly_run(
@@ -80,21 +115,7 @@ def reserve_monthly_run(
             limit=monthly_limit,
         )
     except MonthlyQuotaExceeded as exc:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "code": "MONTHLY_QUOTA_EXCEEDED",
-                "message": (
-                    f"{plan_type.capitalize()} plan includes "
-                    f"{exc.monthly_run_limit} runs per month."
-                ),
-                "plan_type": plan_type,
-                "monthly_run_limit": exc.monthly_run_limit,
-                "runs_used": exc.runs_used,
-                "runs_remaining": 0,
-                "month_key": exc.month_key,
-            },
-        ) from exc
+        raise monthly_quota_exceeded_http(exc, plan_type=plan_type) from exc
     return mk
 
 

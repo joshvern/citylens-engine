@@ -49,7 +49,9 @@ WORKDIR /app
 # The base Python image ships package-management tooling for developer
 # convenience. Production does not need it; removing it eliminates the
 # vulnerable wheel/setuptools surface and prevents runtime package mutation.
+# Apply published OS security fixes even when the pinned base image lags them.
 RUN python -m pip uninstall -y pip setuptools wheel \
+    && apk upgrade --no-cache \
     && apk add --no-cache \
         ca-certificates \
         gdal \

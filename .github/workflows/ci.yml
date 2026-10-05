@@ -44,6 +44,9 @@ jobs:
       - name: Check deploy scripts
         run: bash -n deploy/deploy_api.sh deploy/deploy_worker.sh deploy/deploy_all.sh
 
+      - name: Test production incident notifications
+        run: node --test scripts/tests/production_incident.test.cjs
+
       - name: Test API
         run: ./.venv/bin/python -m pytest api/tests
 

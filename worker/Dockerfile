@@ -46,7 +46,9 @@ WORKDIR /app
 # Perl runtime and multiplied critical CVEs. Production needs neither. The
 # uv-created venv intentionally retains its locked setuptools dependency
 # because Torch imports it at runtime.
+# Apply published OS security fixes even when the pinned base image lags them.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends libexpat1 \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall -y pip setuptools wheel \

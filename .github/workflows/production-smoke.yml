@@ -263,6 +263,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("fs");
+            const { failureMarker, shouldComment } = require(
+              "./scripts/production_incident.cjs",
+            );
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const title = "[Production] Scheduled verification failing";
@@ -338,6 +341,7 @@ jobs:
             const body = [
               marker,
               runToken,
+              failureMarker(rawFailures),
               "The six-hourly production verification workflow failed.",
               "",
               `- Latest failing run: [${context.runId}](${runUrl})`,
@@ -373,13 +377,13 @@ jobs:
               await github.rest.issues.create({ owner, repo, title, body });
               return;
             }
-            if (!String(issue.body || "").includes(runToken)) {
+            if (shouldComment(issue.body, rawFailures, runToken)) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number: issue.number,
                 body:
-                  `Failure persisted in [scheduled run ${context.runId}]` +
+                  `Production failures changed in [scheduled run ${context.runId}]` +
                   `(${runUrl}), attempt ${runAttempt}.`,
               });
             }
